@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "robocap-rerun-tools"
+version = "0.1.0"
+description = "Robocap/NOKOV alignment inspection and Rerun RRD export tools."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Robocap Rerun Tools Contributors" }
+]
+dependencies = [
+  "numpy>=1.24",
+  "rerun-sdk>=0.23",
+  "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+robocap-rerun = "robocap_rerun_tools.cli:main"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
