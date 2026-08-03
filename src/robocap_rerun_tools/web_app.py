@@ -208,6 +208,10 @@ def git_output(args: list[str], timeout: int = 60) -> str:
     return output or "Done."
 
 
+def git_status_short() -> tuple[int, str]:
+    return run_process(["git", "status", "--short"], cwd=PROJECT_ROOT, timeout=30)
+
+
 def check_environment() -> str:
     packages = ("robocap-rerun-tools", "numpy", "rerun-sdk", "scipy", "gradio")
     lines = [
@@ -233,6 +237,10 @@ def check_environment() -> str:
         "",
     ]
     lines.extend(f"- {name}: `{package_version(name)}`" for name in packages)
+    status_returncode, status_output = git_status_short()
+    status_text = status_output if status_returncode == 0 and status_output.strip() else "clean"
+    if status_returncode != 0:
+        status_text = f"{status_output}\nCommand failed with exit code {status_returncode}.".strip()
     lines.extend(
         [
             "",
@@ -243,7 +251,7 @@ def check_environment() -> str:
             f"- remote: `{git_output(['remote', '-v'])}`",
             "",
             "```text",
-            git_output(["status", "--short"]) or "clean",
+            status_text,
             "```",
         ]
     )
@@ -279,7 +287,9 @@ def install_or_update_dependencies() -> str:
 
 
 def pull_latest_code() -> str:
-    status = git_output(["status", "--short"])
+    status_returncode, status = git_status_short()
+    if status_returncode != 0:
+        return f"{status}\nCommand failed with exit code {status_returncode}."
     if status.strip():
         return "\n".join(
             [
