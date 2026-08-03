@@ -41,6 +41,12 @@ robocap-rerun --help
 
 ## Common Usage
 
+Package one session for sharing. Videos are compressed by default:
+
+```bat
+robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1
+```
+
 Inspect one session before exporting:
 
 ```bat

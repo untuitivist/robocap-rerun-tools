@@ -75,6 +75,36 @@ robocap-rerun --help
 
 ## 常用命令
 
+打包一个 session 给别人用。默认会压缩视频，不会把 `.venv`、`_artifacts`、RRD、MANO 模型一起打进去：
+
+```bat
+robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1
+```
+
+默认输出：
+
+```text
+<session>/_artifacts/packages/<session>_<segment>_data_package.zip
+```
+
+如果想指定输出位置：
+
+```bat
+robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --output D:\share\session48_segment1.zip
+```
+
+如果确实要保留原始视频，不做压缩：
+
+```bat
+robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --raw-video
+```
+
+也可以用 bat 脚本：
+
+```bat
+scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 D:\share\session48_segment1.zip segment1
+```
+
 先检查一个 session 的视频帧率、文件帧数和异常帧间隔：
 
 ```bat
@@ -227,4 +257,3 @@ git push
 - MANO pickle 模型
 
 这些已经在 `.gitignore` 里忽略。仓库应该只放代码和文档。
-

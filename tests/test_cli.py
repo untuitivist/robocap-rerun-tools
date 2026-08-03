@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from robocap_rerun_tools.cli import build_parser, find_nokov_source
+from robocap_rerun_tools.data_packager import discover_package_files
 
 
 def test_export_parser_accepts_frame_offset() -> None:
@@ -31,3 +32,18 @@ def test_find_nokov_source_prefers_hand_bvh(tmp_path: Path) -> None:
     hand_bvh.write_text("", encoding="utf-8")
     assert find_nokov_source(tmp_path, None) == hand_bvh
 
+
+def test_package_parser_defaults_to_compressed_video() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["package-data", "Z:/DATASETS/Frodobots/nokov/session"])
+    assert args.raw_video is False
+    assert args.proxy_height == 540
+
+
+def test_package_discovery_excludes_artifacts_by_default(tmp_path: Path) -> None:
+    (tmp_path / "robocap_segment1_video_left.mp4").write_text("", encoding="utf-8")
+    artifacts = tmp_path / "_artifacts" / "segment1" / "inspection"
+    artifacts.mkdir(parents=True)
+    (artifacts / "old.rrd").write_text("", encoding="utf-8")
+    files = discover_package_files(tmp_path, "segment1", include_artifacts=False, include_rrd=False)
+    assert [path.name for path in files] == ["robocap_segment1_video_left.mp4"]

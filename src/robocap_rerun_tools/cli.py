@@ -565,6 +565,13 @@ def command_sweep_offset(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_package_data(args: argparse.Namespace) -> int:
+    from robocap_rerun_tools.data_packager import package_session
+
+    package_session(args)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="robocap-rerun")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -600,6 +607,20 @@ def build_parser() -> argparse.ArgumentParser:
     sweep_parser.add_argument("--output", type=Path, default=None)
     sweep_parser.add_argument("--ffprobe", default="ffprobe")
     sweep_parser.set_defaults(func=command_sweep_offset)
+
+    package_parser = sub.add_parser("package-data", help="Package one session, using compressed proxy videos by default.")
+    package_parser.add_argument("session_dir", type=Path)
+    package_parser.add_argument("--output", type=Path, default=None)
+    package_parser.add_argument("--segment", default=None)
+    package_parser.add_argument("--raw-video", action="store_true", help="Copy original videos instead of compressed proxy MP4.")
+    package_parser.add_argument("--proxy-height", type=int, default=540)
+    package_parser.add_argument("--proxy-crf", type=int, default=28)
+    package_parser.add_argument("--proxy-bitrate", default="1400k")
+    package_parser.add_argument("--ffmpeg", default="ffmpeg")
+    package_parser.add_argument("--include-artifacts", action="store_true")
+    package_parser.add_argument("--include-rrd", action="store_true")
+    package_parser.add_argument("--dry-run", action="store_true")
+    package_parser.set_defaults(func=command_package_data)
     return parser
 
 
