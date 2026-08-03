@@ -76,6 +76,13 @@ LANGUAGE_PACKS = {
         "use_proxy": "Use compressed proxy video",
         "display": "Display layout",
         "no_mano_mesh": "Disable MANO mesh",
+        "scan_button": "Scan files",
+        "gt_dir": "GT/NOKOV export dir",
+        "gt_files": "GT files to include",
+        "retarget_model": "Retarget model",
+        "third_person_video": "Third-person video",
+        "include_third_person": "Include third-person video",
+        "include_robowrist": "Include robowrist data",
         "export_height": "Proxy height",
         "export_button": "Export RRD",
         "nokov_source": "NOKOV source",
@@ -104,6 +111,13 @@ LANGUAGE_PACKS = {
         "use_proxy": "使用压缩视频",
         "display": "展示版布局",
         "no_mano_mesh": "禁用 MANO mesh",
+        "scan_button": "扫描文件",
+        "gt_dir": "GT/NOKOV 导出目录",
+        "gt_files": "参与导出的 GT 文件",
+        "retarget_model": "重定向模型",
+        "third_person_video": "第三人称视频",
+        "include_third_person": "包含第三人称视频",
+        "include_robowrist": "包含 robowrist 数据",
         "export_height": "压缩视频高度",
         "export_button": "导出 RRD",
         "nokov_source": "NOKOV 参考源",
@@ -141,6 +155,44 @@ def session_path(value: str) -> str:
 def optional_text(value: str | None) -> str | None:
     value = (value or "").strip()
     return value or None
+
+
+def default_gt_dir(path: Path) -> Path | None:
+    matches = sorted(child for child in path.glob("test*") if child.is_dir())
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def scan_files(session_dir: str, gt_dir_value: str) -> tuple[str, object, str, str]:
+    path = Path(session_path(session_dir))
+    gt_dir = Path(gt_dir_value.strip().strip('"')) if optional_text(gt_dir_value) else default_gt_dir(path)
+    if gt_dir is None or not gt_dir.exists():
+        return "No single test* GT directory found. Fill GT/NOKOV export dir manually.", [], "", ""
+
+    gt_suffixes = {".bvh", ".trc", ".csv", ".xrs"}
+    gt_files = sorted(
+        file
+        for file in gt_dir.rglob("*")
+        if file.is_file() and "_artifacts" not in file.relative_to(gt_dir).parts and file.suffix.lower() in gt_suffixes
+    )
+    choices = [str(file.relative_to(gt_dir)) for file in gt_files]
+    videos = sorted(file for file in gt_dir.rglob("*.mp4") if file.is_file())
+    third_person = str(videos[0]) if videos else ""
+    robowrist_count = len(list(path.glob("robowrist_*")))
+    summary = "\n".join(
+        [
+            f"GT dir: {gt_dir}",
+            f"GT files: {len(choices)}",
+            f"Third-person video candidates: {len(videos)}",
+            f"Robowrist folders: {robowrist_count}",
+        ]
+    )
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError('Web UI requires Gradio. Install it with: uv pip install -e ".[web]"') from exc
+    return summary, gr.update(choices=choices, value=choices), str(gt_dir), third_person
 
 
 def inspect_session(session_dir: str, segment: str) -> str:
@@ -197,6 +249,12 @@ def export_rrd(
     use_proxy: bool,
     display: bool,
     no_mano_mesh: bool,
+    gt_dir: str,
+    selected_gt_files: list[str] | None,
+    retarget_model: str,
+    include_third_person: bool,
+    third_person_video: str,
+    include_robowrist: bool,
     mano_model_dir: str,
     proxy_height: int,
 ) -> str:
@@ -207,12 +265,21 @@ def export_rrd(
         args.extend(["--ratio", ratio.strip() or "auto", "--offset", str(int(offset))])
     if optional_text(save_path):
         args.extend(["--save", save_path.strip()])
+    if optional_text(gt_dir):
+        args.extend(["--gt-dir", gt_dir.strip()])
+    for gt_file in selected_gt_files or []:
+        args.extend(["--gt-file", gt_file])
+    if include_third_person and optional_text(third_person_video):
+        args.extend(["--gt-third-person-video", third_person_video.strip()])
     if use_proxy:
         args.append("--use-proxy")
     if display:
         args.append("--display")
     if no_mano_mesh:
         args.append("--no-mano-mesh")
+    args.extend(["--retarget-model", retarget_model])
+    if not include_robowrist:
+        args.append("--no-robowrist")
     if optional_text(mano_model_dir):
         args.extend(["--mano-model-dir", mano_model_dir.strip()])
     args.extend(["--proxy-height", str(int(proxy_height))])
@@ -249,6 +316,13 @@ def language_updates(language: str):
         gr.update(label=labels["use_proxy"]),
         gr.update(label=labels["display"]),
         gr.update(label=labels["no_mano_mesh"]),
+        gr.update(value=labels["scan_button"]),
+        gr.update(label=labels["gt_dir"]),
+        gr.update(label=labels["gt_files"]),
+        gr.update(label=labels["retarget_model"]),
+        gr.update(label=labels["include_third_person"]),
+        gr.update(label=labels["third_person_video"]),
+        gr.update(label=labels["include_robowrist"]),
         gr.update(label=labels["export_height"]),
         gr.update(value=labels["export_button"]),
         gr.update(label=labels["nokov_source"]),
@@ -288,6 +362,11 @@ def build_app():
             package_button.click(package_data, inputs=[session_dir, segment, package_output, package_height, package_crf], outputs=output)
 
         with gr.Tab("导出 RRD / Export"):
+            scan_button = gr.Button(labels["scan_button"])
+            with gr.Row():
+                gt_dir = gr.Textbox(label=labels["gt_dir"], placeholder=r"Z:\...\test1")
+                retarget_model = gr.Radio(label=labels["retarget_model"], choices=["mano", "none", "smpl", "smplh"], value="mano")
+            gt_files = gr.CheckboxGroup(label=labels["gt_files"], choices=[], value=[])
             with gr.Row():
                 mode = gr.Radio(label=labels["mode"], choices=["time", "frame"], value="frame")
                 ratio = gr.Textbox(label=labels["ratio"], value="auto")
@@ -299,7 +378,12 @@ def build_app():
                 use_proxy = gr.Checkbox(label=labels["use_proxy"], value=True)
                 display = gr.Checkbox(label=labels["display"], value=False)
                 no_mano_mesh = gr.Checkbox(label=labels["no_mano_mesh"], value=False)
+                include_robowrist = gr.Checkbox(label=labels["include_robowrist"], value=True)
                 export_height = gr.Number(label=labels["export_height"], value=540, precision=0)
+            with gr.Row():
+                include_third_person = gr.Checkbox(label=labels["include_third_person"], value=True)
+                third_person_video = gr.Textbox(label=labels["third_person_video"], placeholder=r"Z:\...\test1\test1-1.mp4")
+            scan_button.click(scan_files, inputs=[session_dir, gt_dir], outputs=[output, gt_files, gt_dir, third_person_video])
             export_button = gr.Button(labels["export_button"], variant="primary")
             export_button.click(
                 export_rrd,
@@ -313,6 +397,12 @@ def build_app():
                     use_proxy,
                     display,
                     no_mano_mesh,
+                    gt_dir,
+                    gt_files,
+                    retarget_model,
+                    include_third_person,
+                    third_person_video,
+                    include_robowrist,
                     mano_model_dir,
                     export_height,
                 ],
@@ -357,6 +447,13 @@ def build_app():
                 use_proxy,
                 display,
                 no_mano_mesh,
+                scan_button,
+                gt_dir,
+                gt_files,
+                retarget_model,
+                include_third_person,
+                third_person_video,
+                include_robowrist,
                 export_height,
                 export_button,
                 nokov_source,

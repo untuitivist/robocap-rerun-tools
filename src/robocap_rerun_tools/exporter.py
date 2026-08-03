@@ -331,6 +331,7 @@ class GTFileSet:
     bvh: Path | None = None
     trc: Path | None = None
     csv: Path | None = None
+    xrs: Path | None = None
     colors: tuple[int, int, int] = (255, 210, 80)
     radius: float = 0.014
     connect_hands: bool = False
@@ -506,12 +507,14 @@ def detect_segment_name(videos: dict[str, VideoSpec], signals: dict[str, SignalS
     return next(iter(candidates))
 
 
-def discover_session(session_dir: Path, segment_name: str | None = None) -> SessionConfig:
+def discover_session(session_dir: Path, segment_name: str | None = None, include_robowrist: bool = True) -> SessionConfig:
     videos: dict[str, VideoSpec] = {}
     signals: dict[str, SignalSpec] = {}
     notes: dict[str, NoteSpec] = {}
 
     for label, pattern in VIDEO_PATTERNS.items():
+        if not include_robowrist and "wrist" in label:
+            continue
         pattern = pattern.format(segment=segment_name or "*")
         relative_path = find_first_relative_path(session_dir, pattern)
         if relative_path is None:
@@ -520,6 +523,8 @@ def discover_session(session_dir: Path, segment_name: str | None = None) -> Sess
             videos[label] = VideoSpec(label=label, entity=f"video/{label}", relative_path=relative_path)
 
     for label, (pattern, table, columns) in SIGNAL_SPECS.items():
+        if not include_robowrist and "wrist" in label:
+            continue
         pattern = pattern.format(segment=segment_name or "*")
         relative_path = find_first_relative_path(session_dir, pattern)
         if relative_path is None:
@@ -1410,10 +1415,16 @@ def load_bvh_track(
     )
 
 
-def parse_nokov_segment_hierarchy(lines: Sequence[str]) -> tuple[tuple[str, ...], tuple[int, ...]]:
+def split_nokov_cells(line: str, delimiter: str) -> list[str]:
+    if delimiter == ",":
+        return [cell.strip() for cell in next(csv.reader([line]))]
+    return line.strip().split()
+
+
+def parse_nokov_segment_hierarchy(lines: Sequence[str], delimiter: str = ",") -> tuple[tuple[str, ...], tuple[int, ...]]:
     section_index = next((index for index, line in enumerate(lines) if line.strip() == "[SegmentNames&Hierarchy]"), None)
     if section_index is None:
-        raise ValueError("CSV file has no [SegmentNames&Hierarchy] section")
+        raise ValueError("NOKOV rigid file has no [SegmentNames&Hierarchy] section")
 
     names: list[str] = []
     parents_raw: list[str] = []
@@ -1423,7 +1434,7 @@ def parse_nokov_segment_hierarchy(lines: Sequence[str]) -> tuple[tuple[str, ...]
             break
         if stripped.startswith("["):
             break
-        cells = [cell.strip() for cell in stripped.split(",")]
+        cells = split_nokov_cells(stripped, delimiter)
         if not cells or not cells[0]:
             continue
         names.append(cells[0])
@@ -1434,14 +1445,16 @@ def parse_nokov_segment_hierarchy(lines: Sequence[str]) -> tuple[tuple[str, ...]
     return tuple(names), parents
 
 
-def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[np.ndarray, tuple[str, ...], np.ndarray, tuple[int, ...]]:
+def parse_nokov_pose_file(path: Path, scale: float, max_frames: int | None, delimiter: str) -> tuple[np.ndarray, tuple[str, ...], np.ndarray, tuple[int, ...]]:
     lines = read_text_lines_with_fallback(path)
-    names, parents = parse_nokov_segment_hierarchy(lines)
+    names, parents = parse_nokov_segment_hierarchy(lines, delimiter)
     segment_data_index = next((index for index, line in enumerate(lines) if line.strip() == "[SegmentData]"), None)
     if segment_data_index is None:
-        raise ValueError(f"CSV file has no [SegmentData] section: {path}")
+        raise ValueError(f"NOKOV rigid file has no [SegmentData] section: {path}")
 
-    header = next(csv.reader([lines[segment_data_index + 2]]))
+    header = split_nokov_cells(lines[segment_data_index + 2], delimiter)
+    if delimiter != "," and header and header[0].lower() == "timestamp":
+        header = ["Frame#"] + header
     x_columns: list[int] = []
     y_columns: list[int] = []
     z_columns: list[int] = []
@@ -1458,7 +1471,7 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
                 y_columns.append(header.index(f"YToParent{segment_index}"))
                 z_columns.append(header.index(f"ZToParent{segment_index}"))
             except ValueError as exc:
-                raise ValueError(f"CSV missing global or parent XYZ columns for segment {segment_index}: {path}") from exc
+                raise ValueError(f"NOKOV rigid file missing global or parent XYZ columns for segment {segment_index}: {path}") from exc
         try:
             q_columns.append(
                 (
@@ -1480,7 +1493,7 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
     for line in lines[segment_data_index + 3 :]:
         if not line.strip():
             continue
-        cells = next(csv.reader([line]))
+        cells = split_nokov_cells(line, delimiter)
         if len(cells) < 2 or not cells[0].strip().isdigit():
             continue
         timestamps.append(int(float(cells[1].strip())) * 1_000_000)
@@ -1510,7 +1523,7 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
         frames.append(frame_positions)
 
     if not frames:
-        raise ValueError(f"CSV file has no data rows: {path}")
+        raise ValueError(f"NOKOV rigid file has no data rows: {path}")
     positions = np.asarray(frames, dtype=np.float32)
     if np.isnan(positions).any():
         positions = fill_missing_marker_positions(positions)
@@ -1518,6 +1531,14 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
     indexes = downsample_indexes(len(timestamps_ns), max_frames)
     expanded_names, expanded_parents = expand_nokov_csv_pose_names(names, parents, q_columns)
     return timestamps_ns[indexes], expanded_names, positions[indexes], expanded_parents
+
+
+def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[np.ndarray, tuple[str, ...], np.ndarray, tuple[int, ...]]:
+    return parse_nokov_pose_file(path, scale, max_frames, ",")
+
+
+def parse_xrs(path: Path, scale: float, max_frames: int | None) -> tuple[np.ndarray, tuple[str, ...], np.ndarray, tuple[int, ...]]:
+    return parse_nokov_pose_file(path, scale, max_frames, "whitespace")
 
 
 def quaternion_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
@@ -1568,6 +1589,31 @@ def load_csv_track(
     radius: float = 0.014,
 ) -> GTMarkerTrack:
     timestamps_ns, joint_names, positions, parents = parse_nokov_csv(path, scale, max_frames)
+    connections = tuple((parent, child) for child, parent in enumerate(parents) if parent >= 0)
+    return GTMarkerTrack(
+        label=label,
+        entity=entity,
+        source=source,
+        timestamps_ns=timestamps_ns,
+        positions=positions,
+        marker_names=joint_names,
+        connections=connections,
+        colors=colors,
+        radius=radius,
+    )
+
+
+def load_xrs_track(
+    path: Path,
+    label: str,
+    entity: str,
+    source: str,
+    scale: float,
+    max_frames: int | None,
+    colors: tuple[int, int, int] = (80, 200, 255),
+    radius: float = 0.014,
+) -> GTMarkerTrack:
+    timestamps_ns, joint_names, positions, parents = parse_xrs(path, scale, max_frames)
     connections = tuple((parent, child) for child, parent in enumerate(parents) if parent >= 0)
     return GTMarkerTrack(
         label=label,
@@ -1852,45 +1898,105 @@ def find_gt_by_patterns(gt_dir: Path, patterns: Iterable[str]) -> Path | None:
     return None
 
 
+def safe_entity_label(path: Path) -> str:
+    label = re.sub(r"[^A-Za-z0-9_]+", "_", path.stem).strip("_")
+    return label or "track"
+
+
+def infer_gt_side(path: Path) -> str | None:
+    lowered = path.stem.lower()
+    left_tokens = ("lhand", "left", "_l_", "-l-", "左")
+    right_tokens = ("rhand", "right", "_r_", "-r-", "右")
+    if any(token in lowered for token in left_tokens):
+        return "left"
+    if any(token in lowered for token in right_tokens):
+        return "right"
+    return None
+
+
+def gt_file_visual_style(path: Path) -> tuple[tuple[int, int, int], float, bool]:
+    lowered = path.stem.lower()
+    if "tracker" in lowered or "head" in lowered or path.suffix.lower() in {".csv", ".xrs"}:
+        return (80, 200, 255), 0.035, False
+    if infer_gt_side(path) == "right":
+        return (255, 120, 90), 0.014, True
+    if infer_gt_side(path) == "left":
+        return (255, 210, 80), 0.014, True
+    if "hand" in lowered:
+        return (170, 130, 255), 0.014, True
+    return (255, 210, 80), 0.014, False
+
+
 def discover_gt_file_sets(gt_dir: Path) -> list[GTFileSet]:
-    prefix = gt_dir.name
-    return [
-        GTFileSet(
-            label="camera_trackers",
-            side=None,
-            trc=find_gt_by_patterns(gt_dir, (f"{prefix}-Tracker0.trc", "*Tracker0.trc", "*head.trc", "*Head.trc")),
-            csv=find_gt_by_patterns(gt_dir, (f"{prefix}-Tracker0.csv", "*Tracker0.csv", "*head.csv", "*Head.csv")),
-            colors=(80, 200, 255),
-            radius=0.035,
-        ),
-        GTFileSet(
-            label="LHand",
-            side="left",
-            bvh=find_gt_by_patterns(gt_dir, (f"{prefix}-LHand.bvh", "*LHand.bvh", "*Left.bvh", "*_Left.bvh")),
-            trc=find_gt_by_patterns(gt_dir, (f"{prefix}-LHand.trc", "*LHand.trc", "*Left.trc", "*_Left.trc")),
-            csv=find_gt_by_patterns(gt_dir, (f"{prefix}-LHand.csv", "*LHand.csv", "*Left.csv", "*_Left.csv")),
-            colors=(255, 210, 80),
-            connect_hands=True,
-        ),
-        GTFileSet(
-            label="RHand",
-            side="right",
-            bvh=find_gt_by_patterns(gt_dir, (f"{prefix}-RHand.bvh", "*RHand.bvh", "*Right.bvh", "*_Right.bvh")),
-            trc=find_gt_by_patterns(gt_dir, (f"{prefix}-RHand.trc", "*RHand.trc", "*Right.trc", "*_Right.trc")),
-            csv=find_gt_by_patterns(gt_dir, (f"{prefix}-RHand.csv", "*RHand.csv", "*Right.csv", "*_Right.csv")),
-            colors=(255, 120, 90),
-            connect_hands=True,
-        ),
-        GTFileSet(
-            label="hand",
-            side=None,
-            bvh=find_gt_by_patterns(gt_dir, (f"{prefix}-hand.bvh", "*-hand.bvh", "*hand.bvh")),
-            trc=find_gt_by_patterns(gt_dir, (f"{prefix}-hand.trc", "*-hand.trc", "*hand.trc")),
-            csv=find_gt_by_patterns(gt_dir, (f"{prefix}-hand.csv", "*-hand.csv", "*hand.csv")),
-            colors=(170, 130, 255),
-            connect_hands=True,
-        ),
+    suffix_to_field = {".bvh": "bvh", ".trc": "trc", ".csv": "csv", ".xrs": "xrs"}
+    suffix_priority = {".bvh": 0, ".trc": 1, ".csv": 2, ".xrs": 3}
+    paths = [
+        path
+        for path in gt_dir.rglob("*")
+        if path.is_file()
+        and "_artifacts" not in path.relative_to(gt_dir).parts
+        and path.suffix.lower() in suffix_to_field
     ]
+    paths.sort(key=lambda path: (suffix_priority[path.suffix.lower()], str(path.relative_to(gt_dir)).lower()))
+    file_sets: list[GTFileSet] = []
+    used_labels: dict[str, int] = {}
+    for path in paths:
+        base_label = safe_entity_label(path)
+        count = used_labels.get(base_label, 0)
+        used_labels[base_label] = count + 1
+        label = base_label if count == 0 else f"{base_label}_{count + 1}"
+        colors, radius, connect_hands = gt_file_visual_style(path)
+        kwargs: dict[str, Any] = {
+            "label": label,
+            "side": infer_gt_side(path),
+            "colors": colors,
+            "radius": radius,
+            "connect_hands": connect_hands,
+        }
+        kwargs[suffix_to_field[path.suffix.lower()]] = path
+        file_sets.append(GTFileSet(**kwargs))
+    return file_sets
+
+
+def resolve_gt_file_paths(gt_dir: Path, gt_files: Sequence[Path] | None) -> tuple[list[Path], Path | None]:
+    if not gt_files:
+        return [], None
+    resolved_files: list[Path] = []
+    third_person_video: Path | None = None
+    for raw_path in gt_files:
+        path = raw_path if raw_path.is_absolute() else gt_dir / raw_path
+        if not path.exists():
+            raise FileNotFoundError(path)
+        if path.suffix.lower() == ".mp4":
+            third_person_video = path
+        else:
+            resolved_files.append(path)
+    return resolved_files, third_person_video
+
+
+def gt_file_sets_from_paths(gt_dir: Path, paths: Sequence[Path]) -> list[GTFileSet]:
+    suffix_to_field = {".bvh": "bvh", ".trc": "trc", ".csv": "csv", ".xrs": "xrs"}
+    file_sets: list[GTFileSet] = []
+    used_labels: dict[str, int] = {}
+    for path in sorted(paths, key=lambda value: str(value).lower()):
+        suffix = path.suffix.lower()
+        if suffix not in suffix_to_field:
+            continue
+        base_label = safe_entity_label(path)
+        count = used_labels.get(base_label, 0)
+        used_labels[base_label] = count + 1
+        label = base_label if count == 0 else f"{base_label}_{count + 1}"
+        colors, radius, connect_hands = gt_file_visual_style(path)
+        kwargs: dict[str, Any] = {
+            "label": label,
+            "side": infer_gt_side(path),
+            "colors": colors,
+            "radius": radius,
+            "connect_hands": connect_hands,
+        }
+        kwargs[suffix_to_field[suffix]] = path
+        file_sets.append(GTFileSet(**kwargs))
+    return file_sets
 
 
 def append_note(note_parts: list[str], message: str) -> None:
@@ -1904,12 +2010,15 @@ def load_test_gt_dir(
     bvh_scale: float,
     max_frames: int | None,
     mano_model_dir: Path | None,
+    gt_files: Sequence[Path] | None = None,
 ) -> tuple[tuple[GTMarkerTrack, ...], tuple[GTManoMeshTrack, ...], Path | None, tuple[str, ...]]:
     tracks: list[GTMarkerTrack] = []
     mano_tracks: list[GTManoMeshTrack] = []
     note_parts: list[str] = []
+    selected_files, selected_third_person_video = resolve_gt_file_paths(gt_dir, gt_files)
+    file_sets = gt_file_sets_from_paths(gt_dir, selected_files) if gt_files else discover_gt_file_sets(gt_dir)
 
-    for file_set in discover_gt_file_sets(gt_dir):
+    for file_set in file_sets:
         if file_set.bvh is not None:
             try:
                 bvh_track = load_bvh_track(
@@ -1964,9 +2073,26 @@ def load_test_gt_dir(
                     mano_tracks.append(mano_mesh_from_marker_track(csv_track, mano_model_dir, file_set.side))
             except Exception as exc:
                 append_note(note_parts, f"failed to load CSV {file_set.csv.name}: {exc}")
+        if file_set.xrs is not None:
+            try:
+                xrs_track = load_xrs_track(
+                    file_set.xrs,
+                    file_set.label,
+                    f"{GT_TRACKS_ENTITY}/xrs/{file_set.label}",
+                    "xrs",
+                    scale,
+                    max_frames,
+                    colors=file_set.colors,
+                    radius=file_set.radius,
+                )
+                tracks.append(xrs_track)
+                if mano_model_dir is not None and file_set.side is not None:
+                    mano_tracks.append(mano_mesh_from_marker_track(xrs_track, mano_model_dir, file_set.side))
+            except Exception as exc:
+                append_note(note_parts, f"failed to load XRS {file_set.xrs.name}: {exc}")
 
     prefix = gt_dir.name
-    third_person_video = find_gt_by_patterns(gt_dir, (f"{prefix}-1.mp4", "*.mp4"))
+    third_person_video = selected_third_person_video or find_gt_by_patterns(gt_dir, (f"{prefix}-1.mp4", "*.mp4"))
     return tuple(tracks), tuple(mano_tracks), third_person_video if third_person_video is not None and third_person_video.exists() else None, tuple(note_parts)
 
 
@@ -2052,9 +2178,12 @@ def load_gt_config(args: argparse.Namespace, session_dir: Path) -> GTConfig | No
             args.gt_coordinate_scale,
             args.bvh_coordinate_scale,
             args.gt_max_frames,
-            args.mano_model_dir if not args.no_mano_mesh else None,
+            args.mano_model_dir if not args.no_mano_mesh and args.retarget_model == "mano" else None,
+            args.gt_file,
         )
         note_parts.extend(gt_note_parts)
+        if args.retarget_model in {"smpl", "smplh"}:
+            note_parts.append(f"{args.retarget_model.upper()} retargeting is selectable but not implemented yet; GT skeleton/rigid tracks were loaded without mesh retargeting.")
 
     third_person_video = args.gt_third_person_video or discovered_third_person_video
 
@@ -2171,7 +2300,11 @@ def log_gt_mano_mesh(track: GTManoMeshTrack, capture_window: TimeWindow | None) 
 
 
 def marker_connection_strips(positions: np.ndarray, connections: Sequence[tuple[int, int]]) -> list[np.ndarray]:
-    return [np.stack([positions[first], positions[second]], axis=0) for first, second in connections]
+    return [
+        np.stack([positions[first], positions[second]], axis=0)
+        for first, second in connections
+        if first < len(positions) and second < len(positions)
+    ]
 
 
 def log_gt_marker_track(track: GTMarkerTrack, capture_window: TimeWindow | None) -> None:
@@ -2245,12 +2378,49 @@ def signal_or_note_view(config: SessionConfig, label: str) -> rrb.View:
     return rrb.TextDocumentView(name=label, origin=config.notes[label].origin)
 
 
+def available_video_view(config: SessionConfig, label: str) -> rrb.View | None:
+    if label not in config.videos:
+        return None
+    spec = config.videos[label]
+    return rrb.Spatial2DView(name=label, origin=spec.entity)
+
+
+def available_signal_view(config: SessionConfig, label: str) -> rrb.View | None:
+    if label not in config.signals:
+        return None
+    spec = config.signals[label]
+    return rrb.TimeSeriesView(name=label, origin=spec.origin)
+
+
+def non_empty_grid(name: str, views: Sequence[rrb.View], grid_columns: int = 1) -> rrb.ContainerLike:
+    if not views:
+        return rrb.TextDocumentView(name=name, origin=GT_NOTE_ENTITY)
+    return rrb.Grid(*views, grid_columns=grid_columns, name=name)
+
+
 def source_has_marker_tracks(gt_config: GTConfig | None, source: str) -> bool:
     return gt_config is not None and any(track.source == source for track in gt_config.marker_tracks)
 
 
 def source_has_mano_mesh_tracks(gt_config: GTConfig | None, source: str) -> bool:
     return gt_config is not None and any(track.source == source for track in gt_config.mano_mesh_tracks)
+
+
+def ordered_gt_sources(sources: Iterable[str]) -> list[str]:
+    priority = {"bvh": 0, "trc": 1, "csv": 2, "xrs": 3}
+    return sorted(set(sources), key=lambda source: (priority.get(source, 99), source))
+
+
+def gt_marker_sources(gt_config: GTConfig | None) -> list[str]:
+    if gt_config is None:
+        return []
+    return ordered_gt_sources(track.source for track in gt_config.marker_tracks)
+
+
+def gt_mano_sources(gt_config: GTConfig | None) -> list[str]:
+    if gt_config is None:
+        return []
+    return ordered_gt_sources(track.source for track in gt_config.mano_mesh_tracks)
 
 
 def gt_skeleton_source_view(gt_config: GTConfig | None, source: str) -> rrb.View:
@@ -2266,21 +2436,23 @@ def gt_mesh_source_view(gt_config: GTConfig | None, source: str) -> rrb.View:
 
 
 def gt_skeleton_tabs(gt_config: GTConfig | None) -> rrb.Tabs:
+    sources = gt_marker_sources(gt_config)
+    if not sources:
+        return rrb.Tabs(rrb.TextDocumentView(name="No GT skeleton", origin=GT_NOTE_ENTITY), name="GT skeleton")
     return rrb.Tabs(
-        gt_skeleton_source_view(gt_config, "bvh"),
-        gt_skeleton_source_view(gt_config, "trc"),
-        gt_skeleton_source_view(gt_config, "csv"),
-        active_tab="BVH",
+        *(gt_skeleton_source_view(gt_config, source) for source in sources),
+        active_tab=sources[0].upper(),
         name="GT skeleton",
     )
 
 
 def gt_mesh_tabs(gt_config: GTConfig | None) -> rrb.Tabs:
+    sources = gt_mano_sources(gt_config)
+    if not sources:
+        return rrb.Tabs(rrb.TextDocumentView(name="No GT MANO mesh", origin=GT_NOTE_ENTITY), name="GT MANO mesh")
     return rrb.Tabs(
-        gt_mesh_source_view(gt_config, "bvh"),
-        gt_mesh_source_view(gt_config, "trc"),
-        gt_mesh_source_view(gt_config, "csv"),
-        active_tab="BVH",
+        *(gt_mesh_source_view(gt_config, source) for source in sources),
+        active_tab=sources[0].upper(),
         name="GT MANO mesh",
     )
 
@@ -2292,84 +2464,38 @@ def gt_third_person_video_view(gt_config: GTConfig | None) -> rrb.View:
 
 
 def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike:
-    return rrb.Grid(
-        rrb.Horizontal(
-            signal_or_note_view(config, "middle_mag"),
-            rrb.Vertical(
-                rrb.Horizontal(
-                    signal_or_note_view(config, "left_robocap_acc"),
-                    signal_or_note_view(config, "left_robocap_gyro"),
-                    name="Left robocap IMU",
-                ),
-                rrb.Horizontal(
-                    signal_or_note_view(config, "right_robocap_acc"),
-                    signal_or_note_view(config, "right_robocap_gyro"),
-                    name="Right robocap IMU",
-                ),
-                row_shares=[1.0, 1.0],
-                name="Robocap IMU rows",
-            ),
-            column_shares=[1.0, 2.0],
-            name="Robocap sensors",
-        ),
-        grid_columns=1,
-        name="Robocap sensors only",
-    )
+    views = [view for label in ("middle_mag", "left_robocap_acc", "left_robocap_gyro", "right_robocap_acc", "right_robocap_gyro") if (view := available_signal_view(config, label)) is not None]
+    return non_empty_grid("Robocap sensors only", views, grid_columns=3)
 
 
 def all_signals_container(config: SessionConfig) -> rrb.ContainerLike:
-    return rrb.Grid(
-        robocap_sensors_container(config),
-        rrb.Horizontal(
-            signal_or_note_view(config, "left_wrist_mag"),
-            signal_or_note_view(config, "left_wrist_acc"),
-            signal_or_note_view(config, "left_wrist_gyro"),
-            name="Left wrist sensors",
-        ),
-        rrb.Horizontal(
-            signal_or_note_view(config, "right_wrist_mag"),
-            signal_or_note_view(config, "right_wrist_acc"),
-            signal_or_note_view(config, "right_wrist_gyro"),
-            name="Right wrist sensors",
-        ),
-        grid_columns=1,
-        row_shares=[1.6, 1.0, 1.0],
-        name="Signals",
-    )
+    views = [view for label in SIGNAL_SLOT_ORDER if (view := available_signal_view(config, label)) is not None]
+    return non_empty_grid("Signals", views, grid_columns=3)
 
 
 def display_videos_container(config: SessionConfig) -> rrb.ContainerLike:
-    return rrb.Horizontal(
-        rrb.Vertical(
-            video_or_note_view(config, "left"),
-            video_or_note_view(config, "right"),
-            row_shares=[1.0, 1.0],
-            name="left / right",
-        ),
-        rrb.Vertical(
-            video_or_note_view(config, "left_eye"),
-            video_or_note_view(config, "right_eye"),
-            row_shares=[1.0, 1.0],
-            name="left eye / right eye",
-        ),
-        rrb.Vertical(
-            video_or_note_view(config, "left_front"),
-            video_or_note_view(config, "right_front"),
-            row_shares=[1.0, 1.0],
-            name="left front / right front",
-        ),
-        column_shares=[1.0, 1.0, 1.0],
-        name="Robocap videos",
-    )
+    columns: list[rrb.ContainerLike] = []
+    for name, labels in (
+        ("left / right", ("left", "right")),
+        ("left eye / right eye", ("left_eye", "right_eye")),
+        ("left front / right front", ("left_front", "right_front")),
+    ):
+        views = [view for label in labels if (view := available_video_view(config, label)) is not None]
+        if views:
+            columns.append(rrb.Vertical(*views, row_shares=[1.0 for _ in views], name=name))
+    if not columns:
+        return rrb.TextDocumentView(name="Robocap videos", origin=GT_NOTE_ENTITY)
+    return rrb.Horizontal(*columns, column_shares=[1.0 for _ in columns], name="Robocap videos")
 
 
 def display_gt_skeleton_row(gt_config: GTConfig | None) -> rrb.ContainerLike:
+    sources = gt_marker_sources(gt_config)
+    if not sources:
+        return rrb.TextDocumentView(name="GT skeleton", origin=GT_NOTE_ENTITY)
     return rrb.Horizontal(
-        gt_skeleton_source_view(gt_config, "bvh"),
-        gt_skeleton_source_view(gt_config, "csv"),
-        gt_skeleton_source_view(gt_config, "trc"),
-        column_shares=[1.0, 1.0, 1.0],
-        name="GT skeleton bvh / csv / trc",
+        *(gt_skeleton_source_view(gt_config, source) for source in sources),
+        column_shares=[1.0 for _ in sources],
+        name="GT skeleton",
     )
 
 
@@ -2393,17 +2519,10 @@ def build_blueprint(config: SessionConfig, gt_config: GTConfig | None = None, pr
     signals_container = all_signals_container(config)
 
     rows: list[rrb.ContainerLike] = [
-        rrb.Grid(
-            video_or_note_view(config, "left"),
-            video_or_note_view(config, "left_eye"),
-            video_or_note_view(config, "left_front"),
-            video_or_note_view(config, "left_wrist_down"),
-            video_or_note_view(config, "right"),
-            video_or_note_view(config, "right_eye"),
-            video_or_note_view(config, "right_front"),
-            video_or_note_view(config, "right_wrist_down"),
+        non_empty_grid(
+            "Videos",
+            [view for label in VIDEO_SLOT_ORDER if (view := available_video_view(config, label)) is not None],
             grid_columns=4,
-            name="Videos",
         ),
         signals_container,
     ]
@@ -2428,13 +2547,9 @@ def build_blueprint(config: SessionConfig, gt_config: GTConfig | None = None, pr
 
 def print_layout(config: SessionConfig) -> None:
     print("layout:")
-    print("  left  | left_eye  | left_front  | left_wrist_down")
-    print("  right | right_eye | right_front | right_wrist_down")
-    print("  middle_mag | left_robocap_acc  | left_robocap_gyro")
-    print("  middle_mag | right_robocap_acc | right_robocap_gyro")
-    print("  left_wrist_mag  | left_wrist_acc  | left_wrist_gyro")
-    print("  right_wrist_mag | right_wrist_acc | right_wrist_gyro")
-    print("  structure: Vertical(Videos, Signals)")
+    print(f"  videos: {', '.join(label for label in VIDEO_SLOT_ORDER if label in config.videos) or 'none'}")
+    print(f"  signals: {', '.join(label for label in SIGNAL_SLOT_ORDER if label in config.signals) or 'none'}")
+    print("  structure: Vertical(available Videos, available Signals, GT)")
     missing_labels = sorted(config.notes)
     if missing_labels:
         print(f"  no-data slots: {', '.join(missing_labels)}")
@@ -2570,6 +2685,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--gt-file",
+        type=Path,
+        action="append",
+        default=None,
+        help="Explicit GT file to include. May be repeated. Relative paths are resolved under --gt-dir.",
+    )
+    parser.add_argument(
         "--gt-mesh",
         type=Path,
         default=None,
@@ -2598,6 +2720,12 @@ def parse_args() -> argparse.Namespace:
         "--no-mano-mesh",
         action="store_true",
         help="Disable MANO mesh generation from test* hand TRC tracks.",
+    )
+    parser.add_argument(
+        "--retarget-model",
+        choices=("none", "mano", "smpl", "smplh"),
+        default="mano",
+        help="Target model for marker-to-mesh retargeting. Currently MANO is implemented; SMPL/SMPLH produce an explicit note.",
     )
     parser.add_argument(
         "--gt-coordinate-scale",
@@ -2651,6 +2779,11 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Optional maximum GT frames after uniform downsampling. Default 0 keeps all GT frames.",
     )
+    parser.add_argument(
+        "--no-robowrist",
+        action="store_true",
+        help="Do not discover or log robowrist video/sensor streams.",
+    )
     return parser.parse_args()
 
 
@@ -2659,7 +2792,7 @@ def main() -> None:
     if args.gt_max_frames == 0:
         args.gt_max_frames = None
     session_dir = args.session_dir
-    config = discover_session(session_dir, args.segment)
+    config = discover_session(session_dir, args.segment, include_robowrist=not args.no_robowrist)
     gt_config = load_gt_config(args, session_dir)
     gt_config = maybe_align_gt_to_robocap(session_dir, config, gt_config, not args.no_gt_align_to_robocap)
 

@@ -61,6 +61,10 @@ start_web.bat
 
 Then use `http://127.0.0.1:7860` for inspect, package, offset inspection, and RRD export.
 The web UI has a Chinese/English language switch and a built-in Docs tab.
+On the export tab, use `Scan files` to populate the GT/NOKOV file list. You can then choose which
+`.bvh`, `.trc`, `.csv`, and `.xrs` files enter the RRD, choose whether to include a third-person
+video, choose whether robowrist streams are included, and choose the retarget target. MANO is
+implemented; SMPL/SMPLH are currently explicit placeholders in the recording notes.
 
 Package one session for sharing. Videos are compressed by default:
 
@@ -102,7 +106,8 @@ The display layout keeps:
 
 - Top video row: `left/right`, `left_eye/right_eye`, `left_front/right_front`.
 - Robocap sensors only.
-- Bottom row tabs for BVH, CSV, and TRC skeleton/mesh views.
+- Bottom row views for the GT formats that are actually present. Multiple rigid bodies from one
+  XRS/CSV file are shown in the same 3D space for that format.
 
 ## Offset Inspection
 

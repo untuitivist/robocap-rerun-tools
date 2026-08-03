@@ -108,6 +108,11 @@ http://127.0.0.1:7860
 - export time/frame RRD
 - inspect-offset 和 sweep-offset
 
+在“导出 RRD / Export”页先点“扫描文件”，网页会列出 GT/NOKOV 目录下的
+`.bvh`、`.trc`、`.csv`、`.xrs` 文件。你可以勾选哪些文件进入 RRD，也可以选择是否包含第三人称视频、
+是否包含 robowrist 数据，以及选择重定向模型。当前真正实现的是 MANO；SMPL/SMPLH 先作为显式选项保留，
+导出时会在记录说明里写明尚未实现，不会假装已经生成对应 mesh。
+
 打包一个 session 给别人用。默认会压缩视频，不会把 `.venv`、`_artifacts`、RRD、MANO 模型一起打进去：
 
 ```bat

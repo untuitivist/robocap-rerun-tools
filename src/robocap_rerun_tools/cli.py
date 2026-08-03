@@ -14,7 +14,7 @@ from typing import Iterable
 
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
-TEXT_SUFFIXES = {".csv", ".tsv", ".trc", ".bvh"}
+TEXT_SUFFIXES = {".csv", ".tsv", ".trc", ".bvh", ".xrs"}
 
 
 @dataclass(frozen=True)
@@ -305,6 +305,38 @@ def hierarchical_csv_times(path: Path) -> list[float] | None:
     return normalize_time_values(vals, "timestamp")
 
 
+def xrs_summary(path: Path) -> StreamSummary:
+    header_index = None
+    time_index = None
+    rows: list[list[str]] = []
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            cells = stripped.split()
+            rows.append(cells)
+            lowered = [cell.lower() for cell in cells]
+            if "timestamp" in lowered:
+                header_index = len(rows) - 1
+                time_index = lowered.index("timestamp")
+                if time_index == 0:
+                    time_index = 1
+    if header_index is None or time_index is None:
+        return StreamSummary(path, "xrs", None, None, None, None, None, None, None, 1, "missing XRS Timestamp header")
+    vals: list[float] = []
+    for row in rows[header_index + 1 :]:
+        if len(row) <= time_index:
+            continue
+        try:
+            vals.append(float(row[time_index]))
+        except ValueError:
+            continue
+    if not vals:
+        return StreamSummary(path, "xrs", 0, None, None, None, None, None, None, 1, "no XRS timestamp rows")
+    return summarize_times(path, "xrs", normalize_time_values(vals, "timestamp"))
+
+
 def choose_time_column(fieldnames: list[str]) -> str | None:
     lower_map = {name.lower().strip(): name for name in fieldnames}
     exact = ("capture_time", "capture_time_ns", "timestamp", "timestamps", "time", "log_time", "log_time_ns")
@@ -342,6 +374,8 @@ def summarize_file(path: Path, ffprobe: str) -> StreamSummary:
         return trc_summary(path)
     if suffix == ".bvh":
         return bvh_summary(path)
+    if suffix == ".xrs":
+        return xrs_summary(path)
     if suffix in {".csv", ".tsv"}:
         return csv_summary(path)
     return StreamSummary(path, suffix.lstrip("."), None, None, None, None, None, None, None, 0, "")
@@ -602,10 +636,15 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--use-proxy", action="store_true")
     parser.add_argument("--proxy-height", type=int, default=540)
     parser.add_argument("--display", action="store_true", help="Use display blueprint preset.")
+    parser.add_argument("--gt-dir", type=Path, default=None)
+    parser.add_argument("--gt-file", type=Path, action="append", default=None)
+    parser.add_argument("--gt-third-person-video", type=Path, default=None)
     parser.add_argument("--mano-model-dir", type=Path, default=Path("Z:/MODELS/hand_models/mano"))
     parser.add_argument("--no-mano-mesh", action="store_true")
+    parser.add_argument("--retarget-model", choices=("none", "mano", "smpl", "smplh"), default="mano")
     parser.add_argument("--gt-coordinate-scale", type=float, default=1.0)
     parser.add_argument("--bvh-coordinate-scale", type=float, default=0.01)
+    parser.add_argument("--no-robowrist", action="store_true")
     parser.add_argument("--spawn", action="store_true")
     parser.add_argument("--inspect", action="store_true")
 
@@ -630,11 +669,19 @@ def command_export(args: argparse.Namespace) -> int:
         str(args.bvh_coordinate_scale),
         "--proxy-height",
         str(args.proxy_height),
+        "--retarget-model",
+        args.retarget_model,
     ]
     if args.segment:
         argv.extend(["--segment", args.segment])
     if args.save:
         argv.extend(["--save", str(args.save)])
+    if args.gt_dir:
+        argv.extend(["--gt-dir", str(args.gt_dir)])
+    for gt_file in args.gt_file or []:
+        argv.extend(["--gt-file", str(gt_file)])
+    if args.gt_third_person_video:
+        argv.extend(["--gt-third-person-video", str(args.gt_third_person_video)])
     if args.mode == "frame" and args.ratio != "auto":
         argv.extend(["--gt-frame-ratio", args.ratio])
     if args.use_proxy:
@@ -643,6 +690,8 @@ def command_export(args: argparse.Namespace) -> int:
         argv.extend(["--blueprint-preset", "display"])
     if args.no_mano_mesh:
         argv.append("--no-mano-mesh")
+    if args.no_robowrist:
+        argv.append("--no-robowrist")
     if args.spawn:
         argv.append("--spawn")
     if args.inspect:
