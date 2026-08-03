@@ -33,6 +33,12 @@ For development tools:
 uv pip install -e ".[dev]"
 ```
 
+For the local browser UI:
+
+```bat
+uv pip install -e ".[web]"
+```
+
 Check the CLI:
 
 ```bat
@@ -40,6 +46,14 @@ robocap-rerun --help
 ```
 
 ## Common Usage
+
+Start the local browser UI:
+
+```bat
+robocap-rerun web --open
+```
+
+Then use `http://127.0.0.1:7860` for inspect, package, offset inspection, and RRD export.
 
 Package one session for sharing. Videos are compressed by default:
 

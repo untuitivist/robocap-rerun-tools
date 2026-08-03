@@ -40,6 +40,13 @@ def test_package_parser_defaults_to_compressed_video() -> None:
     assert args.proxy_height == 540
 
 
+def test_web_parser_defaults_to_localhost() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["web"])
+    assert args.host == "127.0.0.1"
+    assert args.port == 7860
+
+
 def test_package_discovery_excludes_artifacts_by_default(tmp_path: Path) -> None:
     (tmp_path / "robocap_segment1_video_left.mp4").write_text("", encoding="utf-8")
     artifacts = tmp_path / "_artifacts" / "segment1" / "inspection"

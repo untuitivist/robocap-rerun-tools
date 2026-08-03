@@ -23,6 +23,9 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.6",
 ]
+web = [
+  "gradio>=4.44",
+]
 
 [project.scripts]
 robocap-rerun = "robocap_rerun_tools.cli:main"
@@ -33,4 +36,3 @@ package = true
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-

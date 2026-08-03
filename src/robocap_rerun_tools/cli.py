@@ -572,6 +572,12 @@ def command_package_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_web(args: argparse.Namespace) -> int:
+    from robocap_rerun_tools.web_app import main as web_main
+
+    return web_main(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="robocap-rerun")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -621,6 +627,12 @@ def build_parser() -> argparse.ArgumentParser:
     package_parser.add_argument("--include-rrd", action="store_true")
     package_parser.add_argument("--dry-run", action="store_true")
     package_parser.set_defaults(func=command_package_data)
+
+    web_parser = sub.add_parser("web", help="Start a local browser UI.")
+    web_parser.add_argument("--host", default="127.0.0.1")
+    web_parser.add_argument("--port", type=int, default=7860)
+    web_parser.add_argument("--open", action="store_true", help="Open the browser automatically.")
+    web_parser.set_defaults(func=command_web)
     return parser
 
 

@@ -67,6 +67,12 @@ uv pip install -e .
 uv pip install -e ".[dev]"
 ```
 
+如果要使用本地网页：
+
+```bat
+uv pip install -e ".[web]"
+```
+
 检查 CLI 是否可用：
 
 ```bat
@@ -74,6 +80,25 @@ robocap-rerun --help
 ```
 
 ## 常用命令
+
+启动本地 Web UI：
+
+```bat
+robocap-rerun web --open
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:7860
+```
+
+网页里可以做：
+
+- inspect 帧率和异常帧间隔
+- package-data 打包数据，默认压缩视频
+- export time/frame RRD
+- inspect-offset 和 sweep-offset
 
 打包一个 session 给别人用。默认会压缩视频，不会把 `.venv`、`_artifacts`、RRD、MANO 模型一起打进去：
 
@@ -220,6 +245,13 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --no-
 cd robocap-rerun-tools
 git pull
 uv pip install -e .
+```
+
+如果要用网页：
+
+```bat
+uv pip install -e ".[web]"
+robocap-rerun web --open
 ```
 
 如果依赖有变化，也可以重新同步开发依赖：
