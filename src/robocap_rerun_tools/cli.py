@@ -89,7 +89,31 @@ def ratio_to_float(value: str | None) -> float | None:
 def video_summary(path: Path, ffprobe: str) -> StreamSummary:
     data = ffprobe_video(path, ffprobe)
     if not data:
-        return StreamSummary(path, "video", None, None, None, None, None, None, None, 1, "ffprobe failed")
+        try:
+            import rerun as rr
+
+            frame_timestamps_ns = list(rr.AssetVideo(path=path).read_frame_timestamps_nanos())
+        except Exception as exc:
+            return StreamSummary(path, "video", None, None, None, None, None, None, None, 1, f"ffprobe and Rerun video probe failed: {exc}")
+        times_s = [float(value) / 1e9 for value in frame_timestamps_ns]
+        summary = summarize_times(path, "video", times_s)
+        if summary.abnormal_reason:
+            reason = f"ffprobe failed; Rerun fallback used; {summary.abnormal_reason}"
+        else:
+            reason = "ffprobe failed; Rerun fallback used"
+        return StreamSummary(
+            path,
+            summary.kind,
+            summary.frame_count,
+            summary.fps,
+            summary.start_s,
+            summary.end_s,
+            summary.median_dt_ms,
+            summary.min_dt_ms,
+            summary.max_dt_ms,
+            summary.abnormal_count,
+            reason,
+        )
     stream = (data.get("streams") or [{}])[0]
     fmt = data.get("format") or {}
     fps = ratio_to_float(stream.get("avg_frame_rate")) or ratio_to_float(stream.get("r_frame_rate"))
@@ -192,11 +216,7 @@ def csv_summary(path: Path) -> StreamSummary:
         reader = csv.DictReader(f, dialect=dialect)
         if not reader.fieldnames:
             return StreamSummary(path, "csv", None, None, None, None, None, None, None, 1, "missing header")
-        lower_map = {name.lower(): name for name in reader.fieldnames}
-        time_col = next(
-            (lower_map[key] for key in ("capture_time", "capture_time_ns", "timestamp", "time", "log_time") if key in lower_map),
-            None,
-        )
+        time_col = choose_time_column(reader.fieldnames)
         if time_col is None:
             return StreamSummary(path, "csv", None, None, None, None, None, None, None, 1, "no known time column")
         raw = [row.get(time_col, "") for row in reader]
@@ -210,6 +230,23 @@ def csv_summary(path: Path) -> StreamSummary:
     else:
         times = vals
     return summarize_times(path, "csv", times)
+
+
+def choose_time_column(fieldnames: list[str]) -> str | None:
+    lower_map = {name.lower().strip(): name for name in fieldnames}
+    exact = ("capture_time", "capture_time_ns", "timestamp", "timestamps", "time", "log_time", "log_time_ns")
+    for key in exact:
+        if key in lower_map:
+            return lower_map[key]
+    normalized = {name.lower().replace(" ", "").replace("_", "").replace("-", "").strip(): name for name in fieldnames}
+    for key in ("capturetimens", "capturetime", "timestampns", "timestamp", "timesec", "timeseconds", "time"):
+        if key in normalized:
+            return normalized[key]
+    for name in fieldnames:
+        lowered = name.lower()
+        if "time" in lowered and all(skip not in lowered for skip in ("runtime", "timeout")):
+            return name
+    return None
 
 
 def discover_files(session_dir: Path) -> list[Path]:

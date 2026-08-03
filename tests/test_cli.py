@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from robocap_rerun_tools.cli import build_parser, find_nokov_source
+from robocap_rerun_tools.cli import build_parser, choose_time_column, find_nokov_source
 from robocap_rerun_tools.data_packager import discover_package_files
 
 
@@ -54,3 +54,8 @@ def test_package_discovery_excludes_artifacts_by_default(tmp_path: Path) -> None
     (artifacts / "old.rrd").write_text("", encoding="utf-8")
     files = discover_package_files(tmp_path, "segment1", include_artifacts=False, include_rrd=False)
     assert [path.name for path in files] == ["robocap_segment1_video_left.mp4"]
+
+
+def test_choose_time_column_accepts_common_tracker_names() -> None:
+    assert choose_time_column(["Frame", "Time (Seconds)", "X", "Y", "Z"]) == "Time (Seconds)"
+    assert choose_time_column(["frame", "capture_time_ns", "value"]) == "capture_time_ns"
