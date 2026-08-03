@@ -67,7 +67,8 @@ video, choose whether robowrist streams are included, and choose the retarget ta
 implemented; SMPL/SMPLH are currently explicit placeholders in the recording notes.
 The `Environment` tab checks Python/package/tool versions, ffmpeg/ffprobe, git status, and the
 local/remote commit relationship. It can also run `uv pip install -e ".[web]"` and `git pull
---ff-only`. Restart `start_web.bat` after pulling code updates.
+--ff-only`. Web-triggered updates open a separate `cmd` window, close the current web process,
+print update logs there, and restart through `start_web.bat`.
 
 Package one session for sharing. Videos are compressed by default:
 

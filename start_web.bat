@@ -1,8 +1,20 @@
-@echo off
+@echo on
 setlocal
+chcp 65001 >nul
 
 set "REPO_DIR=%~dp0"
 set "CLI=%REPO_DIR%.venv\Scripts\robocap-rerun.exe"
+
+cd /d "%REPO_DIR%"
+
+echo ============================================================
+echo Robocap Rerun Tools web launcher
+echo Repo: %CD%
+echo Time: %DATE% %TIME%
+echo Python:
+if exist "%REPO_DIR%.venv\Scripts\python.exe" "%REPO_DIR%.venv\Scripts\python.exe" --version
+echo CLI: %CLI%
+echo ============================================================
 
 if not exist "%CLI%" (
   echo Local virtual environment was not found.
@@ -14,4 +26,6 @@ if not exist "%CLI%" (
 )
 
 "%CLI%" web --open
-
+set "EXIT_CODE=%ERRORLEVEL%"
+echo Web process exited with code %EXIT_CODE%.
+exit /b %EXIT_CODE%

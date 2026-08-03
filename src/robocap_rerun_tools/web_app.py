@@ -267,14 +267,7 @@ def check_remote_version() -> str:
 
 
 def install_or_update_dependencies() -> str:
-    uv = shutil.which("uv")
-    if not uv:
-        return "uv not found on PATH. Install uv first, then reopen this web UI."
-    returncode, output = run_process([uv, "pip", "install", "-e", ".[web]"], cwd=PROJECT_ROOT, timeout=600)
-    message = output or "Done."
-    if returncode != 0:
-        return f"{message}\nCommand failed with exit code {returncode}."
-    return f"{message}\n\nDependencies were installed/updated. Restart start_web.bat if package code changed."
+    return launch_update_window("deps")
 
 
 def pull_latest_code() -> str:
@@ -289,8 +282,36 @@ def pull_latest_code() -> str:
                 "```",
             ]
         )
-    pull_result = git_output(["pull", "--ff-only"], timeout=120)
-    return f"{pull_result}\n\nIf code changed, restart start_web.bat to load the new version."
+    return launch_update_window("pull")
+
+
+def launch_update_window(mode: str) -> str:
+    script = PROJECT_ROOT / "scripts" / "web_update_and_restart.bat"
+    if not script.exists():
+        return f"Update script not found: {script}"
+    if mode not in {"deps", "pull"}:
+        return f"Unknown update mode: {mode}"
+    command = [
+        "cmd.exe",
+        "/c",
+        "start",
+        "Robocap Rerun Tools Update",
+        str(script),
+        str(os.getpid()),
+        mode,
+    ]
+    try:
+        subprocess.Popen(command, cwd=PROJECT_ROOT)
+    except OSError as exc:
+        return f"Failed to launch update window: {exc}"
+    if mode == "pull":
+        action = "pull the latest code and update dependencies"
+    else:
+        action = "update dependencies"
+    return (
+        f"Opened a separate cmd window to {action}.\n\n"
+        "That window will close this running web process, print update logs, and restart with start_web.bat."
+    )
 
 
 def session_path(value: str) -> str:

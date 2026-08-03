@@ -115,7 +115,8 @@ http://127.0.0.1:7860
 
 “环境 / Environment”页可以检查 Python、Python 包、ffmpeg/ffprobe、git 分支与本地/远端版本，
 也可以运行 `uv pip install -e ".[web]"` 安装或更新依赖，以及执行 `git pull --ff-only` 拉取最新代码。
-拉取代码后需要重新运行 `start_web.bat`，当前已经打开的 web 进程不会自动热更新。
+从网页触发更新时，会打开一个新的 `cmd` 窗口，先关闭当前 web 进程，再打印更新日志，最后通过
+`start_web.bat` 自动重启。
 
 打包一个 session 给别人用。默认会压缩视频，不会把 `.venv`、`_artifacts`、RRD、MANO 模型一起打进去：
 
