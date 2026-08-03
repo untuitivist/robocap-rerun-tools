@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import math
+import shutil
 import statistics
 import subprocess
 import sys
@@ -45,7 +46,33 @@ def run_json(command: list[str]) -> dict:
     return json.loads(proc.stdout)
 
 
-def ffprobe_video(path: Path, ffprobe: str) -> dict | None:
+def resolve_ffprobe(ffprobe: str = "ffprobe", ffmpeg: str | None = None) -> str:
+    explicit = Path(ffprobe)
+    if explicit.name != ffprobe and explicit.exists():
+        return str(explicit)
+    found = shutil.which(ffprobe)
+    if found:
+        return found
+    if ffmpeg:
+        ffmpeg_path = Path(ffmpeg)
+        if ffmpeg_path.name == ffmpeg:
+            resolved_ffmpeg = shutil.which(ffmpeg)
+            ffmpeg_path = Path(resolved_ffmpeg) if resolved_ffmpeg else ffmpeg_path
+        sibling = ffmpeg_path.with_name("ffprobe.exe")
+        if sibling.exists():
+            return str(sibling)
+        sibling = ffmpeg_path.with_name("ffprobe")
+        if sibling.exists():
+            return str(sibling)
+    found_ffmpeg = shutil.which("ffmpeg")
+    if found_ffmpeg:
+        sibling = Path(found_ffmpeg).with_name("ffprobe.exe")
+        if sibling.exists():
+            return str(sibling)
+    return ffprobe
+
+
+def ffprobe_video(path: Path, ffprobe: str) -> tuple[dict | None, str | None]:
     try:
         return run_json(
             [
@@ -62,9 +89,14 @@ def ffprobe_video(path: Path, ffprobe: str) -> dict | None:
                 "json",
                 str(path),
             ]
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError, json.JSONDecodeError):
-        return None
+        ), None
+    except FileNotFoundError as exc:
+        return None, f"ffprobe executable not found: {ffprobe} ({exc})"
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        return None, f"ffprobe exited {exc.returncode}: {stderr or exc}"
+    except json.JSONDecodeError as exc:
+        return None, f"ffprobe returned invalid JSON: {exc}"
 
 
 def parse_ratio(value: str | None) -> tuple[int, int] | None:
@@ -87,20 +119,20 @@ def ratio_to_float(value: str | None) -> float | None:
 
 
 def video_summary(path: Path, ffprobe: str) -> StreamSummary:
-    data = ffprobe_video(path, ffprobe)
+    data, ffprobe_error = ffprobe_video(path, ffprobe)
     if not data:
         try:
             import rerun as rr
 
             frame_timestamps_ns = list(rr.AssetVideo(path=path).read_frame_timestamps_nanos())
         except Exception as exc:
-            return StreamSummary(path, "video", None, None, None, None, None, None, None, 1, f"ffprobe and Rerun video probe failed: {exc}")
+            return StreamSummary(path, "video", None, None, None, None, None, None, None, 1, f"{ffprobe_error}; Rerun video probe failed: {exc}")
         times_s = [float(value) / 1e9 for value in frame_timestamps_ns]
         summary = summarize_times(path, "video", times_s)
         if summary.abnormal_reason:
-            reason = f"ffprobe failed; Rerun fallback used; {summary.abnormal_reason}"
+            reason = f"{ffprobe_error}; Rerun fallback used; {summary.abnormal_reason}"
         else:
-            reason = "ffprobe failed; Rerun fallback used"
+            reason = f"{ffprobe_error}; Rerun fallback used"
         return StreamSummary(
             path,
             summary.kind,
@@ -581,7 +613,8 @@ def command_inspect(args: argparse.Namespace) -> int:
     files = discover_files(args.session_dir)
     if args.segment:
         files = [p for p in files if args.segment in p.name or p.suffix.lower() not in VIDEO_SUFFIXES]
-    summaries = [summarize_file(path, args.ffprobe) for path in files]
+    ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
+    summaries = [summarize_file(path, ffprobe) for path in files]
     out_dir = args.output or args.session_dir / "_artifacts" / (args.segment or "all") / "inspection"
     write_inspection(args.session_dir, args.segment, summaries, out_dir)
     print(f"Wrote inspection reports to {out_dir}")
@@ -590,14 +623,14 @@ def command_inspect(args: argparse.Namespace) -> int:
 
 def command_inspect_offset(args: argparse.Namespace) -> int:
     out_dir = args.output or args.session_dir / "_artifacts" / (args.segment or "segment") / f"offset{args.offset}_inspection"
-    write_offset_report(args.session_dir, args.segment, args.ratio, args.offset, args.nokov_source, out_dir, args.ffprobe)
+    write_offset_report(args.session_dir, args.segment, args.ratio, args.offset, args.nokov_source, out_dir, resolve_ffprobe(args.ffprobe, args.ffmpeg))
     print(f"Wrote offset inspection to {out_dir}")
     return 0
 
 
 def command_sweep_offset(args: argparse.Namespace) -> int:
     out_dir = args.output or args.session_dir / "_artifacts" / (args.segment or "segment") / "offset_sweep"
-    write_offset_sweep(args.session_dir, args.ratio, args.offset_min, args.offset_max, args.nokov_source, out_dir, args.ffprobe)
+    write_offset_sweep(args.session_dir, args.ratio, args.offset_min, args.offset_max, args.nokov_source, out_dir, resolve_ffprobe(args.ffprobe, args.ffmpeg))
     print(f"Wrote offset sweep to {out_dir}")
     return 0
 
@@ -628,6 +661,7 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--segment", default=None)
     inspect_parser.add_argument("--output", type=Path, default=None)
     inspect_parser.add_argument("--ffprobe", default="ffprobe")
+    inspect_parser.add_argument("--ffmpeg", default="ffmpeg")
     inspect_parser.set_defaults(func=command_inspect)
 
     offset_parser = sub.add_parser("inspect-offset", help="Write one video-to-NOKOV frame mapping table.")
@@ -638,6 +672,7 @@ def build_parser() -> argparse.ArgumentParser:
     offset_parser.add_argument("--nokov-source", type=Path, default=None)
     offset_parser.add_argument("--output", type=Path, default=None)
     offset_parser.add_argument("--ffprobe", default="ffprobe")
+    offset_parser.add_argument("--ffmpeg", default="ffmpeg")
     offset_parser.set_defaults(func=command_inspect_offset)
 
     sweep_parser = sub.add_parser("sweep-offset", help="Write an offset range sanity table.")
@@ -649,6 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
     sweep_parser.add_argument("--nokov-source", type=Path, default=None)
     sweep_parser.add_argument("--output", type=Path, default=None)
     sweep_parser.add_argument("--ffprobe", default="ffprobe")
+    sweep_parser.add_argument("--ffmpeg", default="ffmpeg")
     sweep_parser.set_defaults(func=command_sweep_offset)
 
     package_parser = sub.add_parser("package-data", help="Package one session, using compressed proxy videos by default.")
