@@ -1,5 +1,7 @@
 # Robocap Rerun Tools
 
+[中文说明](README.zh-CN.md)
+
 Robocap Rerun Tools is a small Python project for inspecting Robocap/NOKOV sessions and exporting Rerun `.rrd` files with one shared `capture_time` timeline.
 
 It is intended for session folders shaped like the current `Z:\DATASETS\Frodobots\nokov\2026..._session...` data:
