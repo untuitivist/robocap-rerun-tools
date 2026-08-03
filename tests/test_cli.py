@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from robocap_rerun_tools.cli import build_parser, choose_time_column, find_nokov_source, resolve_ffprobe
+from robocap_rerun_tools.cli import build_parser, choose_time_column, csv_summary, discover_files, find_nokov_source, resolve_ffprobe
 from robocap_rerun_tools.data_packager import discover_package_files
 from robocap_rerun_tools.web_app import language_values
 
@@ -57,6 +57,15 @@ def test_package_discovery_excludes_artifacts_by_default(tmp_path: Path) -> None
     assert [path.name for path in files] == ["robocap_segment1_video_left.mp4"]
 
 
+def test_inspection_discovery_ignores_package_manifest(tmp_path: Path) -> None:
+    (tmp_path / "manifest.tsv").write_text("source\tpackaged_as\n", encoding="utf-8")
+    artifact_dir = tmp_path / "_artifacts" / "segment1" / "inspection"
+    artifact_dir.mkdir(parents=True)
+    (artifact_dir / "frame_rate_report.tsv").write_text("", encoding="utf-8")
+    (tmp_path / "data.trc").write_text("", encoding="utf-8")
+    assert [path.name for path in discover_files(tmp_path)] == ["data.trc"]
+
+
 def test_choose_time_column_accepts_common_tracker_names() -> None:
     assert choose_time_column(["Frame", "Time (Seconds)", "X", "Y", "Z"]) == "Time (Seconds)"
     assert choose_time_column(["frame", "capture_time_ns", "value"]) == "capture_time_ns"
@@ -73,3 +82,28 @@ def test_resolve_ffprobe_from_ffmpeg_sibling(tmp_path: Path) -> None:
 def test_web_language_values_include_docs() -> None:
     assert "中文说明" in language_values("中文")["doc"]
     assert "Basic Workflow" in language_values("English")["doc"]
+
+
+def test_hierarchical_nokov_csv_summary_uses_timestamp(tmp_path: Path) -> None:
+    path = tmp_path / "Tracker0.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "#Hierarchical Translation and Rotation (.csv) file",
+                "[Head]",
+                "NumFrames,NumSegments,DataFrameRate",
+                "3,1,90",
+                "[SegmentData]",
+                " Frame# ,,Segment1",
+                ",Timestamp,XToGlobal1",
+                "1,1785727304130,1.0",
+                "2,1785727304141,2.0",
+                "3,1785727304152,3.0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summary = csv_summary(path)
+    assert summary.frame_count == 3
+    assert abs((summary.fps or 0) - 90.909) < 0.01

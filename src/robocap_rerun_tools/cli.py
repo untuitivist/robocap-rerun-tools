@@ -250,18 +250,59 @@ def csv_summary(path: Path) -> StreamSummary:
             return StreamSummary(path, "csv", None, None, None, None, None, None, None, 1, "missing header")
         time_col = choose_time_column(reader.fieldnames)
         if time_col is None:
-            return StreamSummary(path, "csv", None, None, None, None, None, None, None, 1, "no known time column")
+            hierarchical = hierarchical_csv_times(path)
+            if hierarchical is None:
+                return StreamSummary(path, "csv", None, None, None, None, None, None, None, 1, "no known time column")
+            return summarize_times(path, "csv", hierarchical)
         raw = [row.get(time_col, "") for row in reader]
     vals = numeric(raw)
-    if time_col.lower().endswith("_ns"):
-        times = [v / 1e9 for v in vals]
-    elif vals and max(abs(v) for v in vals) > 1e12:
-        times = [v / 1e9 for v in vals]
-    elif vals and max(abs(v) for v in vals) > 1e9:
-        times = [v / 1e6 for v in vals]
-    else:
-        times = vals
+    times = normalize_time_values(vals, time_col)
     return summarize_times(path, "csv", times)
+
+
+def normalize_time_values(vals: list[float], column_name: str) -> list[float]:
+    if not vals:
+        return []
+    lowered = column_name.lower()
+    if lowered.endswith("_ns") or "nanosecond" in lowered:
+        return [v / 1e9 for v in vals]
+    diffs = [b - a for a, b in zip(vals, vals[1:]) if b > a]
+    median_diff = statistics.median(diffs) if diffs else 0.0
+    max_abs = max(abs(v) for v in vals)
+    if median_diff >= 1_000_000:
+        return [v / 1e9 for v in vals]
+    if median_diff >= 1_000:
+        return [v / 1e6 for v in vals]
+    if max_abs > 1e9 and median_diff >= 0.5:
+        return [v / 1000.0 for v in vals]
+    return vals
+
+
+def hierarchical_csv_times(path: Path) -> list[float] | None:
+    with open_csv(path) as f:
+        rows = list(csv.reader(f))
+    header_index = None
+    time_index = None
+    for index, row in enumerate(rows):
+        cleaned = [cell.strip() for cell in row]
+        lowered = [cell.lower() for cell in cleaned]
+        if "timestamp" in lowered:
+            header_index = index
+            time_index = lowered.index("timestamp")
+            break
+    if header_index is None or time_index is None:
+        return None
+    vals: list[float] = []
+    for row in rows[header_index + 1 :]:
+        if len(row) <= time_index:
+            continue
+        try:
+            vals.append(float(row[time_index]))
+        except ValueError:
+            continue
+    if not vals:
+        return None
+    return normalize_time_values(vals, "timestamp")
 
 
 def choose_time_column(fieldnames: list[str]) -> str | None:
@@ -282,8 +323,14 @@ def choose_time_column(fieldnames: list[str]) -> str | None:
 
 
 def discover_files(session_dir: Path) -> list[Path]:
+    ignored_names = {"manifest.json", "manifest.tsv"}
     return sorted(
-        p for p in session_dir.rglob("*") if p.is_file() and (p.suffix.lower() in VIDEO_SUFFIXES or p.suffix.lower() in TEXT_SUFFIXES)
+        p
+        for p in session_dir.rglob("*")
+        if p.is_file()
+        and p.name.lower() not in ignored_names
+        and "_artifacts" not in p.relative_to(session_dir).parts
+        and (p.suffix.lower() in VIDEO_SUFFIXES or p.suffix.lower() in TEXT_SUFFIXES)
     )
 
 
