@@ -53,7 +53,14 @@ Start the local browser UI:
 robocap-rerun web --open
 ```
 
+Or use the Windows launcher:
+
+```bat
+start_web.bat
+```
+
 Then use `http://127.0.0.1:7860` for inspect, package, offset inspection, and RRD export.
+The web UI has a Chinese/English language switch and a built-in Docs tab.
 
 Package one session for sharing. Videos are compressed by default:
 

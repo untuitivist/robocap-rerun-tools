@@ -2,6 +2,7 @@ from pathlib import Path
 
 from robocap_rerun_tools.cli import build_parser, choose_time_column, find_nokov_source, resolve_ffprobe
 from robocap_rerun_tools.data_packager import discover_package_files
+from robocap_rerun_tools.web_app import language_values
 
 
 def test_export_parser_accepts_frame_offset() -> None:
@@ -67,3 +68,8 @@ def test_resolve_ffprobe_from_ffmpeg_sibling(tmp_path: Path) -> None:
     ffmpeg.write_text("", encoding="utf-8")
     ffprobe.write_text("", encoding="utf-8")
     assert resolve_ffprobe("missing-ffprobe", str(ffmpeg)) == str(ffprobe)
+
+
+def test_web_language_values_include_docs() -> None:
+    assert "中文说明" in language_values("中文")["doc"]
+    assert "Basic Workflow" in language_values("English")["doc"]

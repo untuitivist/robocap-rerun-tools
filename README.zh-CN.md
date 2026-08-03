@@ -87,6 +87,12 @@ robocap-rerun --help
 robocap-rerun web --open
 ```
 
+或者直接运行：
+
+```bat
+start_web.bat
+```
+
 默认地址：
 
 ```text
@@ -95,6 +101,8 @@ http://127.0.0.1:7860
 
 网页里可以做：
 
+- 中文/英文切换
+- 在“文档 / Docs”页直接看中文说明
 - inspect 帧率和异常帧间隔
 - package-data 打包数据，默认压缩视频
 - export time/frame RRD
