@@ -1445,6 +1445,8 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
     x_columns: list[int] = []
     y_columns: list[int] = []
     z_columns: list[int] = []
+    q_columns: list[tuple[int, int, int, int] | None] = []
+    length_columns: list[int | None] = []
     for segment_index in range(1, len(names) + 1):
         try:
             x_columns.append(header.index(f"XToGlobal{segment_index}"))
@@ -1457,6 +1459,21 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
                 z_columns.append(header.index(f"ZToParent{segment_index}"))
             except ValueError as exc:
                 raise ValueError(f"CSV missing global or parent XYZ columns for segment {segment_index}: {path}") from exc
+        try:
+            q_columns.append(
+                (
+                    header.index(f"QxToGlobal{segment_index}"),
+                    header.index(f"QyToGlobal{segment_index}"),
+                    header.index(f"QzToGlobal{segment_index}"),
+                    header.index(f"QwToGlobal{segment_index}"),
+                )
+            )
+        except ValueError:
+            q_columns.append(None)
+        try:
+            length_columns.append(header.index(f"Segmentlength{segment_index}"))
+        except ValueError:
+            length_columns.append(None)
 
     timestamps: list[int] = []
     frames: list[list[list[float]]] = []
@@ -1468,12 +1485,28 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
             continue
         timestamps.append(int(float(cells[1].strip())) * 1_000_000)
         frame_positions: list[list[float]] = []
-        for x_col, y_col, z_col in zip(x_columns, y_columns, z_columns):
+        for x_col, y_col, z_col, q_col, length_col in zip(x_columns, y_columns, z_columns, q_columns, length_columns):
             xyz = [cells[x_col].strip(), cells[y_col].strip(), cells[z_col].strip()]
             if any(not value for value in xyz):
-                frame_positions.append([np.nan, np.nan, np.nan])
+                origin = np.asarray([np.nan, np.nan, np.nan], dtype=np.float32)
             else:
-                frame_positions.append([float(xyz[0]) * scale, float(xyz[1]) * scale, float(xyz[2]) * scale])
+                origin = np.asarray([float(xyz[0]) * scale, float(xyz[1]) * scale, float(xyz[2]) * scale], dtype=np.float32)
+            if q_col is None or any(index >= len(cells) or not cells[index].strip() for index in q_col):
+                frame_positions.append(origin.tolist())
+                continue
+            qx_col, qy_col, qz_col, qw_col = q_col
+            rotation = quaternion_to_matrix(
+                float(cells[qx_col].strip()),
+                float(cells[qy_col].strip()),
+                float(cells[qz_col].strip()),
+                float(cells[qw_col].strip()),
+            )
+            axis_length = 0.1
+            if length_col is not None and length_col < len(cells) and cells[length_col].strip():
+                axis_length = max(0.04, float(cells[length_col].strip()) * scale * 0.35)
+            frame_positions.append(origin.tolist())
+            for axis in range(3):
+                frame_positions.append((origin + rotation[:, axis] * axis_length).tolist())
         frames.append(frame_positions)
 
     if not frames:
@@ -1483,7 +1516,45 @@ def parse_nokov_csv(path: Path, scale: float, max_frames: int | None) -> tuple[n
         positions = fill_missing_marker_positions(positions)
     timestamps_ns = np.asarray(timestamps, dtype=np.int64)
     indexes = downsample_indexes(len(timestamps_ns), max_frames)
-    return timestamps_ns[indexes], names, positions[indexes], parents
+    expanded_names, expanded_parents = expand_nokov_csv_pose_names(names, parents, q_columns)
+    return timestamps_ns[indexes], expanded_names, positions[indexes], expanded_parents
+
+
+def quaternion_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
+    quat = np.asarray([qx, qy, qz, qw], dtype=np.float64)
+    norm = float(np.linalg.norm(quat))
+    if norm <= 1e-12:
+        return np.eye(3, dtype=np.float32)
+    x, y, z, w = quat / norm
+    return np.asarray(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ],
+        dtype=np.float32,
+    )
+
+
+def expand_nokov_csv_pose_names(
+    names: Sequence[str],
+    parents: Sequence[int],
+    q_columns: Sequence[tuple[int, int, int, int] | None],
+) -> tuple[tuple[str, ...], tuple[int, ...]]:
+    expanded_names: list[str] = []
+    expanded_parents: list[int] = []
+    segment_origin_indexes: list[int] = []
+    for segment_index, name in enumerate(names):
+        origin_index = len(expanded_names)
+        segment_origin_indexes.append(origin_index)
+        parent = parents[segment_index] if segment_index < len(parents) else -1
+        expanded_names.append(name)
+        expanded_parents.append(segment_origin_indexes[parent] if parent >= 0 else -1)
+        if segment_index < len(q_columns) and q_columns[segment_index] is not None:
+            for axis_name in ("x_axis", "y_axis", "z_axis"):
+                expanded_names.append(f"{name}_{axis_name}")
+                expanded_parents.append(origin_index)
+    return tuple(expanded_names), tuple(expanded_parents)
 
 
 def load_csv_track(
