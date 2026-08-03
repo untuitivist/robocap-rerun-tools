@@ -113,6 +113,10 @@ http://127.0.0.1:7860
 是否包含 robowrist 数据，以及选择重定向模型。当前真正实现的是 MANO；SMPL/SMPLH 先作为显式选项保留，
 导出时会在记录说明里写明尚未实现，不会假装已经生成对应 mesh。
 
+“环境 / Environment”页可以检查 Python、Python 包、ffmpeg/ffprobe、git 分支与本地/远端版本，
+也可以运行 `uv pip install -e ".[web]"` 安装或更新依赖，以及执行 `git pull --ff-only` 拉取最新代码。
+拉取代码后需要重新运行 `start_web.bat`，当前已经打开的 web 进程不会自动热更新。
+
 打包一个 session 给别人用。默认会压缩视频，不会把 `.venv`、`_artifacts`、RRD、MANO 模型一起打进去：
 
 ```bat

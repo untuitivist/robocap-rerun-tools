@@ -65,6 +65,9 @@ On the export tab, use `Scan files` to populate the GT/NOKOV file list. You can 
 `.bvh`, `.trc`, `.csv`, and `.xrs` files enter the RRD, choose whether to include a third-person
 video, choose whether robowrist streams are included, and choose the retarget target. MANO is
 implemented; SMPL/SMPLH are currently explicit placeholders in the recording notes.
+The `Environment` tab checks Python/package/tool versions, ffmpeg/ffprobe, git status, and the
+local/remote commit relationship. It can also run `uv pip install -e ".[web]"` and `git pull
+--ff-only`. Restart `start_web.bat` after pulling code updates.
 
 Package one session for sharing. Videos are compressed by default:
 

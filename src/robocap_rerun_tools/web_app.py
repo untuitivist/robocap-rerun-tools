@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import os
+import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -90,6 +94,11 @@ LANGUAGE_PACKS = {
         "offset_min": "Offset min",
         "offset_max": "Offset max",
         "sweep_button": "Sweep Offset",
+        "env_check_button": "Check environment",
+        "env_update_check_button": "Check remote version",
+        "env_install_button": "Install/update dependencies",
+        "env_pull_button": "Pull latest code",
+        "env_output": "Environment output",
         "doc": EN_DOC,
     },
     "中文": {
@@ -125,22 +134,163 @@ LANGUAGE_PACKS = {
         "offset_min": "Offset 最小值",
         "offset_max": "Offset 最大值",
         "sweep_button": "扫描 Offset",
+        "env_check_button": "检查环境",
+        "env_update_check_button": "检查远端版本",
+        "env_install_button": "安装/更新依赖",
+        "env_pull_button": "拉取最新代码",
+        "env_output": "环境输出",
         "doc": ZH_DOC,
     },
 }
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def run_process(args: list[str], cwd: Path | None = None, timeout: int = 120) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        return 127, str(exc)
+    except subprocess.TimeoutExpired as exc:
+        output = "\n".join(part for part in (exc.stdout or "", exc.stderr or "") if part)
+        return 124, f"Command timed out after {timeout}s.\n{output}".strip()
+    output_parts = []
+    if proc.stdout:
+        output_parts.append(proc.stdout.rstrip())
+    if proc.stderr:
+        output_parts.append(proc.stderr.rstrip())
+    return proc.returncode, "\n".join(output_parts)
+
+
 def run_cli(args: list[str]) -> str:
     command = [sys.executable, "-m", "robocap_rerun_tools.cli", *args]
-    proc = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
-    output = []
-    if proc.stdout:
-        output.append(proc.stdout.rstrip())
-    if proc.stderr:
-        output.append(proc.stderr.rstrip())
-    if proc.returncode != 0:
-        output.append(f"Command failed with exit code {proc.returncode}.")
-    return "\n".join(output) if output else "Done."
+    returncode, output = run_process(command)
+    if returncode != 0:
+        suffix = f"\nCommand failed with exit code {returncode}."
+        return f"{output}{suffix}" if output else suffix.strip()
+    return output or "Done."
+
+
+def package_version(name: str) -> str:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return "not installed"
+
+
+def first_line(command: list[str], cwd: Path | None = None) -> str:
+    returncode, output = run_process(command, cwd=cwd, timeout=30)
+    line = output.splitlines()[0] if output else ""
+    return line if returncode == 0 else f"failed: {line or returncode}"
+
+
+def git_output(args: list[str], timeout: int = 60) -> str:
+    returncode, output = run_process(["git", *args], cwd=PROJECT_ROOT, timeout=timeout)
+    if returncode != 0:
+        return f"{output}\nCommand failed with exit code {returncode}.".strip()
+    return output or "Done."
+
+
+def check_environment() -> str:
+    packages = ("robocap-rerun-tools", "numpy", "rerun-sdk", "scipy", "gradio")
+    lines = [
+        "# Environment check",
+        "",
+        f"- project_root: `{PROJECT_ROOT}`",
+        f"- python: `{sys.executable}`",
+        f"- python_version: `{platform.python_version()}`",
+        f"- platform: `{platform.platform()}`",
+        f"- virtual_env: `{os.environ.get('VIRTUAL_ENV', '') or 'not set'}`",
+        f"- uv: `{shutil.which('uv') or 'not found'}`",
+        f"- git: `{shutil.which('git') or 'not found'}`",
+        f"- ffmpeg: `{shutil.which('ffmpeg') or 'not found'}`",
+        f"- ffprobe: `{shutil.which('ffprobe') or 'not found'}`",
+        "",
+        "## Tool versions",
+        "",
+        f"- uv: `{first_line(['uv', '--version']) if shutil.which('uv') else 'not found'}`",
+        f"- ffmpeg: `{first_line(['ffmpeg', '-version']) if shutil.which('ffmpeg') else 'not found'}`",
+        f"- ffprobe: `{first_line(['ffprobe', '-version']) if shutil.which('ffprobe') else 'not found'}`",
+        "",
+        "## Python packages",
+        "",
+    ]
+    lines.extend(f"- {name}: `{package_version(name)}`" for name in packages)
+    lines.extend(
+        [
+            "",
+            "## Git",
+            "",
+            f"- branch: `{git_output(['branch', '--show-current'])}`",
+            f"- commit: `{git_output(['log', '-1', '--oneline'])}`",
+            f"- remote: `{git_output(['remote', '-v'])}`",
+            "",
+            "```text",
+            git_output(["status", "--short"]) or "clean",
+            "```",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def check_remote_version() -> str:
+    fetch_result = git_output(["fetch", "--prune"], timeout=120)
+    local = git_output(["rev-parse", "--short", "HEAD"])
+    upstream = git_output(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    remote = git_output(["rev-parse", "--short", "@{u}"])
+    ahead_behind = git_output(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    return "\n".join(
+        [
+            "# Remote version check",
+            "",
+            f"- local: `{local}`",
+            f"- upstream: `{upstream}`",
+            f"- remote: `{remote}`",
+            f"- ahead_behind: `{ahead_behind}` (`local_ahead remote_ahead`)",
+            "",
+            "## Fetch",
+            "",
+            "```text",
+            fetch_result,
+            "```",
+        ]
+    )
+
+
+def install_or_update_dependencies() -> str:
+    uv = shutil.which("uv")
+    if not uv:
+        return "uv not found on PATH. Install uv first, then reopen this web UI."
+    returncode, output = run_process([uv, "pip", "install", "-e", ".[web]"], cwd=PROJECT_ROOT, timeout=600)
+    message = output or "Done."
+    if returncode != 0:
+        return f"{message}\nCommand failed with exit code {returncode}."
+    return f"{message}\n\nDependencies were installed/updated. Restart start_web.bat if package code changed."
+
+
+def pull_latest_code() -> str:
+    status = git_output(["status", "--short"])
+    if status.strip():
+        return "\n".join(
+            [
+                "Working tree is not clean. Commit or stash local changes before pulling from the web UI.",
+                "",
+                "```text",
+                status,
+                "```",
+            ]
+        )
+    pull_result = git_output(["pull", "--ff-only"], timeout=120)
+    return f"{pull_result}\n\nIf code changed, restart start_web.bat to load the new version."
 
 
 def session_path(value: str) -> str:
@@ -330,6 +480,11 @@ def language_updates(language: str):
         gr.update(label=labels["offset_min"]),
         gr.update(label=labels["offset_max"]),
         gr.update(value=labels["sweep_button"]),
+        gr.update(value=labels["env_check_button"]),
+        gr.update(value=labels["env_update_check_button"]),
+        gr.update(value=labels["env_install_button"]),
+        gr.update(value=labels["env_pull_button"]),
+        gr.update(label=labels["env_output"]),
         gr.update(value=labels["doc"]),
     ]
 
@@ -422,6 +577,18 @@ def build_app():
             sweep_button = gr.Button(labels["sweep_button"])
             sweep_button.click(sweep_offset, inputs=[session_dir, segment, offset_ratio, offset_min, offset_max, nokov_source], outputs=output)
 
+        with gr.Tab("环境 / Environment"):
+            with gr.Row():
+                env_check_button = gr.Button(labels["env_check_button"], variant="primary")
+                env_update_check_button = gr.Button(labels["env_update_check_button"])
+                env_install_button = gr.Button(labels["env_install_button"])
+                env_pull_button = gr.Button(labels["env_pull_button"])
+            env_output = gr.Textbox(label=labels["env_output"], lines=22)
+            env_check_button.click(check_environment, outputs=env_output)
+            env_update_check_button.click(check_remote_version, outputs=env_output)
+            env_install_button.click(install_or_update_dependencies, outputs=env_output)
+            env_pull_button.click(pull_latest_code, outputs=env_output)
+
         with gr.Tab("文档 / Docs"):
             docs = gr.Markdown(labels["doc"])
 
@@ -461,6 +628,11 @@ def build_app():
                 offset_min,
                 offset_max,
                 sweep_button,
+                env_check_button,
+                env_update_check_button,
+                env_install_button,
+                env_pull_button,
+                env_output,
                 docs,
             ],
         )
