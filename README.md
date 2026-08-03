@@ -69,6 +69,8 @@ The `Environment` tab checks Python/package/tool versions, ffmpeg/ffprobe, git s
 local/remote commit relationship. It can also run `uv pip install -e ".[web]"` and `git pull
 --ff-only`. Web-triggered updates open a separate `cmd` window, close the current web process,
 print update logs there, and restart through `start_web.bat`.
+The `Viewer` tab can scan generated `.rrd` files under the current session and open a selected file
+in Rerun Web Viewer. The viewer runs in a separate `cmd` window so its logs stay visible.
 
 Package one session for sharing. Videos are compressed by default:
 

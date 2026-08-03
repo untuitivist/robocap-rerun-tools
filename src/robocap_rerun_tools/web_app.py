@@ -99,6 +99,10 @@ LANGUAGE_PACKS = {
         "env_install_button": "Install/update dependencies",
         "env_pull_button": "Pull latest code",
         "env_output": "Environment output",
+        "viewer_scan_button": "Scan RRD files",
+        "viewer_open_button": "Open web viewer",
+        "viewer_rrd_file": "RRD file",
+        "viewer_port": "Web viewer port",
         "doc": EN_DOC,
     },
     "中文": {
@@ -139,6 +143,10 @@ LANGUAGE_PACKS = {
         "env_install_button": "安装/更新依赖",
         "env_pull_button": "拉取最新代码",
         "env_output": "环境输出",
+        "viewer_scan_button": "扫描 RRD 文件",
+        "viewer_open_button": "打开 Web Viewer",
+        "viewer_rrd_file": "RRD 文件",
+        "viewer_port": "Web Viewer 端口",
         "doc": ZH_DOC,
     },
 }
@@ -366,6 +374,57 @@ def scan_files(session_dir: str, gt_dir_value: str) -> tuple[str, object, str, s
     return summary, gr.update(choices=choices, value=choices), str(gt_dir), third_person
 
 
+def scan_rrd_files(session_dir: str) -> tuple[str, object]:
+    path = Path(session_path(session_dir))
+    rrd_files = sorted(
+        file
+        for file in path.rglob("*.rrd")
+        if file.is_file() and ".venv" not in file.relative_to(path).parts
+    )
+    choices = [str(file) for file in rrd_files]
+    summary = "\n".join(
+        [
+            f"Session: {path}",
+            f"RRD files: {len(choices)}",
+            *(f"- {choice}" for choice in choices[:50]),
+        ]
+    )
+    if len(choices) > 50:
+        summary += f"\n... {len(choices) - 50} more"
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError('Web UI requires Gradio. Install it with: uv pip install -e ".[web]"') from exc
+    return summary, gr.update(choices=choices, value=choices[0] if choices else None)
+
+
+def open_rerun_webviewer(rrd_file: str, viewer_port: int) -> str:
+    path = Path((rrd_file or "").strip().strip('"'))
+    if not path.exists():
+        raise ValueError(f"RRD file does not exist: {path}")
+    if path.suffix.lower() != ".rrd":
+        raise ValueError(f"Expected an .rrd file: {path}")
+    port = int(viewer_port)
+    if port < 0 or port > 65535:
+        raise ValueError(f"Invalid port: {port}")
+    script = PROJECT_ROOT / "scripts" / "open_rerun_webviewer.bat"
+    if not script.exists():
+        return f"Viewer script not found: {script}"
+    command = ["cmd.exe", "/c", "start", "Rerun Web Viewer", str(script), str(path), str(port), sys.executable]
+    try:
+        subprocess.Popen(command, cwd=PROJECT_ROOT)
+    except OSError as exc:
+        return f"Failed to open Rerun web viewer: {exc}"
+    return "\n".join(
+        [
+            "Opened a separate cmd window for Rerun web viewer.",
+            f"RRD: {path}",
+            f"URL: http://127.0.0.1:{port}",
+            "The cmd window prints Rerun logs and stays open if the viewer exits.",
+        ]
+    )
+
+
 def inspect_session(session_dir: str, segment: str) -> str:
     args = ["inspect", session_path(session_dir)]
     if optional_text(segment):
@@ -506,6 +565,10 @@ def language_updates(language: str):
         gr.update(value=labels["env_install_button"]),
         gr.update(value=labels["env_pull_button"]),
         gr.update(label=labels["env_output"]),
+        gr.update(value=labels["viewer_scan_button"]),
+        gr.update(value=labels["viewer_open_button"]),
+        gr.update(label=labels["viewer_rrd_file"]),
+        gr.update(label=labels["viewer_port"]),
         gr.update(value=labels["doc"]),
     ]
 
@@ -598,6 +661,15 @@ def build_app():
             sweep_button = gr.Button(labels["sweep_button"])
             sweep_button.click(sweep_offset, inputs=[session_dir, segment, offset_ratio, offset_min, offset_max, nokov_source], outputs=output)
 
+        with gr.Tab("查看 Rerun / Viewer"):
+            viewer_scan_button = gr.Button(labels["viewer_scan_button"])
+            with gr.Row():
+                viewer_rrd_file = gr.Dropdown(label=labels["viewer_rrd_file"], choices=[], allow_custom_value=True, scale=4)
+                viewer_port = gr.Number(label=labels["viewer_port"], value=9090, precision=0, scale=1)
+            viewer_open_button = gr.Button(labels["viewer_open_button"], variant="primary")
+            viewer_scan_button.click(scan_rrd_files, inputs=[session_dir], outputs=[output, viewer_rrd_file])
+            viewer_open_button.click(open_rerun_webviewer, inputs=[viewer_rrd_file, viewer_port], outputs=output)
+
         with gr.Tab("环境 / Environment"):
             with gr.Row():
                 env_check_button = gr.Button(labels["env_check_button"], variant="primary")
@@ -654,6 +726,10 @@ def build_app():
                 env_install_button,
                 env_pull_button,
                 env_output,
+                viewer_scan_button,
+                viewer_open_button,
+                viewer_rrd_file,
+                viewer_port,
                 docs,
             ],
         )

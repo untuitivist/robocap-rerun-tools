@@ -118,6 +118,9 @@ http://127.0.0.1:7860
 从网页触发更新时，会打开一个新的 `cmd` 窗口，先关闭当前 web 进程，再打印更新日志，最后通过
 `start_web.bat` 自动重启。
 
+“查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
+打开。Viewer 会在独立 `cmd` 窗口里运行，方便查看 Rerun 自己的日志。
+
 打包一个 session 给别人用。默认会压缩视频，不会把 `.venv`、`_artifacts`、RRD、MANO 模型一起打进去：
 
 ```bat
