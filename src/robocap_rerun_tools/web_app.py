@@ -39,13 +39,23 @@ If Robocap MAG and IMU are both absent, the complete sensor row is omitted.
 Frame alignment uses:
 
 ```text
-video frame N -> NOKOV frame round((N + offset) * ratio)
+GT frame offset = round(Robocap frame offset * ratio)
+video frame N -> NOKOV frame round(N * ratio) + GT frame offset
 ```
+
+Frame-aligned RRD files use the integer `frame` timeline as the primary timeline. The common
+timeline is expressed at the GT/NOKOV frame rate: Robocap video frame `N` is logged at
+`frame = round(N * ratio)`, while source GT frame `K` is logged at
+`frame = K - GT frame offset`. `capture_time` remains available only as a secondary timeline.
 
 The default is `ratio=auto`. It reads `frame_rate_report.md`, averages all valid GT FPS values and
 all Robocap video FPS values separately, rounds both means to the nearest multiple of 10, then uses
 `rounded GT FPS / rounded Robocap FPS`. Enter a number such as `8` to override it.
-Offset is measured in Robocap video frames. At ratio 8, an offset of 5 is equivalent to 40 GT frames.
+Robocap video is the reference for the signed offset. A positive value advances NOKOV/GT relative
+to Robocap video, so GT appears earlier and the same video frame selects a later GT frame. A
+negative value delays NOKOV/GT relative to Robocap video, so GT appears later and the same video
+frame selects an earlier GT frame. At ratio 8, offset `5` becomes source-script GT offset `40`;
+offset `-5` places GT frame 0 at Robocap video frame 5.
 
 To export only part of a session, enable `Limit Robocap frame range` and enter both
 `Robocap start frame` and `Robocap end frame`. The indexes are 0-based and inclusive. One
@@ -84,12 +94,20 @@ Robocap MAG 和 IMU 都不存在时，整行传感器窗口也会直接省略。
 帧对齐使用：
 
 ```text
-video frame N -> NOKOV frame round((N + offset) * ratio)
+GT 帧 offset = round(Robocap 帧 offset * ratio)
+video frame N -> NOKOV frame round(N * ratio) + GT 帧 offset
 ```
+
+帧对齐 RRD 的主时间轴是整数 `frame`，统一采用 GT/NOKOV 帧尺度：Robocap 视频第 `N` 帧写在
+`frame = round(N * ratio)`，GT 源数据第 `K` 帧写在 `frame = K - GT 帧 offset`。
+`capture_time` 仍会保留，但只作为辅助时间轴，不再是帧对齐版默认显示的时间轴。
 
 默认使用 `ratio=auto`：读取 `frame_rate_report.md`，分别计算有效 GT FPS 和 Robocap 视频 FPS
 的均值，各自取最近的 10 倍数，再用“GT 取整值 / Robocap 取整值”得到 ratio。输入 `8` 等数字可覆盖自动值。
-Offset 的单位是 Robocap 视频帧；ratio 为 8 时，offset 5 等价于 GT 的 40 帧。
+Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap 视频
+前移、提前出现，同一视频帧会选取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap 视频
+后移、延后出现，同一视频帧会选取更靠前的 GT 帧。ratio 为 8 时，offset `5` 会转换成源脚本
+使用的 GT offset `40`；offset `-5` 会把 GT 第 0 帧放到 Robocap 视频第 5 帧。
 
 只导出 session 的一段时，先勾选“限制 Robocap 帧范围”，再填写“Robocap 起始帧”和
 “Robocap 结束帧”。帧号从 0 开始，并且首尾都包含。工具会用参考视频的 `capture_time` 生成一个
@@ -116,7 +134,17 @@ LANGUAGE_PACKS = {
         "package_button": "Package",
         "mode": "Alignment mode",
         "ratio": "Ratio",
-        "offset": "Offset (Robocap frames)",
+        "offset": "Offset (signed Robocap frames)",
+        "offset_help": (
+            "**Offset direction (Robocap video is the reference):** `+N` advances NOKOV/GT "
+            "by N Robocap frames, so it appears earlier and the same video frame uses a later "
+            "GT frame. `-N` delays NOKOV/GT by N Robocap frames, so it appears later and the "
+            "same video frame uses an earlier GT frame. Internal source-script conversion: "
+            "`GT frame offset = round(Robocap frame offset * ratio)`. **Frame-mode RRD uses "
+            "`frame` as its primary timeline (GT/NOKOV frame scale): video frame N is at "
+            "`round(N * ratio)` and GT source frame K is at `K - GT frame offset`; "
+            "`capture_time` is secondary.**"
+        ),
         "limit_robocap_frames": "Limit Robocap frame range",
         "robocap_start_frame": "Robocap start frame (0-based, inclusive)",
         "robocap_end_frame": "Robocap end frame (0-based, inclusive)",
@@ -165,7 +193,15 @@ LANGUAGE_PACKS = {
         "package_button": "打包数据",
         "mode": "对齐模式",
         "ratio": "比例 ratio",
-        "offset": "Offset（Robocap 帧）",
+        "offset": "Offset（有符号 Robocap 帧）",
+        "offset_help": (
+            "**Offset 方向（以 Robocap 视频为基准）：** `+N` 表示 NOKOV/GT 相对 Robocap "
+            "视频前移 N 帧、提前出现，同一视频帧会取更靠后的 GT 帧；`-N` 表示 NOKOV/GT "
+            "相对 Robocap 视频后移 N 帧、延后出现，同一视频帧会取更靠前的 GT 帧。进入源脚本"
+            "前转换为：`GT 帧 offset = round(Robocap 帧 offset * ratio)`。**帧对齐 RRD 的"
+            "主时间轴是 GT/NOKOV 帧尺度的 `frame`：视频第 N 帧位于 `round(N * ratio)`，GT "
+            "源数据第 K 帧位于 `K - GT 帧 offset`；`capture_time` 只作辅助时间轴。**"
+        ),
         "limit_robocap_frames": "限制 Robocap 帧范围",
         "robocap_start_frame": "Robocap 起始帧（从 0 开始，包含）",
         "robocap_end_frame": "Robocap 结束帧（从 0 开始，包含）",
@@ -633,13 +669,14 @@ def package_data(
 def inspect_offset(
     session_dir: str, segment: str, ratio: str, offset: int, nokov_source: str
 ) -> str:
+    signed_offset = normalize_offset(offset)
     args = [
         "inspect-offset",
         session_path(session_dir),
         "--ratio",
         ratio.strip() or "auto",
         "--offset",
-        str(int(offset)),
+        str(signed_offset),
     ]
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
@@ -651,15 +688,17 @@ def inspect_offset(
 def sweep_offset(
     session_dir: str, segment: str, ratio: str, offset_min: int, offset_max: int, nokov_source: str
 ) -> str:
+    signed_offset_min = normalize_offset(offset_min)
+    signed_offset_max = normalize_offset(offset_max)
     args = [
         "sweep-offset",
         session_path(session_dir),
         "--ratio",
         ratio.strip() or "auto",
         "--offset-min",
-        str(int(offset_min)),
+        str(signed_offset_min),
         "--offset-max",
-        str(int(offset_max)),
+        str(signed_offset_max),
     ]
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
@@ -695,7 +734,8 @@ def export_rrd(
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
     if mode == "frame":
-        args.extend(["--ratio", ratio.strip() or "auto", "--offset", str(int(offset))])
+        signed_offset = normalize_offset(offset)
+        args.extend(["--ratio", ratio.strip() or "auto", "--offset", str(signed_offset)])
     if limit_robocap_frames:
         start_frame = normalize_optional_frame_index(robocap_start_frame)
         end_frame = normalize_optional_frame_index(robocap_end_frame)
@@ -763,6 +803,7 @@ def language_updates(language: str):
         gr.update(label=labels["mode"]),
         gr.update(label=labels["ratio"]),
         gr.update(label=labels["offset"]),
+        gr.update(value=labels["offset_help"]),
         gr.update(label=labels["limit_robocap_frames"]),
         gr.update(label=labels["robocap_start_frame"]),
         gr.update(label=labels["robocap_end_frame"]),
@@ -784,6 +825,7 @@ def language_updates(language: str):
         gr.update(value=labels["set_default_offset_button"]),
         gr.update(label=labels["ratio"]),
         gr.update(label=labels["offset"]),
+        gr.update(value=labels["offset_help"]),
         gr.update(label=labels["nokov_source"]),
         gr.update(value=labels["set_default_offset_button"]),
         gr.update(value=labels["offset_button"]),
@@ -858,6 +900,7 @@ def build_app():
                 mode = gr.Radio(label=labels["mode"], choices=["time", "frame"], value="frame")
                 ratio = gr.Textbox(label=labels["ratio"], value="auto")
                 offset = gr.Number(label=labels["offset"], value=default_offset, precision=0)
+            export_offset_help = gr.Markdown(labels["offset_help"])
             with gr.Row():
                 limit_robocap_frames = gr.Checkbox(
                     label=labels["limit_robocap_frames"], value=False
@@ -930,6 +973,7 @@ def build_app():
                 nokov_source = gr.Textbox(
                     label=labels["nokov_source"], placeholder=r"Z:\...\test1\test2-hand.bvh"
                 )
+            inspect_offset_help = gr.Markdown(labels["offset_help"])
             with gr.Row():
                 offset_button = gr.Button(labels["offset_button"], variant="primary")
                 inspect_default_offset_button = gr.Button(labels["set_default_offset_button"])
@@ -949,7 +993,7 @@ def build_app():
                 outputs=[output, offset, single_offset],
             )
             with gr.Row():
-                offset_min = gr.Number(label=labels["offset_min"], value=0, precision=0)
+                offset_min = gr.Number(label=labels["offset_min"], value=-10, precision=0)
                 offset_max = gr.Number(label=labels["offset_max"], value=10, precision=0)
             sweep_button = gr.Button(labels["sweep_button"])
             sweep_button.click(
@@ -1005,6 +1049,7 @@ def build_app():
                 mode,
                 ratio,
                 offset,
+                export_offset_help,
                 limit_robocap_frames,
                 robocap_start_frame,
                 robocap_end_frame,
@@ -1026,6 +1071,7 @@ def build_app():
                 export_default_offset_button,
                 offset_ratio,
                 single_offset,
+                inspect_offset_help,
                 nokov_source,
                 inspect_default_offset_button,
                 offset_button,

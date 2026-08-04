@@ -192,6 +192,11 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --seg
 时间窗，用它同时裁剪所有 Robocap 视频、传感器、NOKOV 轨迹和第三人称视频，再与原有的公共数据
 时间窗求交。在 Web 页面先勾选“限制 Robocap 帧范围”再填写两个帧号；不勾选时保持全量导出。
 
+帧对齐版 RRD 的主时间轴是整数 `frame`，统一采用 GT/NOKOV 帧尺度。Robocap 视频第 `N` 帧
+写在 `frame = round(N * ratio)`，GT 源数据第 `K` 帧写在
+`frame = K - round(offset * ratio)`；其余视频和传感器根据参考视频时间戳映射到同一条帧轴。
+`capture_time` 仍然保留用于复核，但在 frame 模式下不再是默认时间轴。
+
 生成展示版布局：
 
 ```bat
@@ -227,13 +232,14 @@ robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session
 扫一段候选 offset：
 
 ```bat
-robocap-rerun sweep-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --ratio 8 --offset-min 35 --offset-max 45
+robocap-rerun sweep-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --ratio 8 --offset-min -10 --offset-max 10
 ```
 
 帧对齐公式是：
 
 ```text
-video frame N -> NOKOV frame round((N + offset) * main_ratio)
+GT 帧 offset = round(Robocap 帧 offset * main_ratio)
+video frame N -> NOKOV frame round(N * main_ratio) + GT 帧 offset
 ```
 
 其中：
@@ -243,7 +249,15 @@ video frame N -> NOKOV frame round((N + offset) * main_ratio)
   有效 GT 运动数据 FPS 与 Robocap 视频 FPS 的均值，各自取最近的 10 倍数，再计算
   `GT 取整 FPS / Robocap 取整 FPS`。报告不存在或无法计算时会先自动生成检查报告。
 - `--ratio 8`：需要固定比例时显式覆盖自动值。
-- `--offset 5`：单位是 Robocap 视频帧，先平移视频帧号，再乘 ratio。ratio 为 8 时等价于 GT 增加 40 帧。
+- `--offset 5`：以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap
+  视频前移、提前出现，同一视频帧会取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap
+  视频后移、延后出现，同一视频帧会取更靠前的 GT 帧。程序先转换为
+  `GT 帧 offset = round(Robocap 帧 offset * ratio)`，然后原样使用源脚本的对齐公式。
+  ratio 为 8 时，`5` 会转换为 GT offset `40`，`-5` 会把 GT 第 0 帧放到 Robocap 视频第 5 帧。
+
+Rerun 中显示的统一帧号为：视频第 `N` 帧位于 `round(N * ratio)`；GT 源帧 `K` 位于
+`K - GT 帧 offset`。因此 ratio 8、offset 5 时，视频第 100 帧和 GT 第 840 帧都位于
+统一时间轴的 `frame=800`。
 
 `frame_rate_report.md` 会写出 GT/Robocap 样本数、原始均值、10 倍数取整值和最终 ratio，便于复核。
 这取代了旧版“Offset 直接使用 GT 帧数”的定义。

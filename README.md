@@ -170,7 +170,8 @@ robocap-rerun sweep-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 The mapping used by frame alignment is:
 
 ```text
-video frame N -> NOKOV frame round((N + offset) * main_ratio)
+GT frame offset = round(Robocap frame offset * main_ratio)
+video frame N -> NOKOV frame round(N * main_ratio) + GT frame offset
 ```
 
 Frame alignment defaults to `--ratio auto`. It reads the table in
@@ -180,8 +181,18 @@ uses `rounded GT FPS / rounded Robocap FPS`. If the report is missing or invalid
 it before calculating the ratio. The report includes the sample counts, raw means, rounded values,
 and resulting ratio. Use a numeric value such as `--ratio 8` to override auto.
 
-Offset is an integer Robocap video-frame shift applied before the ratio. At ratio 8, `--offset 5`
-adds 40 GT frames. This replaces the historical GT-frame-unit `--offset 40` convention.
+Offset is measured relative to Robocap video. Positive values advance NOKOV/GT relative to the
+video, so GT appears earlier and the same video frame selects a later GT frame. Negative values
+delay NOKOV/GT relative to the video, so GT appears later and the same video frame selects an
+earlier GT frame. The exporter converts this value to `round(offset * ratio)` GT frames and then
+uses the source script's alignment formula unchanged. At ratio 8, `--offset 5` becomes GT offset
+`40`, while `--offset -5` places GT frame 0 at Robocap video frame 5.
+
+Frame-aligned RRD files use `frame` as the primary timeline, expressed at the GT/NOKOV frame
+rate. Robocap video frame `N` is logged at `frame = round(N * ratio)`, and source GT frame `K`
+is logged at `frame = K - round(offset * ratio)`. All videos and sensor samples are mapped onto
+that same integer frame axis from the reference video's timestamps. `capture_time` is retained as
+a secondary timeline for inspection; it is not the default timeline in frame mode.
 
 ## MANO Mesh
 

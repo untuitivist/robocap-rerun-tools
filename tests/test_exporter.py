@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 
 import robocap_rerun_tools.exporter as exporter
+from robocap_rerun_tools.alignment import FrameAlignment
 from robocap_rerun_tools.exporter import (
     discover_gt_dir,
     discover_gt_file_sets,
@@ -19,16 +20,71 @@ from robocap_rerun_tools.exporter import (
 
 def test_frame_alignment_offset_uses_reference_video_frames() -> None:
     reference_timestamps = np.arange(20, dtype=np.int64) * 100
+    alignment = FrameAlignment(ratio=8.0, video_frame_offset=5)
 
     aligned = synthesize_frame_aligned_timestamps(
         frame_count=49,
         reference_video_timestamps=reference_timestamps,
         ratio=8.0,
-        video_frame_offset=5,
+        frame_offset=alignment.gt_frame_offset,
     )
 
+    assert alignment.gt_frame_offset == 40
     assert aligned[40] == reference_timestamps[0]
     assert aligned[48] == reference_timestamps[1]
+
+
+def test_frame_alignment_accepts_negative_video_frame_offset() -> None:
+    reference_timestamps = np.arange(20, dtype=np.int64) * 100
+    alignment = FrameAlignment(ratio=8.0, video_frame_offset=-5)
+
+    aligned = synthesize_frame_aligned_timestamps(
+        frame_count=9,
+        reference_video_timestamps=reference_timestamps,
+        ratio=8.0,
+        frame_offset=alignment.gt_frame_offset,
+    )
+
+    assert alignment.gt_frame_offset == -40
+    assert aligned[0] == reference_timestamps[5]
+    assert aligned[8] == reference_timestamps[6]
+    summary = exporter.describe_frame_alignment(8.0, -5)
+    assert "Robocap offset=-5 frames -> GT offset=-40 frames" in summary
+    assert "NOKOV/GT is delayed (shifted later) relative to Robocap video" in summary
+    assert "video frame 0 -> GT frame -40" in summary
+    assert "GT frame 0 -> video frame 5.000000000" in summary
+
+
+def test_capture_timestamps_map_to_gt_scale_frame_timeline() -> None:
+    reference_timestamps = np.asarray([100, 200, 300], dtype=np.int64)
+    timestamps = np.asarray([50, 100, 150, 200, 300, 350], dtype=np.int64)
+
+    frames = exporter.capture_timestamps_to_aligned_frames(
+        timestamps, reference_timestamps, ratio=8.0
+    )
+
+    assert frames.tolist() == [-4, 0, 4, 8, 16, 20]
+
+
+def test_frame_timeline_aligns_video_and_gt_source_frames() -> None:
+    reference_timestamps = np.arange(200, dtype=np.int64) * 100
+    positive = exporter.TimelineContext(
+        alignment_mode="frame",
+        reference_timestamps_ns=reference_timestamps,
+        frame_alignment=FrameAlignment(ratio=8.0, video_frame_offset=5),
+    )
+    negative = exporter.TimelineContext(
+        alignment_mode="frame",
+        reference_timestamps_ns=reference_timestamps,
+        frame_alignment=FrameAlignment(ratio=8.0, video_frame_offset=-5),
+    )
+
+    video_frame = int(positive.frames_from_capture_time(reference_timestamps[[100]])[0])
+
+    assert positive.primary_timeline == "frame"
+    assert video_frame == 800
+    assert positive.gt_frame(840) == video_frame
+    assert negative.gt_frame(760) == video_frame
 
 
 def test_robocap_frame_range_is_zero_based_inclusive() -> None:
@@ -359,12 +415,18 @@ def test_normalize_mano_template_centers_and_scales_vertices() -> None:
 def test_gt_logging_writes_one_geometry_batch_per_timestamp(monkeypatch) -> None:
     logged = []
     capture_times = []
+
+    class FakeTimeline:
+        alignment_mode = "time"
+
+        def set_time(self, timestamp_ns, frame_index=None):
+            capture_times.append(timestamp_ns)
+
     monkeypatch.setattr(
         exporter.rr,
         "log",
         lambda entity, archetype, **kwargs: logged.append((entity, archetype, kwargs)),
     )
-    monkeypatch.setattr(exporter, "set_capture_time", capture_times.append)
 
     timestamps_ns = np.asarray([1_000_000_000, 2_000_000_000], dtype=np.int64)
     marker_track = exporter.GTMarkerTrack(
@@ -397,8 +459,9 @@ def test_gt_logging_writes_one_geometry_batch_per_timestamp(monkeypatch) -> None
         faces=np.asarray([[0, 1, 2]], dtype=np.uint32),
     )
 
-    exporter.log_gt_marker_track(marker_track, None)
-    exporter.log_gt_mano_mesh(mesh_track, None)
+    timeline = FakeTimeline()
+    exporter.log_gt_marker_track(marker_track, None, timeline)
+    exporter.log_gt_mano_mesh(mesh_track, None, timeline)
 
     assert capture_times == [1_000_000_000, 2_000_000_000] * 2
     assert [entity for entity, _archetype, _kwargs in logged] == [

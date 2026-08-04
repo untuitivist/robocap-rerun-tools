@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .alignment import FrameAlignment
+
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 TEXT_SUFFIXES = {".csv", ".tsv", ".trc", ".bvh", ".xrs"}
@@ -845,11 +847,11 @@ def auto_ratio_console_summary(estimate: FrameRatioEstimate) -> str:
 
 
 def video_to_gt_frame_float(video_frame: int, ratio: float, video_frame_offset: int) -> float:
-    return (video_frame + video_frame_offset) * ratio
+    return FrameAlignment(ratio, video_frame_offset).video_to_gt_frame_float(video_frame)
 
 
 def video_to_gt_frame(video_frame: int, ratio: float, video_frame_offset: int) -> int:
-    return int(round(video_to_gt_frame_float(video_frame, ratio, video_frame_offset)))
+    return FrameAlignment(ratio, video_frame_offset).video_to_gt_frame(video_frame)
 
 
 def find_nokov_source(session_dir: Path, explicit: Path | None) -> Path | None:
@@ -898,6 +900,7 @@ def write_offset_report(
         ratio = ratio_estimate.ratio if ratio_estimate is not None else 8.0
     else:
         ratio = float(ratio_arg)
+    alignment = FrameAlignment(ratio, offset)
     frame_count = video.frame_count or 0
     nokov_count = nokov.frame_count or 0
     rows = [
@@ -912,13 +915,16 @@ def write_offset_report(
             "expected_minus_8x",
         ]
     ]
-    max_rows = min(frame_count, max(0, math.ceil(nokov_count / ratio - offset))) if ratio > 0 else 0
+    max_rows = min(
+        frame_count,
+        max(0, math.ceil((nokov_count - alignment.gt_frame_offset) / ratio)),
+    )
     for video_frame in range(max_rows):
         expected_float = video_frame * ratio
         expected = int(round(expected_float))
         offset_video_frame = video_frame + offset
-        offset_float = video_to_gt_frame_float(video_frame, ratio, offset)
-        offset_frame = int(round(offset_float))
+        offset_float = alignment.video_to_gt_frame_float(video_frame)
+        offset_frame = alignment.video_to_gt_frame(video_frame)
         rows.append(
             [
                 str(video_frame),
@@ -947,7 +953,8 @@ def write_offset_report(
         f"- main_ratio: {ratio:.9f}",
         f"- offset: {offset}",
         "- offset_unit: robocap_video_frames",
-        f"- equivalent_nokov_offset_float: {offset * ratio:.9f}",
+        f"- source_script_gt_frame_offset: {alignment.gt_frame_offset}",
+        f"- relative_shift: {alignment.relative_shift_description()}",
         f"- comparable_video_frames: {max_rows}",
     ]
     if ratio_estimate is not None:
@@ -955,7 +962,8 @@ def write_offset_report(
     md.extend(
         [
             "",
-            "The mapping is: `video frame N -> NOKOV frame round((N + offset) * main_ratio)`.",
+            "The source-script mapping is: `NOKOV frame = round(video frame * ratio) + GT frame offset`.",
+            "The user-facing conversion is: `GT frame offset = round(Robocap frame offset * ratio)`.",
             "`expected_minus_8x` is kept because a fixed 8x mapping is the historical baseline.",
         ]
     )
@@ -1056,8 +1064,9 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=0,
         help=(
-            "Frame mode offset in Robocap video frames. Mapping: GT frame = "
-            "round((video frame + offset) * ratio)."
+            "Signed Robocap-video-frame offset. Positive advances NOKOV/GT relative to "
+            "Robocap video; negative delays it. Internally convert with GT frame offset = "
+            "round(Robocap frame offset * ratio), then use the source-script mapping."
         ),
     )
     parser.add_argument("--reference-video", default="left")

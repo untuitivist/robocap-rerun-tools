@@ -43,6 +43,22 @@ def test_export_parser_accepts_frame_offset() -> None:
     assert args.robocap_end_frame == 250
 
 
+def test_export_parser_accepts_negative_frame_offset() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "export",
+            "Z:/DATASETS/Frodobots/nokov/session",
+            "--mode",
+            "frame",
+            "--offset",
+            "-5",
+        ]
+    )
+
+    assert args.offset == -5
+
+
 def test_frame_alignment_ratio_defaults_to_auto() -> None:
     parser = build_parser()
     session = "Z:/DATASETS/Frodobots/nokov/session"
@@ -105,6 +121,10 @@ def test_offset_is_measured_in_robocap_video_frames() -> None:
     assert video_to_gt_frame(video_frame=10, ratio=8.0, video_frame_offset=5) == 120
 
 
+def test_offset_mapping_uses_source_script_rounding_order() -> None:
+    assert video_to_gt_frame(video_frame=1, ratio=2.4, video_frame_offset=1) == 4
+
+
 def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch) -> None:
     report_path = tmp_path / "_artifacts" / "segment1" / "inspection" / "frame_rate_report.md"
     write_test_fps_report(report_path)
@@ -117,6 +137,8 @@ def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch
             "segment1",
             "--mode",
             "frame",
+            "--offset",
+            "-5",
             "--robocap-start-frame",
             "10",
             "--robocap-end-frame",
@@ -136,7 +158,7 @@ def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch
     ratio_index = captured.index("--gt-frame-ratio")
     assert captured[ratio_index + 1] == "2.000000000"
     offset_index = captured.index("--gt-video-frame-offset")
-    assert captured[offset_index + 1] == "0"
+    assert captured[offset_index + 1] == "-5"
     assert "--gt-frame-offset" not in captured
     start_index = captured.index("--robocap-start-frame")
     end_index = captured.index("--robocap-end-frame")
@@ -211,6 +233,10 @@ def test_resolve_ffprobe_from_ffmpeg_sibling(tmp_path: Path) -> None:
 def test_web_language_values_include_docs() -> None:
     assert "中文说明" in web_app.language_values("中文")["doc"]
     assert "Basic Workflow" in web_app.language_values("English")["doc"]
+    assert "前移" in web_app.language_values("中文")["offset_help"]
+    assert "后移" in web_app.language_values("中文")["offset_help"]
+    assert "advances NOKOV/GT" in web_app.language_values("English")["offset_help"]
+    assert "delays NOKOV/GT" in web_app.language_values("English")["offset_help"]
 
 
 def test_web_default_offset_persists_and_synchronizes(tmp_path: Path) -> None:
@@ -277,9 +303,9 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     export_kwargs = {
         "session_dir": str(tmp_path),
         "segment": "segment1",
-        "mode": "time",
+        "mode": "frame",
         "ratio": "auto",
-        "offset": 0,
+        "offset": -5,
         "limit_robocap_frames": True,
         "robocap_start_frame": 10,
         "robocap_end_frame": 20,
@@ -303,6 +329,7 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     assert "--no-mag" in captured
     assert "--no-imu" in captured
     assert "--no-robowrist" not in captured
+    assert captured[captured.index("--offset") + 1] == "-5"
     assert captured[captured.index("--robocap-start-frame") + 1] == "10"
     assert captured[captured.index("--robocap-end-frame") + 1] == "20"
 

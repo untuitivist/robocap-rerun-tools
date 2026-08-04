@@ -112,6 +112,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+if __package__:
+    from .alignment import FrameAlignment
+else:
+    from alignment import FrameAlignment
+
 
 def ensure_third_party_packages() -> None:
     """检测脚本直接依赖的第三方库，缺失时自动安装。"""
@@ -152,6 +157,8 @@ VIDEO_SLOT_ORDER = (
     "right_front",
     "right_wrist_down",
 )
+
+EXPORT_CONFIG_SCHEMA = "source-script-frame-timeline-v1"
 
 SIGNAL_SLOT_ORDER = (
     "middle_mag",
@@ -305,6 +312,94 @@ class ArtifactPaths:
 class TimeWindow:
     start_ns: int
     end_ns: int
+
+
+def capture_timestamps_to_aligned_frames(
+    timestamps_ns: np.ndarray,
+    reference_timestamps_ns: np.ndarray,
+    ratio: float,
+) -> np.ndarray:
+    timestamps_ns = np.asarray(timestamps_ns, dtype=np.int64)
+    reference_timestamps_ns = np.asarray(reference_timestamps_ns, dtype=np.int64)
+    if len(timestamps_ns) == 0:
+        return np.asarray([], dtype=np.int64)
+    if len(reference_timestamps_ns) == 0:
+        raise ValueError("Frame timeline requires reference video timestamps.")
+    if len(reference_timestamps_ns) == 1:
+        return np.zeros(len(timestamps_ns), dtype=np.int64)
+    if np.any(np.diff(reference_timestamps_ns) <= 0):
+        raise ValueError("Reference video timestamps must be strictly increasing.")
+
+    right = np.searchsorted(reference_timestamps_ns, timestamps_ns, side="right")
+    left = np.clip(right - 1, 0, len(reference_timestamps_ns) - 2)
+    next_index = left + 1
+    span_ns = reference_timestamps_ns[next_index] - reference_timestamps_ns[left]
+    fraction = (timestamps_ns - reference_timestamps_ns[left]) / span_ns
+    video_frame_position = left.astype(np.float64) + fraction
+    return np.rint(video_frame_position * ratio).astype(np.int64)
+
+
+@dataclass(frozen=True)
+class TimelineContext:
+    alignment_mode: str
+    reference_timestamps_ns: np.ndarray | None = None
+    frame_alignment: FrameAlignment | None = None
+
+    def __post_init__(self) -> None:
+        if self.alignment_mode not in {"time", "frame"}:
+            raise ValueError(f"Unsupported alignment mode: {self.alignment_mode}")
+        if self.alignment_mode == "frame" and (
+            self.reference_timestamps_ns is None or self.frame_alignment is None
+        ):
+            raise ValueError("Frame alignment requires reference timestamps and a frame ratio.")
+
+    @property
+    def primary_timeline(self) -> str:
+        return "frame" if self.alignment_mode == "frame" else "capture_time"
+
+    def frames_from_capture_time(self, timestamps_ns: np.ndarray) -> np.ndarray:
+        if self.reference_timestamps_ns is None or self.frame_alignment is None:
+            raise ValueError("Frame timeline is not configured.")
+        return capture_timestamps_to_aligned_frames(
+            timestamps_ns,
+            self.reference_timestamps_ns,
+            self.frame_alignment.ratio,
+        )
+
+    def gt_frame(self, source_gt_frame: int) -> int:
+        if self.frame_alignment is None:
+            raise ValueError("GT frame mapping is only available in frame alignment mode.")
+        return source_gt_frame - self.frame_alignment.gt_frame_offset
+
+    def indexes(
+        self,
+        capture_timestamps_ns: np.ndarray,
+        frame_indices: np.ndarray | None = None,
+    ) -> list[rr.TimeColumn]:
+        capture_timestamps_ns = np.asarray(capture_timestamps_ns, dtype=np.int64)
+        indexes = [
+            rr.TimeColumn("capture_time", duration=capture_timestamps_ns.astype(np.float64) * 1e-9)
+        ]
+        if self.alignment_mode == "frame":
+            if frame_indices is None:
+                frame_indices = self.frames_from_capture_time(capture_timestamps_ns)
+            frame_indices = np.asarray(frame_indices, dtype=np.int64)
+            if len(frame_indices) != len(capture_timestamps_ns):
+                raise ValueError("Frame indexes and capture timestamps must have equal lengths.")
+            indexes.insert(0, rr.TimeColumn("frame", sequence=frame_indices))
+        return indexes
+
+    def set_time(self, timestamp_ns: int, frame_index: int | None = None) -> None:
+        if hasattr(rr, "set_time"):
+            rr.set_time("capture_time", duration=float(timestamp_ns) * 1e-9)
+        else:
+            rr.set_time_nanos("capture_time", int(timestamp_ns))
+        if self.alignment_mode == "frame":
+            if frame_index is None:
+                frame_index = int(
+                    self.frames_from_capture_time(np.asarray([timestamp_ns], dtype=np.int64))[0]
+                )
+            rr.set_time("frame", sequence=int(frame_index))
 
 
 RobocapFrameRange = tuple[int, int]
@@ -798,7 +893,10 @@ def with_export_parameter_suffix(path: Path, parameters: ExportNameParameters) -
         stream_token,
     ]
     payload = json.dumps(
-        asdict(parameters), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        {"schema": EXPORT_CONFIG_SCHEMA, "parameters": asdict(parameters)},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
     ).encode("utf-8")
     digest = hashlib.sha256(payload).hexdigest()[:10]
     suffix = "_" + "_".join([*readable_tokens, f"cfg-{digest}"])
@@ -949,7 +1047,7 @@ def synthesize_frame_aligned_timestamps(
     frame_count: int,
     reference_video_timestamps: np.ndarray,
     ratio: float,
-    video_frame_offset: int = 0,
+    frame_offset: int = 0,
 ) -> np.ndarray:
     if frame_count <= 0:
         return np.asarray([], dtype=np.int64)
@@ -958,7 +1056,7 @@ def synthesize_frame_aligned_timestamps(
     video_dt_ns = int(np.median(np.diff(reference_video_timestamps)))
     result = np.empty(frame_count, dtype=np.int64)
     for gt_index in range(frame_count):
-        video_float = gt_index / ratio - video_frame_offset
+        video_float = (gt_index - frame_offset) / ratio
         video_index = int(np.floor(video_float))
         fraction = video_float - video_index
         if video_index < 0:
@@ -977,6 +1075,10 @@ def synthesize_frame_aligned_timestamps(
                 )
             )
     return result
+
+
+def describe_frame_alignment(ratio: float, video_frame_offset: int) -> str:
+    return FrameAlignment(ratio, video_frame_offset).describe()
 
 
 def resolve_gt_frame_ratio(
@@ -1010,10 +1112,11 @@ def with_frame_aligned_gt_timestamps(
     ratio = resolve_gt_frame_ratio(gt_config, video_rate_hz, frame_ratio)
     if ratio is None:
         return gt_config
+    alignment = FrameAlignment(ratio, video_frame_offset)
 
     def aligned(timestamps_ns: np.ndarray) -> np.ndarray:
         return synthesize_frame_aligned_timestamps(
-            len(timestamps_ns), reference_video_timestamps, ratio, video_frame_offset
+            len(timestamps_ns), reference_video_timestamps, ratio, alignment.gt_frame_offset
         )
 
     skeleton = (
@@ -1035,11 +1138,7 @@ def with_frame_aligned_gt_timestamps(
         for track in gt_config.mano_mesh_tracks
     )
     note = gt_config.note or ""
-    note = (note + "\n" if note else "") + (
-        f"GT frame-aligned to reference video: ratio={ratio:.9f} GT frames per video frame; "
-        f"video_frame_offset={video_frame_offset}, so video frame N maps to GT frame "
-        "round((N+offset)*ratio)."
-    )
+    note = (note + "\n" if note else "") + alignment.describe()
     return replace(
         gt_config,
         skeleton=skeleton,
@@ -1307,6 +1406,7 @@ def log_video(
     proxy_bitrate: str,
     ffmpeg: str,
     capture_window: TimeWindow | None,
+    timeline: TimelineContext,
 ) -> None:
     source_path = session_dir / spec.relative_path
     video_path = resolve_video_path(
@@ -1331,13 +1431,17 @@ def log_video(
         return
     rr.send_columns(
         spec.entity,
-        indexes=[rr.TimeColumn("capture_time", duration=capture_timestamps_ns * 1e-9)],
+        indexes=timeline.indexes(capture_timestamps_ns),
         columns=rr.VideoFrameReference.columns_nanos(frame_timestamps_ns),
     )
 
 
 def log_signal(
-    session_dir: Path, spec: SignalSpec, max_points: int, capture_window: TimeWindow | None
+    session_dir: Path,
+    spec: SignalSpec,
+    max_points: int,
+    capture_window: TimeWindow | None,
+    timeline: TimelineContext,
 ) -> None:
     timestamps_ns, values_by_axis = fetch_signal_rows(
         session_dir / spec.relative_path,
@@ -1348,7 +1452,7 @@ def log_signal(
     )
     if len(timestamps_ns) == 0:
         return
-    time_column = rr.TimeColumn("capture_time", duration=timestamps_ns * 1e-9)
+    indexes = timeline.indexes(timestamps_ns)
 
     for axis, values in values_by_axis.items():
         entity = f"{spec.origin}/{axis}"
@@ -1357,7 +1461,7 @@ def log_signal(
             rr.SeriesLines(names=[axis], colors=[AXIS_COLORS[axis]], widths=[1.5]),
             static=True,
         )
-        rr.send_columns(entity, indexes=[time_column], columns=rr.Scalars.columns(scalars=values))
+        rr.send_columns(entity, indexes=indexes, columns=rr.Scalars.columns(scalars=values))
 
 
 def log_note(note: NoteSpec) -> None:
@@ -2893,20 +2997,18 @@ def skeleton_bone_strips(joints: np.ndarray, parents: Sequence[int]) -> list[np.
     return strips
 
 
-def set_capture_time(timestamp_ns: int) -> None:
-    if hasattr(rr, "set_time"):
-        rr.set_time("capture_time", duration=float(timestamp_ns) * 1e-9)
-    else:
-        rr.set_time_nanos("capture_time", int(timestamp_ns))
-
-
-def log_gt_skeleton(track: GTSkeletonTrack, capture_window: TimeWindow | None) -> None:
-    for timestamp_ns, joints in zip(track.timestamps_ns, track.joints):
+def log_gt_skeleton(
+    track: GTSkeletonTrack, capture_window: TimeWindow | None, timeline: TimelineContext
+) -> None:
+    for source_frame, (timestamp_ns, joints) in enumerate(zip(track.timestamps_ns, track.joints)):
         if capture_window is not None and not (
             capture_window.start_ns <= timestamp_ns <= capture_window.end_ns
         ):
             continue
-        set_capture_time(int(timestamp_ns))
+        frame_index = (
+            timeline.gt_frame(source_frame) if timeline.alignment_mode == "frame" else None
+        )
+        timeline.set_time(int(timestamp_ns), frame_index)
         rr.log(
             f"{GT_SKELETON_ENTITY}/joints",
             rr.Points3D(joints, radii=0.018, colors=[255, 210, 80]),
@@ -2919,13 +3021,20 @@ def log_gt_skeleton(track: GTSkeletonTrack, capture_window: TimeWindow | None) -
         )
 
 
-def log_gt_mesh(track: GTMeshTrack, capture_window: TimeWindow | None) -> None:
-    for timestamp_ns, vertices in zip(track.timestamps_ns, track.vertices):
+def log_gt_mesh(
+    track: GTMeshTrack, capture_window: TimeWindow | None, timeline: TimelineContext
+) -> None:
+    for source_frame, (timestamp_ns, vertices) in enumerate(
+        zip(track.timestamps_ns, track.vertices)
+    ):
         if capture_window is not None and not (
             capture_window.start_ns <= timestamp_ns <= capture_window.end_ns
         ):
             continue
-        set_capture_time(int(timestamp_ns))
+        frame_index = (
+            timeline.gt_frame(source_frame) if timeline.alignment_mode == "frame" else None
+        )
+        timeline.set_time(int(timestamp_ns), frame_index)
         rr.log(
             GT_MESH_ENTITY,
             rr.Mesh3D(
@@ -2936,13 +3045,20 @@ def log_gt_mesh(track: GTMeshTrack, capture_window: TimeWindow | None) -> None:
         )
 
 
-def log_gt_mano_mesh(track: GTManoMeshTrack, capture_window: TimeWindow | None) -> None:
-    for timestamp_ns, vertices in zip(track.timestamps_ns, track.vertices):
+def log_gt_mano_mesh(
+    track: GTManoMeshTrack, capture_window: TimeWindow | None, timeline: TimelineContext
+) -> None:
+    for source_frame, (timestamp_ns, vertices) in enumerate(
+        zip(track.timestamps_ns, track.vertices)
+    ):
         if capture_window is not None and not (
             capture_window.start_ns <= timestamp_ns <= capture_window.end_ns
         ):
             continue
-        set_capture_time(int(timestamp_ns))
+        frame_index = (
+            timeline.gt_frame(source_frame) if timeline.alignment_mode == "frame" else None
+        )
+        timeline.set_time(int(timestamp_ns), frame_index)
         rr.log(
             track.entity,
             rr.Mesh3D(
@@ -2963,14 +3079,21 @@ def marker_connection_strips(
     ]
 
 
-def log_gt_marker_track(track: GTMarkerTrack, capture_window: TimeWindow | None) -> None:
+def log_gt_marker_track(
+    track: GTMarkerTrack, capture_window: TimeWindow | None, timeline: TimelineContext
+) -> None:
     rr.log(f"{track.entity}/labels", rr.TextDocument(", ".join(track.marker_names)), static=True)
-    for timestamp_ns, positions in zip(track.timestamps_ns, track.positions):
+    for source_frame, (timestamp_ns, positions) in enumerate(
+        zip(track.timestamps_ns, track.positions)
+    ):
         if capture_window is not None and not (
             capture_window.start_ns <= timestamp_ns <= capture_window.end_ns
         ):
             continue
-        set_capture_time(int(timestamp_ns))
+        frame_index = (
+            timeline.gt_frame(source_frame) if timeline.alignment_mode == "frame" else None
+        )
+        timeline.set_time(int(timestamp_ns), frame_index)
         rr.log(
             f"{track.entity}/points",
             rr.Points3D(positions, radii=track.radius, colors=list(track.colors)),
@@ -2991,6 +3114,7 @@ def log_gt_third_person_video(
     time_offset_ns: int,
     start_timestamp_ns: int | None,
     capture_window: TimeWindow | None,
+    timeline: TimelineContext,
 ) -> None:
     video_asset = rr.AssetVideo(path=video_path)
     rr.log(GT_THIRD_PERSON_VIDEO_ENTITY, video_asset, static=True)
@@ -3009,12 +3133,16 @@ def log_gt_third_person_video(
         return
     rr.send_columns(
         GT_THIRD_PERSON_VIDEO_ENTITY,
-        indexes=[rr.TimeColumn("capture_time", duration=capture_timestamps_ns * 1e-9)],
+        indexes=timeline.indexes(capture_timestamps_ns),
         columns=rr.VideoFrameReference.columns_nanos(frame_timestamps_ns),
     )
 
 
-def log_gt(gt_config: GTConfig | None, capture_window: TimeWindow | None) -> None:
+def log_gt(
+    gt_config: GTConfig | None,
+    capture_window: TimeWindow | None,
+    timeline: TimelineContext,
+) -> None:
     if gt_config is None:
         rr.log(GT_NOTE_ENTITY, rr.TextDocument("no GT data discovered"), static=True)
         return
@@ -3027,19 +3155,20 @@ def log_gt(gt_config: GTConfig | None, capture_window: TimeWindow | None) -> Non
         rr.log(GT_TRACKS_ENTITY, view_coordinates, static=True)
         rr.log(GT_MESH_ENTITY, view_coordinates, static=True)
     if gt_config.skeleton is not None:
-        log_gt_skeleton(gt_config.skeleton, capture_window)
+        log_gt_skeleton(gt_config.skeleton, capture_window, timeline)
     if gt_config.mesh is not None:
-        log_gt_mesh(gt_config.mesh, capture_window)
+        log_gt_mesh(gt_config.mesh, capture_window, timeline)
     for track in gt_config.mano_mesh_tracks:
-        log_gt_mano_mesh(track, capture_window)
+        log_gt_mano_mesh(track, capture_window, timeline)
     for track in gt_config.marker_tracks:
-        log_gt_marker_track(track, capture_window)
+        log_gt_marker_track(track, capture_window, timeline)
     if gt_config.third_person_video is not None:
         log_gt_third_person_video(
             gt_config.third_person_video,
             gt_config.time_offset_ns,
             gt_config.third_person_start_ns,
             capture_window,
+            timeline,
         )
     rr.log(
         GT_NOTE_ENTITY,
@@ -3209,7 +3338,9 @@ def gt_overview_container(gt_config: GTConfig | None) -> rrb.ContainerLike | Non
 
 
 def build_display_blueprint(
-    config: SessionConfig, gt_config: GTConfig | None = None
+    config: SessionConfig,
+    gt_config: GTConfig | None = None,
+    timeline_name: str = "capture_time",
 ) -> rrb.Blueprint:
     rows: list[rrb.ContainerLike] = [display_videos_container(config)]
     row_shares = [2.4]
@@ -3222,17 +3353,20 @@ def build_display_blueprint(
         rows.append(gt_overview)
         row_shares.append(2.4)
     return rrb.Blueprint(
-        rrb.TimePanel(timeline="capture_time"),
+        rrb.TimePanel(timeline=timeline_name),
         rrb.Vertical(*rows, row_shares=row_shares),
         collapse_panels=True,
     )
 
 
 def build_blueprint(
-    config: SessionConfig, gt_config: GTConfig | None = None, preset: str = "default"
+    config: SessionConfig,
+    gt_config: GTConfig | None = None,
+    preset: str = "default",
+    timeline_name: str = "capture_time",
 ) -> rrb.Blueprint:
     if preset == "display":
-        return build_display_blueprint(config, gt_config)
+        return build_display_blueprint(config, gt_config, timeline_name)
 
     rows: list[rrb.ContainerLike] = [
         non_empty_grid(
@@ -3256,7 +3390,7 @@ def build_blueprint(
         row_shares.append(2.4)
 
     return rrb.Blueprint(
-        rrb.TimePanel(timeline="capture_time"),
+        rrb.TimePanel(timeline=timeline_name),
         rrb.Vertical(*rows, row_shares=row_shares),
         collapse_panels=True,
     )
@@ -3518,8 +3652,9 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help=(
-            "Robocap video-frame offset for frame alignment: video frame N maps to GT frame "
-            "round((N+offset)*ratio). --gt-frame-offset is retained as a compatibility alias."
+            "Signed Robocap-video-frame offset. Positive advances NOKOV/GT relative to "
+            "Robocap video; negative delays it. It is converted to the source script's GT "
+            "frame offset with round(offset*ratio). --gt-frame-offset is a compatibility alias."
         ),
     )
     parser.add_argument(
@@ -3627,12 +3762,35 @@ def main() -> None:
         resolved_frame_ratio = resolve_gt_frame_ratio(
             gt_config, reference_rate_hz, args.gt_frame_ratio
         )
+        if reference_timestamps is None or len(reference_timestamps) == 0:
+            raise ValueError("Frame alignment requires a reference Robocap video with timestamps.")
+        if resolved_frame_ratio is None:
+            raise ValueError(
+                "Frame alignment could not resolve the GT/Robocap frame ratio. "
+                "Run inspect first or provide --gt-frame-ratio explicitly."
+            )
         gt_config = with_frame_aligned_gt_timestamps(
             gt_config,
             reference_timestamps,
             reference_rate_hz,
             frame_ratio=resolved_frame_ratio,
             video_frame_offset=args.gt_video_frame_offset,
+        )
+        print(describe_frame_alignment(resolved_frame_ratio, args.gt_video_frame_offset))
+    frame_alignment = (
+        FrameAlignment(resolved_frame_ratio, args.gt_video_frame_offset)
+        if args.gt_alignment_mode == "frame" and resolved_frame_ratio is not None
+        else None
+    )
+    timeline = TimelineContext(
+        alignment_mode=args.gt_alignment_mode,
+        reference_timestamps_ns=reference_timestamps,
+        frame_alignment=frame_alignment,
+    )
+    if timeline.alignment_mode == "frame":
+        print(
+            "Rerun primary timeline: frame (GT/NOKOV frame scale); "
+            "capture_time is retained as a secondary timeline."
         )
     time_report_path = write_time_alignment_report(
         session_dir,
@@ -3679,7 +3837,12 @@ def main() -> None:
                 f"({(capture_window.end_ns - capture_window.start_ns) / 1e9:.3f} s)"
             )
 
-    blueprint = build_blueprint(config, gt_config, args.blueprint_preset)
+    blueprint = build_blueprint(
+        config,
+        gt_config,
+        args.blueprint_preset,
+        timeline_name=timeline.primary_timeline,
+    )
     name_parameters = ExportNameParameters(
         alignment_mode=args.gt_alignment_mode,
         frame_ratio=resolved_frame_ratio,
@@ -3738,12 +3901,13 @@ def main() -> None:
             args.proxy_bitrate,
             ffmpeg,
             capture_window,
+            timeline,
         )
     for spec in config.signals.values():
-        log_signal(session_dir, spec, args.max_sensor_points, capture_window)
+        log_signal(session_dir, spec, args.max_sensor_points, capture_window, timeline)
     for note in config.notes.values():
         log_note(note)
-    log_gt(gt_config, capture_window)
+    log_gt(gt_config, capture_window, timeline)
 
     rr.send_blueprint(blueprint)
     print(f"Rerun dual-hands demo logging complete: {save_path}")
