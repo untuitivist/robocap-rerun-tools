@@ -30,11 +30,17 @@ def test_export_parser_accepts_frame_offset() -> None:
             "8",
             "--offset",
             "40",
+            "--robocap-start-frame",
+            "100",
+            "--robocap-end-frame",
+            "250",
         ]
     )
     assert args.mode == "frame"
     assert args.ratio == "8"
     assert args.offset == 40
+    assert args.robocap_start_frame == 100
+    assert args.robocap_end_frame == 250
 
 
 def test_frame_alignment_ratio_defaults_to_auto() -> None:
@@ -103,7 +109,20 @@ def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch
     report_path = tmp_path / "_artifacts" / "segment1" / "inspection" / "frame_rate_report.md"
     write_test_fps_report(report_path)
     parser = build_parser()
-    args = parser.parse_args(["export", str(tmp_path), "--segment", "segment1", "--mode", "frame"])
+    args = parser.parse_args(
+        [
+            "export",
+            str(tmp_path),
+            "--segment",
+            "segment1",
+            "--mode",
+            "frame",
+            "--robocap-start-frame",
+            "10",
+            "--robocap-end-frame",
+            "20",
+        ]
+    )
     captured: list[str] = []
 
     from robocap_rerun_tools import exporter
@@ -119,6 +138,10 @@ def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch
     offset_index = captured.index("--gt-video-frame-offset")
     assert captured[offset_index + 1] == "0"
     assert "--gt-frame-offset" not in captured
+    start_index = captured.index("--robocap-start-frame")
+    end_index = captured.index("--robocap-end-frame")
+    assert captured[start_index + 1] == "10"
+    assert captured[end_index + 1] == "20"
 
 
 def test_export_parser_accepts_sensor_filters() -> None:
@@ -251,31 +274,43 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
         return "Done."
 
     monkeypatch.setattr(web_app, "run_cli", fake_run_cli)
-    result = web_app.export_rrd(
-        session_dir=str(tmp_path),
-        segment="segment1",
-        mode="time",
-        ratio="auto",
-        offset=0,
-        save_path="",
-        use_proxy=False,
-        display=True,
-        gt_dir="",
-        selected_gt_files=[],
-        retarget_model="none",
-        include_third_person=False,
-        third_person_video="",
-        include_robowrist=True,
-        include_mag=False,
-        include_imu=False,
-        mano_model_dir="",
-        proxy_height=540,
-    )
+    export_kwargs = {
+        "session_dir": str(tmp_path),
+        "segment": "segment1",
+        "mode": "time",
+        "ratio": "auto",
+        "offset": 0,
+        "limit_robocap_frames": True,
+        "robocap_start_frame": 10,
+        "robocap_end_frame": 20,
+        "save_path": "",
+        "use_proxy": False,
+        "display": True,
+        "gt_dir": "",
+        "selected_gt_files": [],
+        "retarget_model": "none",
+        "include_third_person": False,
+        "third_person_video": "",
+        "include_robowrist": True,
+        "include_mag": False,
+        "include_imu": False,
+        "mano_model_dir": "",
+        "proxy_height": 540,
+    }
+    result = web_app.export_rrd(**export_kwargs)
 
     assert result == "Done."
     assert "--no-mag" in captured
     assert "--no-imu" in captured
     assert "--no-robowrist" not in captured
+    assert captured[captured.index("--robocap-start-frame") + 1] == "10"
+    assert captured[captured.index("--robocap-end-frame") + 1] == "20"
+
+    captured.clear()
+    export_kwargs["limit_robocap_frames"] = False
+    web_app.export_rrd(**export_kwargs)
+    assert "--robocap-start-frame" not in captured
+    assert "--robocap-end-frame" not in captured
 
 
 def test_hierarchical_nokov_csv_summary_uses_timestamp(tmp_path: Path) -> None:

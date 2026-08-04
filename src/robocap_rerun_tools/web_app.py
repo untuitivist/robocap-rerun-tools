@@ -47,6 +47,13 @@ all Robocap video FPS values separately, rounds both means to the nearest multip
 `rounded GT FPS / rounded Robocap FPS`. Enter a number such as `8` to override it.
 Offset is measured in Robocap video frames. At ratio 8, an offset of 5 is equivalent to 40 GT frames.
 
+To export only part of a session, enable `Limit Robocap frame range` and enter both
+`Robocap start frame` and `Robocap end frame`. The indexes are 0-based and inclusive. One
+reference-video `capture_time` window is applied to every video, sensor, NOKOV track, and
+third-person stream. Output names include readable alignment and content tags such as
+`r8_o5_ref-left_f100-200_rt-none`, plus a stable `cfg-...` fingerprint covering the remaining
+export parameters. Different parameter sets therefore do not overwrite each other.
+
 Use `Set as default` beside either Offset field to persist that frame offset and apply it to both
 the Export and Offset tabs. The saved value is restored the next time the Web UI starts.
 """
@@ -84,6 +91,12 @@ video frame N -> NOKOV frame round((N + offset) * ratio)
 的均值，各自取最近的 10 倍数，再用“GT 取整值 / Robocap 取整值”得到 ratio。输入 `8` 等数字可覆盖自动值。
 Offset 的单位是 Robocap 视频帧；ratio 为 8 时，offset 5 等价于 GT 的 40 帧。
 
+只导出 session 的一段时，先勾选“限制 Robocap 帧范围”，再填写“Robocap 起始帧”和
+“Robocap 结束帧”。帧号从 0 开始，并且首尾都包含。工具会用参考视频的 `capture_time` 生成一个
+统一时间窗，同时裁剪视频、传感器、NOKOV 轨迹和第三人称视频。输出名会包含
+`r8_o5_ref-left_f100-200_rt-none` 这类可读标签，并用稳定的 `cfg-...` 指纹覆盖其余导出参数，
+所以不同参数组合不会互相覆盖。
+
 点击任一 Offset 输入框旁的“设为默认值”，会持久保存当前帧偏移量，并同步到“导出 RRD”和“Offset”页。
 下次启动 Web UI 时会自动恢复该值。
 """
@@ -104,6 +117,9 @@ LANGUAGE_PACKS = {
         "mode": "Alignment mode",
         "ratio": "Ratio",
         "offset": "Offset (Robocap frames)",
+        "limit_robocap_frames": "Limit Robocap frame range",
+        "robocap_start_frame": "Robocap start frame (0-based, inclusive)",
+        "robocap_end_frame": "Robocap end frame (0-based, inclusive)",
         "save_path": "Save path",
         "mano_model_dir": "MANO model dir",
         "use_proxy": "Use compressed proxy video",
@@ -150,6 +166,9 @@ LANGUAGE_PACKS = {
         "mode": "对齐模式",
         "ratio": "比例 ratio",
         "offset": "Offset（Robocap 帧）",
+        "limit_robocap_frames": "限制 Robocap 帧范围",
+        "robocap_start_frame": "Robocap 起始帧（从 0 开始，包含）",
+        "robocap_end_frame": "Robocap 结束帧（从 0 开始，包含）",
         "save_path": "RRD 保存路径",
         "mano_model_dir": "MANO 模型目录",
         "use_proxy": "使用压缩视频",
@@ -233,6 +252,17 @@ def normalize_offset(value: object) -> int:
     if not math.isfinite(number) or not number.is_integer():
         raise ValueError("Offset must be an integer frame count.")
     return int(number)
+
+
+def normalize_optional_frame_index(value: object) -> int | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    frame_index = normalize_offset(value)
+    if frame_index < 0:
+        raise ValueError("Robocap frame indexes must be non-negative (0-based).")
+    return frame_index
 
 
 def load_default_offset(settings_path: Path | None = None) -> int:
@@ -644,6 +674,9 @@ def export_rrd(
     mode: str,
     ratio: str,
     offset: int,
+    limit_robocap_frames: bool,
+    robocap_start_frame: object,
+    robocap_end_frame: object,
     save_path: str,
     use_proxy: bool,
     display: bool,
@@ -663,6 +696,13 @@ def export_rrd(
         args.extend(["--segment", segment.strip()])
     if mode == "frame":
         args.extend(["--ratio", ratio.strip() or "auto", "--offset", str(int(offset))])
+    if limit_robocap_frames:
+        start_frame = normalize_optional_frame_index(robocap_start_frame)
+        end_frame = normalize_optional_frame_index(robocap_end_frame)
+        if start_frame is not None:
+            args.extend(["--robocap-start-frame", str(start_frame)])
+        if end_frame is not None:
+            args.extend(["--robocap-end-frame", str(end_frame)])
     if optional_text(save_path):
         args.extend(["--save", save_path.strip()])
     if optional_text(gt_dir):
@@ -723,6 +763,9 @@ def language_updates(language: str):
         gr.update(label=labels["mode"]),
         gr.update(label=labels["ratio"]),
         gr.update(label=labels["offset"]),
+        gr.update(label=labels["limit_robocap_frames"]),
+        gr.update(label=labels["robocap_start_frame"]),
+        gr.update(label=labels["robocap_end_frame"]),
         gr.update(label=labels["save_path"]),
         gr.update(label=labels["mano_model_dir"]),
         gr.update(label=labels["use_proxy"]),
@@ -815,6 +858,16 @@ def build_app():
                 mode = gr.Radio(label=labels["mode"], choices=["time", "frame"], value="frame")
                 ratio = gr.Textbox(label=labels["ratio"], value="auto")
                 offset = gr.Number(label=labels["offset"], value=default_offset, precision=0)
+            with gr.Row():
+                limit_robocap_frames = gr.Checkbox(
+                    label=labels["limit_robocap_frames"], value=False
+                )
+                robocap_start_frame = gr.Number(
+                    label=labels["robocap_start_frame"], value=0, precision=0
+                )
+                robocap_end_frame = gr.Number(
+                    label=labels["robocap_end_frame"], value=0, precision=0
+                )
             export_default_offset_button = gr.Button(labels["set_default_offset_button"])
             with gr.Row():
                 save_path = gr.Textbox(
@@ -850,6 +903,9 @@ def build_app():
                     mode,
                     ratio,
                     offset,
+                    limit_robocap_frames,
+                    robocap_start_frame,
+                    robocap_end_frame,
                     save_path,
                     use_proxy,
                     display,
@@ -949,6 +1005,9 @@ def build_app():
                 mode,
                 ratio,
                 offset,
+                limit_robocap_frames,
+                robocap_start_frame,
+                robocap_end_frame,
                 save_path,
                 mano_model_dir,
                 use_proxy,

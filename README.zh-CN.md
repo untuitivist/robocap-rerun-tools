@@ -182,6 +182,16 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --seg
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --offset 5 --use-proxy
 ```
 
+只导出 Robocap 参考视频第 100 到第 500 帧。帧号从 0 开始，并且首尾都包含：
+
+```bat
+robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --offset 5 --robocap-start-frame 100 --robocap-end-frame 500 --use-proxy
+```
+
+起始帧与结束帧必须同时填写。导出器会先把参考视频的帧区间转换为一个统一的 `capture_time`
+时间窗，用它同时裁剪所有 Robocap 视频、传感器、NOKOV 轨迹和第三人称视频，再与原有的公共数据
+时间窗求交。在 Web 页面先勾选“限制 Robocap 帧范围”再填写两个帧号；不勾选时保持全量导出。
+
 生成展示版布局：
 
 ```bat
@@ -277,13 +287,19 @@ Web 发起的 RRD 导出、检查、打包、Offset、环境与 Git 命令都不
 
 常见文件：
 
-- `*_time_aligned.rrd`
-- `*_frame_aligned.rrd`
+- `*_time_aligned_fall_rt-none_raw_bp-default_data-..._cfg-....rrd`
+- `*_frame_aligned_r8_o5_ref-left_f100-500_rt-none_p540_bp-display_data-..._cfg-....rrd`
 - `time_alignment_report.tsv`
 - `frame_rate_report.md`
 - `frame_rate_report.tsv`
 - `video_to_nokov_frame_alignment.tsv`
 - `offset_inspection.md`
+
+RRD 文件名会纳入导出参数，避免不同配置互相覆盖。可读部分包含帧对齐 ratio（`r`）、Robocap
+帧 offset（`o`）、参考视频（`ref`）、帧区间（`f`，全量为 `fall`）、重定向模型（`rt`）、
+原始/代理视频、布局（`bp`）和数据流开关。末尾稳定的 `cfg-<10 位十六进制>` 指纹还会覆盖
+精确压缩参数、传感器点数上限、时间裁剪/对齐开关、坐标缩放、GT 输入、MANO 目录等其余会影响
+内容的参数。即使显式指定 `--save`，也会追加同样的参数后缀；如果路径已经包含同一后缀则不会重复。
 
 ## 已经 Clone 过，后续怎么更新
 

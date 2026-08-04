@@ -97,6 +97,7 @@ session 目录应当大致满足下面这种结构：
 
 import argparse
 import csv
+import hashlib
 import importlib.util
 import json
 import os
@@ -106,7 +107,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -304,6 +305,43 @@ class ArtifactPaths:
 class TimeWindow:
     start_ns: int
     end_ns: int
+
+
+RobocapFrameRange = tuple[int, int]
+
+
+@dataclass(frozen=True)
+class ExportNameParameters:
+    alignment_mode: str
+    frame_ratio: float | None
+    video_frame_offset: int
+    reference_video: str
+    frame_range: RobocapFrameRange | None
+    retarget_model: str
+    use_proxy: bool
+    proxy_height: int
+    proxy_crf: int
+    proxy_bitrate: str
+    ffmpeg: str
+    blueprint_preset: str
+    max_sensor_points: int
+    trim_to_common_time: bool
+    align_gt_to_robocap: bool
+    gt_coordinate_scale: float
+    bvh_coordinate_scale: float
+    gt_time_offset_ns: int
+    gt_max_frames: int | None
+    include_robowrist: bool
+    include_mag: bool
+    include_imu: bool
+    gt_dir: str | None
+    gt_input_files: tuple[str, ...]
+    gt_skeleton: str | None
+    gt_mesh: str | None
+    third_person_input: str | None
+    mano_model_dir: str
+    gt_sources: tuple[str, ...]
+    third_person_video: bool
 
 
 @dataclass(frozen=True)
@@ -668,6 +706,121 @@ def default_rrd_path(
     )
 
 
+def normalize_robocap_frame_range(
+    start_frame: int | None, end_frame: int | None
+) -> RobocapFrameRange | None:
+    if start_frame is None and end_frame is None:
+        return None
+    if start_frame is None or end_frame is None:
+        raise ValueError("--robocap-start-frame and --robocap-end-frame must be provided together.")
+    if start_frame < 0 or end_frame < 0:
+        raise ValueError("Robocap frame indexes must be non-negative (0-based).")
+    if start_frame > end_frame:
+        raise ValueError("Robocap start frame must be less than or equal to end frame.")
+    return start_frame, end_frame
+
+
+def robocap_frame_capture_window(
+    reference_timestamps_ns: np.ndarray | None,
+    frame_range: RobocapFrameRange | None,
+) -> TimeWindow | None:
+    if frame_range is None:
+        return None
+    if reference_timestamps_ns is None or len(reference_timestamps_ns) == 0:
+        raise ValueError("Cannot select Robocap frames because no reference video was found.")
+
+    start_frame, end_frame = frame_range
+    frame_count = len(reference_timestamps_ns)
+    if end_frame >= frame_count:
+        raise ValueError(
+            f"Robocap frame range {start_frame}..{end_frame} exceeds reference video bounds "
+            f"0..{frame_count - 1}."
+        )
+    return TimeWindow(
+        start_ns=int(reference_timestamps_ns[start_frame]),
+        end_ns=int(reference_timestamps_ns[end_frame]),
+    )
+
+
+def intersect_time_windows(
+    first: TimeWindow | None, second: TimeWindow | None
+) -> TimeWindow | None:
+    if first is None:
+        return second
+    if second is None:
+        return first
+    start_ns = max(first.start_ns, second.start_ns)
+    end_ns = min(first.end_ns, second.end_ns)
+    if end_ns < start_ns:
+        return None
+    return TimeWindow(start_ns=start_ns, end_ns=end_ns)
+
+
+def compact_filename_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9.-]+", "-", value).strip("-.").lower()
+    return token or "unknown"
+
+
+def compact_number_token(value: float | None) -> str:
+    if value is None:
+        return "auto"
+    return format(float(value), ".9g").replace("-", "m").replace(".", "p")
+
+
+def with_export_parameter_suffix(path: Path, parameters: ExportNameParameters) -> Path:
+    if parameters.alignment_mode == "frame":
+        alignment_tokens = [
+            f"r{compact_number_token(parameters.frame_ratio)}",
+            f"o{parameters.video_frame_offset}",
+        ]
+    else:
+        alignment_tokens = []
+
+    reference_is_used = parameters.alignment_mode == "frame" or parameters.frame_range is not None
+    if reference_is_used:
+        alignment_tokens.append(f"ref-{compact_filename_token(parameters.reference_video)}")
+
+    if parameters.frame_range is None:
+        frame_token = "fall"
+    else:
+        frame_token = f"f{parameters.frame_range[0]}-{parameters.frame_range[1]}"
+    media_token = f"p{parameters.proxy_height}" if parameters.use_proxy else "raw"
+    stream_token = (
+        f"data-rw{int(parameters.include_robowrist)}-mag{int(parameters.include_mag)}-"
+        f"imu{int(parameters.include_imu)}-tp{int(parameters.third_person_video)}"
+    )
+    readable_tokens = [
+        *alignment_tokens,
+        frame_token,
+        f"rt-{compact_filename_token(parameters.retarget_model)}",
+        media_token,
+        f"bp-{compact_filename_token(parameters.blueprint_preset)}",
+        stream_token,
+    ]
+    payload = json.dumps(
+        asdict(parameters), sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8")
+    digest = hashlib.sha256(payload).hexdigest()[:10]
+    suffix = "_" + "_".join([*readable_tokens, f"cfg-{digest}"])
+    if path.stem.endswith(suffix):
+        return path
+    return path.with_name(f"{path.stem}{suffix}{path.suffix}")
+
+
+def gt_source_identifiers(gt_config: GTConfig | None) -> tuple[str, ...]:
+    if gt_config is None:
+        return ()
+    sources: set[str] = set()
+    if gt_config.skeleton is not None:
+        sources.add("skeleton")
+    if gt_config.mesh is not None:
+        sources.add("mesh")
+    sources.update(f"{track.source}:{track.label}" for track in gt_config.marker_tracks)
+    if gt_config.third_person_video is not None:
+        sources.add(f"third_person:{gt_config.third_person_video.name}")
+    return tuple(sorted(sources))
+
+
 def signal_time_range(session_dir: Path, spec: SignalSpec) -> tuple[int, int, int]:
     db_path = session_dir / spec.relative_path
     with sqlite3.connect(db_path) as connection:
@@ -826,6 +979,21 @@ def synthesize_frame_aligned_timestamps(
     return result
 
 
+def resolve_gt_frame_ratio(
+    gt_config: GTConfig | None,
+    video_rate_hz: float | None,
+    frame_ratio: float | None,
+) -> float | None:
+    if frame_ratio is not None:
+        return max(1.0, float(frame_ratio))
+    if gt_config is None:
+        return None
+    gt_rate_hz = infer_gt_frame_rate_hz(gt_config)
+    if gt_rate_hz is None or video_rate_hz is None or video_rate_hz <= 0:
+        return None
+    return max(1.0, float(gt_rate_hz) / float(video_rate_hz))
+
+
 def with_frame_aligned_gt_timestamps(
     gt_config: GTConfig | None,
     reference_video_timestamps: np.ndarray | None,
@@ -839,13 +1007,9 @@ def with_frame_aligned_gt_timestamps(
         or len(reference_video_timestamps) == 0
     ):
         return gt_config
-    gt_rate_hz = infer_gt_frame_rate_hz(gt_config)
-    if frame_ratio is None and (gt_rate_hz is None or video_rate_hz is None or video_rate_hz <= 0):
+    ratio = resolve_gt_frame_ratio(gt_config, video_rate_hz, frame_ratio)
+    if ratio is None:
         return gt_config
-    ratio = max(
-        1.0,
-        float(frame_ratio) if frame_ratio is not None else float(gt_rate_hz) / float(video_rate_hz),
-    )
 
     def aligned(timestamps_ns: np.ndarray) -> np.ndarray:
         return synthesize_frame_aligned_timestamps(
@@ -3210,6 +3374,24 @@ def parse_args() -> argparse.Namespace:
         help="Keep the full union of all stream timestamps instead of cropping to the common valid capture_time range.",
     )
     parser.add_argument(
+        "--robocap-start-frame",
+        type=int,
+        default=None,
+        help=(
+            "First reference Robocap video frame to export (0-based, inclusive). "
+            "Must be used with --robocap-end-frame."
+        ),
+    )
+    parser.add_argument(
+        "--robocap-end-frame",
+        type=int,
+        default=None,
+        help=(
+            "Last reference Robocap video frame to export (0-based, inclusive). "
+            "Must be used with --robocap-start-frame."
+        ),
+    )
+    parser.add_argument(
         "--inspect",
         action="store_true",
         help="Print discovered files, layout, and artifact paths before logging.",
@@ -3368,6 +3550,7 @@ def main() -> None:
     args = parse_args()
     if args.gt_max_frames == 0:
         args.gt_max_frames = None
+    frame_range = normalize_robocap_frame_range(args.robocap_start_frame, args.robocap_end_frame)
     session_dir = args.session_dir
     config = discover_session(
         session_dir,
@@ -3414,7 +3597,10 @@ def main() -> None:
         args.proxy_bitrate,
         ffmpeg,
     )
-    if args.gt_alignment_mode == "frame":
+    reference_timestamps = None
+    reference_rate_hz = None
+    resolved_frame_ratio = None
+    if args.gt_alignment_mode == "frame" or frame_range is not None:
         reference_timestamps = reference_video_timestamps_ns(
             session_dir,
             config,
@@ -3426,6 +3612,7 @@ def main() -> None:
             ffmpeg,
             args.gt_frame_reference_video,
         )
+    if args.gt_alignment_mode == "frame":
         reference_rate_hz = reference_video_nominal_rate_hz(
             session_dir,
             config,
@@ -3437,11 +3624,14 @@ def main() -> None:
             ffmpeg,
             args.gt_frame_reference_video,
         )
+        resolved_frame_ratio = resolve_gt_frame_ratio(
+            gt_config, reference_rate_hz, args.gt_frame_ratio
+        )
         gt_config = with_frame_aligned_gt_timestamps(
             gt_config,
             reference_timestamps,
             reference_rate_hz,
-            frame_ratio=args.gt_frame_ratio,
+            frame_ratio=resolved_frame_ratio,
             video_frame_offset=args.gt_video_frame_offset,
         )
     time_report_path = write_time_alignment_report(
@@ -3456,9 +3646,10 @@ def main() -> None:
         gt_config,
         args.gt_alignment_mode,
     )
-    capture_window = None
+    requested_frame_window = robocap_frame_capture_window(reference_timestamps, frame_range)
+    common_window = None
     if not args.no_trim_to_common_time:
-        capture_window = compute_common_capture_window(
+        common_window = compute_common_capture_window(
             session_dir,
             config,
             artifact_paths,
@@ -3469,29 +3660,72 @@ def main() -> None:
             ffmpeg,
             gt_config,
         )
+    capture_window = intersect_time_windows(requested_frame_window, common_window)
+    if requested_frame_window is not None and common_window is not None and capture_window is None:
+        raise ValueError(
+            "The requested Robocap frame range does not overlap the common capture_time window."
+        )
     if args.inspect:
         inspect_session(session_dir, config)
         print(f"artifacts: {artifact_paths.root_dir}")
+        if frame_range is not None:
+            print(
+                f"requested Robocap frames: {frame_range[0]}..{frame_range[1]} (0-based, inclusive)"
+            )
         if capture_window is not None:
             print(
-                "common capture_time window: "
+                "effective capture_time window: "
                 f"{capture_window.start_ns}..{capture_window.end_ns} ns "
                 f"({(capture_window.end_ns - capture_window.start_ns) / 1e9:.3f} s)"
             )
 
     blueprint = build_blueprint(config, gt_config, args.blueprint_preset)
+    name_parameters = ExportNameParameters(
+        alignment_mode=args.gt_alignment_mode,
+        frame_ratio=resolved_frame_ratio,
+        video_frame_offset=args.gt_video_frame_offset,
+        reference_video=args.gt_frame_reference_video,
+        frame_range=frame_range,
+        retarget_model=args.retarget_model,
+        use_proxy=args.use_proxy,
+        proxy_height=args.proxy_height,
+        proxy_crf=args.proxy_crf,
+        proxy_bitrate=args.proxy_bitrate,
+        ffmpeg=args.ffmpeg or "auto",
+        blueprint_preset=args.blueprint_preset,
+        max_sensor_points=args.max_sensor_points,
+        trim_to_common_time=not args.no_trim_to_common_time,
+        align_gt_to_robocap=not args.no_gt_align_to_robocap,
+        gt_coordinate_scale=args.gt_coordinate_scale,
+        bvh_coordinate_scale=args.bvh_coordinate_scale,
+        gt_time_offset_ns=args.gt_time_offset_ns,
+        gt_max_frames=args.gt_max_frames,
+        include_robowrist=not args.no_robowrist,
+        include_mag=not args.no_mag,
+        include_imu=not args.no_imu,
+        gt_dir=str(args.gt_dir) if args.gt_dir is not None else None,
+        gt_input_files=tuple(sorted(str(path) for path in (args.gt_file or []))),
+        gt_skeleton=str(args.gt_skeleton) if args.gt_skeleton is not None else None,
+        gt_mesh=str(args.gt_mesh) if args.gt_mesh is not None else None,
+        third_person_input=(
+            str(args.gt_third_person_video) if args.gt_third_person_video is not None else None
+        ),
+        mano_model_dir=str(args.mano_model_dir),
+        gt_sources=gt_source_identifiers(gt_config),
+        third_person_video=bool(gt_config is not None and gt_config.third_person_video is not None),
+    )
+    save_path = with_export_parameter_suffix(
+        args.save or default_rrd_path(artifact_paths, session_dir, config, args.gt_alignment_mode),
+        name_parameters,
+    )
     rr.init(
-        f"frodobots_{session_dir.name}_{config.segment_name}_dual_hands_{args.gt_alignment_mode}_aligned",
+        save_path.stem,
         spawn=args.spawn,
         default_blueprint=blueprint,
     )
 
-    save_path = args.save or default_rrd_path(
-        artifact_paths, session_dir, config, args.gt_alignment_mode
-    )
-    if save_path is not None:
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        rr.save(save_path, default_blueprint=blueprint)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    rr.save(save_path, default_blueprint=blueprint)
 
     for spec in config.videos.values():
         log_video(
@@ -3516,7 +3750,7 @@ def main() -> None:
     print(f"Time alignment report: {time_report_path}")
     if capture_window is not None:
         print(
-            "Trimmed to common capture_time window: "
+            "Exported capture_time window: "
             f"{capture_window.start_ns}..{capture_window.end_ns} ns "
             f"({(capture_window.end_ns - capture_window.start_ns) / 1e9:.3f} s)"
         )

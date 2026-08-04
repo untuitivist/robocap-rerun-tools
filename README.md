@@ -112,6 +112,19 @@ Export an offset-5 frame-aligned RRD. At ratio 8 this equals the old 40-GT-frame
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --offset 5 --use-proxy
 ```
 
+Export only Robocap reference-video frames 100 through 500. Frame indexes are 0-based and both
+endpoints are included:
+
+```bat
+robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --offset 5 --robocap-start-frame 100 --robocap-end-frame 500 --use-proxy
+```
+
+The two range arguments must be supplied together. The exporter converts those reference-video
+frames to one `capture_time` window and applies it to every Robocap video/sensor, NOKOV track, and
+third-person stream. It then intersects that range with the normal common-data window. In the Web
+UI, enable `Limit Robocap frame range` before entering the two frame indexes; leave it disabled for
+the full recording.
+
 Use the display layout requested for visual checking:
 
 ```bat
@@ -210,8 +223,8 @@ Default outputs are written under:
 
 Typical files:
 
-- `*_time_aligned.rrd`
-- `*_frame_aligned.rrd`
+- `*_time_aligned_fall_rt-none_raw_bp-default_data-..._cfg-....rrd`
+- `*_frame_aligned_r8_o5_ref-left_f100-500_rt-none_p540_bp-display_data-..._cfg-....rrd`
 - `time_alignment_report.tsv`
 - `frame_rate_report.md`
 - `frame_rate_report.tsv`
@@ -219,6 +232,14 @@ Typical files:
 - `offset_inspection.md`
 
 Generated `.rrd`, videos, raw captures, and MANO model files are ignored by Git.
+
+RRD names are parameterized to prevent accidental overwrites. Readable tags include frame-mode
+ratio (`r`), Robocap-frame offset (`o`), reference video (`ref`), frame range (`f`, or `fall`),
+retarget model (`rt`), raw/proxy video, blueprint (`bp`), and stream switches. The final stable
+`cfg-<10 hex>` fingerprint also covers exact proxy settings, sensor limits, trim/alignment options,
+coordinate scales, GT inputs, MANO directory, and other content-affecting export arguments.
+An explicit `--save` path receives the same suffix; supplying the already parameterized result does
+not duplicate it.
 
 ## Notes For GitHub
 

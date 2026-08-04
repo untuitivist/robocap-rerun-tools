@@ -1061,6 +1061,24 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument("--reference-video", default="left")
+    parser.add_argument(
+        "--robocap-start-frame",
+        type=int,
+        default=None,
+        help=(
+            "First reference Robocap video frame to export (0-based, inclusive). "
+            "Must be used with --robocap-end-frame."
+        ),
+    )
+    parser.add_argument(
+        "--robocap-end-frame",
+        type=int,
+        default=None,
+        help=(
+            "Last reference Robocap video frame to export (0-based, inclusive). "
+            "Must be used with --robocap-start-frame."
+        ),
+    )
     parser.add_argument("--use-proxy", action="store_true")
     parser.add_argument("--proxy-height", type=int, default=540)
     parser.add_argument("--display", action="store_true", help="Use display blueprint preset.")
@@ -1123,6 +1141,10 @@ def command_export(args: argparse.Namespace) -> int:
         argv.extend(["--segment", args.segment])
     if args.save:
         argv.extend(["--save", str(args.save)])
+    if args.robocap_start_frame is not None:
+        argv.extend(["--robocap-start-frame", str(args.robocap_start_frame)])
+    if args.robocap_end_frame is not None:
+        argv.extend(["--robocap-end-frame", str(args.robocap_end_frame)])
     if args.gt_dir:
         argv.extend(["--gt-dir", str(args.gt_dir)])
     for gt_file in args.gt_file or []:

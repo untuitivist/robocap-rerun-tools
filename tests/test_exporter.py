@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +29,100 @@ def test_frame_alignment_offset_uses_reference_video_frames() -> None:
 
     assert aligned[40] == reference_timestamps[0]
     assert aligned[48] == reference_timestamps[1]
+
+
+def test_robocap_frame_range_is_zero_based_inclusive() -> None:
+    timestamps_ns = np.asarray([100, 200, 350, 500, 800], dtype=np.int64)
+
+    frame_range = exporter.normalize_robocap_frame_range(1, 3)
+    window = exporter.robocap_frame_capture_window(timestamps_ns, frame_range)
+
+    assert frame_range == (1, 3)
+    assert window == exporter.TimeWindow(start_ns=200, end_ns=500)
+    assert exporter.time_mask(timestamps_ns, window).tolist() == [False, True, True, True, False]
+
+
+def test_robocap_frame_range_requires_valid_pair() -> None:
+    for start_frame, end_frame in ((1, None), (None, 1), (-1, 2), (3, 2)):
+        try:
+            exporter.normalize_robocap_frame_range(start_frame, end_frame)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Expected invalid frame range: {start_frame}, {end_frame}")
+
+    try:
+        exporter.robocap_frame_capture_window(np.asarray([100, 200]), (0, 2))
+    except ValueError as exc:
+        assert "0..1" in str(exc)
+    else:
+        raise AssertionError("Expected out-of-bounds frame range to fail")
+
+
+def test_requested_frame_window_intersects_common_capture_window() -> None:
+    requested = exporter.TimeWindow(start_ns=100, end_ns=500)
+    common = exporter.TimeWindow(start_ns=200, end_ns=700)
+
+    assert exporter.intersect_time_windows(requested, common) == exporter.TimeWindow(200, 500)
+    assert exporter.intersect_time_windows(requested, exporter.TimeWindow(501, 700)) is None
+
+
+def sample_export_name_parameters() -> exporter.ExportNameParameters:
+    return exporter.ExportNameParameters(
+        alignment_mode="frame",
+        frame_ratio=8.0,
+        video_frame_offset=5,
+        reference_video="left",
+        frame_range=(100, 200),
+        retarget_model="none",
+        use_proxy=True,
+        proxy_height=540,
+        proxy_crf=28,
+        proxy_bitrate="1400k",
+        ffmpeg="auto",
+        blueprint_preset="display",
+        max_sensor_points=6000,
+        trim_to_common_time=True,
+        align_gt_to_robocap=True,
+        gt_coordinate_scale=0.001,
+        bvh_coordinate_scale=0.01,
+        gt_time_offset_ns=0,
+        gt_max_frames=None,
+        include_robowrist=True,
+        include_mag=False,
+        include_imu=True,
+        gt_dir="nokov",
+        gt_input_files=("left.trc", "tracker.xrs"),
+        gt_skeleton=None,
+        gt_mesh=None,
+        third_person_input="third-person.mp4",
+        mano_model_dir="mano",
+        gt_sources=("trc:left", "xrs:tracker"),
+        third_person_video=True,
+    )
+
+
+def test_rrd_name_contains_readable_parameters_and_stable_fingerprint() -> None:
+    path = Path("session_segment_frame_aligned.rrd")
+    parameters = sample_export_name_parameters()
+
+    named = exporter.with_export_parameter_suffix(path, parameters)
+
+    assert "_r8_o5_ref-left_f100-200_rt-none_p540_bp-display_" in named.name
+    assert "_data-rw1-mag0-imu1-tp1_cfg-" in named.name
+    assert exporter.with_export_parameter_suffix(named, parameters) == named
+
+
+def test_rrd_name_fingerprint_changes_with_non_readable_export_parameter() -> None:
+    path = Path("session_segment_frame_aligned.rrd")
+    parameters = sample_export_name_parameters()
+
+    original = exporter.with_export_parameter_suffix(path, parameters)
+    changed = exporter.with_export_parameter_suffix(
+        path, replace(parameters, gt_coordinate_scale=0.01)
+    )
+
+    assert original != changed
 
 
 def test_parse_trc_reads_multiple_markers(tmp_path: Path) -> None:
