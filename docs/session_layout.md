@@ -16,14 +16,22 @@ session/
   robowrist_*_right/
     robowrist_segment1_video_right_down.mp4
     *.csv
-  test*/
+  test*/ or nokov/
     *-1.mp4
     *-Tracker0.trc
     *-LHand.trc
     *-RHand.trc
     *.bvh
     *.csv
+    *.xrs
 ```
 
-Missing streams are allowed by the exporter. When a Robocap video or signal is absent, the Rerun layout uses a text placeholder instead of failing the whole export.
+GT directory discovery recognizes `test*`, `nokov`, or a single other directory containing
+`.bvh`, `.trc`, `.csv`, or `.xrs` files. `robowrist_*` and `_artifacts` are excluded from GT
+discovery. Missing streams are allowed by the exporter. When a Robocap video or signal is absent,
+the Rerun layout uses a text placeholder instead of failing the whole export.
 
+Formats with the same filename stem are grouped as one capture, but each available format gets
+its own skeleton and mesh tab. CSV/XRS rigid bodies remain in their common NOKOV world frame.
+NOKOV positions default to millimetres and are converted to metres with scale `0.001`.
+`BoneAxis=Z` is displayed as Y-up and `BoneAxis=Y` as Z-up.
