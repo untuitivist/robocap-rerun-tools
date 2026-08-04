@@ -30,7 +30,9 @@ The export controls can independently include or exclude MAG, IMU, robowrist, an
 Only GT formats that are present create tabs. BVH/TRC/CSV/XRS each have separate skeleton and mesh views,
 while rigid bodies from one CSV/XRS source stay in one shared 3D world. NOKOV millimetres are converted to
 metres, and the file's `BoneAxis` selects the matching up axis. MANO retargeting fits hand scale, palm
-orientation, and articulated finger joints on every frame.
+orientation, and articulated finger joints on every frame. Select `none` as the retarget model when no
+mesh is wanted; absent skeleton, mesh, and third-person sources do not create placeholder views.
+If Robocap MAG and IMU are both absent, the complete sensor row is omitted.
 
 ## Alignment
 
@@ -67,6 +69,8 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 只有实际存在的 GT 格式才会生成 tab。BVH/TRC/CSV/XRS 分别有骨骼和 mesh 视图；同一 CSV/XRS
 中的多个刚体保留在同一个 3D 世界坐标系。NOKOV 毫米坐标会转换成米，并根据文件中的 `BoneAxis`
 选择向上轴。MANO 重定向会逐帧拟合手部尺度、掌部朝向和各手指关节姿态。
+不需要 mesh 时，在“重定向模型”中选择 `none`；不存在的骨骼、mesh 或第三人称源不会创建占位窗口。
+Robocap MAG 和 IMU 都不存在时，整行传感器窗口也会直接省略。
 
 ## 对齐公式
 
@@ -104,7 +108,6 @@ LANGUAGE_PACKS = {
         "mano_model_dir": "MANO model dir",
         "use_proxy": "Use compressed proxy video",
         "display": "Display layout",
-        "no_mano_mesh": "Disable MANO mesh",
         "scan_button": "Scan files",
         "gt_dir": "GT/NOKOV export dir",
         "gt_files": "GT files to include",
@@ -151,7 +154,6 @@ LANGUAGE_PACKS = {
         "mano_model_dir": "MANO 模型目录",
         "use_proxy": "使用压缩视频",
         "display": "展示版布局",
-        "no_mano_mesh": "禁用 MANO mesh",
         "scan_button": "扫描文件",
         "gt_dir": "GT/NOKOV 导出目录",
         "gt_files": "参与导出的 GT 文件",
@@ -263,22 +265,19 @@ def save_default_offset(offset: object, settings_path: Path | None = None) -> tu
     return value, save_web_settings(settings, settings_path)
 
 
-def run_process(args: list[str], cwd: Path | None = None, timeout: int = 120) -> tuple[int, str]:
+def run_process(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
     try:
         proc = subprocess.run(
             args,
             cwd=cwd,
+            check=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
         )
     except FileNotFoundError as exc:
         return 127, str(exc)
-    except subprocess.TimeoutExpired as exc:
-        output = "\n".join(part for part in (exc.stdout or "", exc.stderr or "") if part)
-        return 124, f"Command timed out after {timeout}s.\n{output}".strip()
     output_parts = []
     if proc.stdout:
         output_parts.append(proc.stdout.rstrip())
@@ -304,20 +303,20 @@ def package_version(name: str) -> str:
 
 
 def first_line(command: list[str], cwd: Path | None = None) -> str:
-    returncode, output = run_process(command, cwd=cwd, timeout=30)
+    returncode, output = run_process(command, cwd=cwd)
     line = output.splitlines()[0] if output else ""
     return line if returncode == 0 else f"failed: {line or returncode}"
 
 
-def git_output(args: list[str], timeout: int = 60) -> str:
-    returncode, output = run_process(["git", *args], cwd=PROJECT_ROOT, timeout=timeout)
+def git_output(args: list[str]) -> str:
+    returncode, output = run_process(["git", *args], cwd=PROJECT_ROOT)
     if returncode != 0:
         return f"{output}\nCommand failed with exit code {returncode}.".strip()
     return output or "Done."
 
 
 def git_status_short() -> tuple[int, str]:
-    return run_process(["git", "status", "--short"], cwd=PROJECT_ROOT, timeout=30)
+    return run_process(["git", "status", "--short"], cwd=PROJECT_ROOT)
 
 
 def check_environment() -> str:
@@ -367,7 +366,7 @@ def check_environment() -> str:
 
 
 def check_remote_version() -> str:
-    fetch_result = git_output(["fetch", "--prune"], timeout=120)
+    fetch_result = git_output(["fetch", "--prune"])
     local = git_output(["rev-parse", "--short", "HEAD"])
     upstream = git_output(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
     remote = git_output(["rev-parse", "--short", "@{u}"])
@@ -648,7 +647,6 @@ def export_rrd(
     save_path: str,
     use_proxy: bool,
     display: bool,
-    no_mano_mesh: bool,
     gt_dir: str,
     selected_gt_files: list[str] | None,
     retarget_model: str,
@@ -677,8 +675,6 @@ def export_rrd(
         args.append("--use-proxy")
     if display:
         args.append("--display")
-    if no_mano_mesh:
-        args.append("--no-mano-mesh")
     args.extend(["--retarget-model", retarget_model])
     if not include_robowrist:
         args.append("--no-robowrist")
@@ -731,7 +727,6 @@ def language_updates(language: str):
         gr.update(label=labels["mano_model_dir"]),
         gr.update(label=labels["use_proxy"]),
         gr.update(label=labels["display"]),
-        gr.update(label=labels["no_mano_mesh"]),
         gr.update(value=labels["scan_button"]),
         gr.update(label=labels["gt_dir"]),
         gr.update(label=labels["gt_files"]),
@@ -831,7 +826,6 @@ def build_app():
             with gr.Row():
                 use_proxy = gr.Checkbox(label=labels["use_proxy"], value=True)
                 display = gr.Checkbox(label=labels["display"], value=False)
-                no_mano_mesh = gr.Checkbox(label=labels["no_mano_mesh"], value=False)
                 export_height = gr.Number(label=labels["export_height"], value=540, precision=0)
             with gr.Row():
                 include_mag = gr.Checkbox(label=labels["include_mag"], value=True)
@@ -859,7 +853,6 @@ def build_app():
                     save_path,
                     use_proxy,
                     display,
-                    no_mano_mesh,
                     gt_dir,
                     gt_files,
                     retarget_model,
@@ -960,7 +953,6 @@ def build_app():
                 mano_model_dir,
                 use_proxy,
                 display,
-                no_mano_mesh,
                 scan_button,
                 gt_dir,
                 gt_files,

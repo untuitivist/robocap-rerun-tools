@@ -260,7 +260,6 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
         save_path="",
         use_proxy=False,
         display=True,
-        no_mano_mesh=True,
         gt_dir="",
         selected_gt_files=[],
         retarget_model="none",

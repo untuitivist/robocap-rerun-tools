@@ -17,7 +17,7 @@ Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 - `test*`、`nokov` 或其他 GT 子目录里的 NOKOV 数据：第三人称视频、BVH、TRC、CSV、XRS、手部轨迹。
 - 可选 MANO 模型：`MANO_LEFT.pkl`、`MANO_RIGHT.pkl`。
 
-如果某些视频或数据缺失，导出脚本会尽量用文字占位，不应该因为少一个流就整体失败。
+如果某些视频或数据缺失，导出脚本会跳过对应视图，不会因为少一个流就整体失败，也不会创建无数据的文字占位窗口。MAG 和 Robocap IMU 都不存在时，整行传感器视图会被省略。
 
 ## 第一次 Clone
 
@@ -253,17 +253,21 @@ Z:\MODELS\hand_models\mano\MANO_RIGHT.pkl
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --mano-model-dir Z:\MODELS\hand_models\mano
 ```
 
-MANO 重定向会把 NOKOV 的 `Finger1/2/3` 对应到 MANO 的 MCP/PIP/DIP，使用 `Finger4/End`
-确定指尖方向；随后根据对应骨长估计统一尺度，用掌部 MCP 方向拟合手腕旋转，并按手指层级计算关节旋转和线性蒙皮。
-因此每一帧都会产生随骨骼姿态变化的 mesh，而不是只把静态模板放到手腕位置。
+MANO 重定向沿用示例脚本的命名约定：BVH 的 `Finger0/1/2` 与 TRC/CSV/XRS 的
+`Finger1/2/3` 分别对应 MANO 的 MCP/PIP/DIP。MANO 模板先统一归一化，再按每帧手腕原点、
+掌部朝向和手部尺度建立初始姿态，用实际关节点覆盖对应链并执行线性蒙皮。因此每一帧都会产生
+随骨骼姿态变化的 mesh，而不是只把静态模板放到手腕位置。
 
-如果只想导出骨骼，不要 MANO mesh：
+如果只想导出骨骼，不要 MANO mesh，在“重定向模型”中选择 `none`。此时 Rerun
+不会创建 mesh 窗口，也不会增加无数据的文字占位窗口：
 
 ```bat
-robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --no-mano-mesh
+robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --retarget-model none
 ```
 
 ## 输出位置
+
+Web 发起的 RRD 导出、检查、打包、Offset、环境与 Git 命令都不设置进程超时，会一直等待命令自行完成。
 
 默认输出在：
 

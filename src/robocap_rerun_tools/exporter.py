@@ -1755,8 +1755,8 @@ def parse_nokov_segment_hierarchy(
             break
         if stripped.startswith("["):
             break
-        cells = split_nokov_cells(stripped, delimiter)
-        if not cells or not cells[0]:
+        cells = [cell for cell in split_nokov_cells(stripped, delimiter) if cell]
+        if not cells:
             continue
         names.append(cells[0])
         parents_raw.append(cells[1] if len(cells) > 1 else "")
@@ -1799,8 +1799,6 @@ def parse_nokov_pose_file(
     x_columns: list[int] = []
     y_columns: list[int] = []
     z_columns: list[int] = []
-    q_columns: list[tuple[int, int, int, int] | None] = []
-    length_columns: list[int | None] = []
     for segment_index in range(1, len(names) + 1):
         try:
             x_columns.append(header.index(f"XToGlobal{segment_index}"))
@@ -1815,21 +1813,6 @@ def parse_nokov_pose_file(
                 raise ValueError(
                     f"NOKOV rigid file missing global or parent XYZ columns for segment {segment_index}: {path}"
                 ) from exc
-        try:
-            q_columns.append(
-                (
-                    header.index(f"QxToGlobal{segment_index}"),
-                    header.index(f"QyToGlobal{segment_index}"),
-                    header.index(f"QzToGlobal{segment_index}"),
-                    header.index(f"QwToGlobal{segment_index}"),
-                )
-            )
-        except ValueError:
-            q_columns.append(None)
-        try:
-            length_columns.append(header.index(f"Segmentlength{segment_index}"))
-        except ValueError:
-            length_columns.append(None)
 
     timestamps: list[int] = []
     frames: list[list[list[float]]] = []
@@ -1841,40 +1824,17 @@ def parse_nokov_pose_file(
             continue
         timestamps.append(int(float(cells[1].strip())) * 1_000_000)
         frame_positions: list[list[float]] = []
-        for x_col, y_col, z_col, q_col, length_col in zip(
-            x_columns, y_columns, z_columns, q_columns, length_columns
-        ):
+        for x_col, y_col, z_col in zip(x_columns, y_columns, z_columns):
             xyz = [
                 cells[index].strip() if index < len(cells) else ""
                 for index in (x_col, y_col, z_col)
             ]
             if any(not value for value in xyz):
-                origin = np.asarray([np.nan, np.nan, np.nan], dtype=np.float32)
+                frame_positions.append([np.nan, np.nan, np.nan])
             else:
-                origin = np.asarray(
-                    [float(xyz[0]) * scale, float(xyz[1]) * scale, float(xyz[2]) * scale],
-                    dtype=np.float32,
+                frame_positions.append(
+                    [float(xyz[0]) * scale, float(xyz[1]) * scale, float(xyz[2]) * scale]
                 )
-            frame_positions.append(origin.tolist())
-            if q_col is None:
-                continue
-            if not np.isfinite(origin).all() or any(
-                index >= len(cells) or not cells[index].strip() for index in q_col
-            ):
-                frame_positions.extend([[np.nan, np.nan, np.nan] for _ in range(3)])
-                continue
-            qx_col, qy_col, qz_col, qw_col = q_col
-            rotation = quaternion_to_matrix(
-                float(cells[qx_col].strip()),
-                float(cells[qy_col].strip()),
-                float(cells[qz_col].strip()),
-                float(cells[qw_col].strip()),
-            )
-            axis_length = 0.1
-            if length_col is not None and length_col < len(cells) and cells[length_col].strip():
-                axis_length = max(0.04, float(cells[length_col].strip()) * scale * 0.35)
-            for axis in range(3):
-                frame_positions.append((origin + rotation[:, axis] * axis_length).tolist())
         frames.append(frame_positions)
 
     if not frames:
@@ -1884,8 +1844,7 @@ def parse_nokov_pose_file(
         positions = fill_missing_marker_positions(positions)
     timestamps_ns = np.asarray(timestamps, dtype=np.int64)
     indexes = downsample_indexes(len(timestamps_ns), max_frames)
-    expanded_names, expanded_parents = expand_nokov_csv_pose_names(names, parents, q_columns)
-    return timestamps_ns[indexes], expanded_names, positions[indexes], expanded_parents
+    return timestamps_ns[indexes], names, positions[indexes], parents
 
 
 def parse_nokov_csv(
@@ -1898,43 +1857,6 @@ def parse_xrs(
     path: Path, scale: float, max_frames: int | None
 ) -> tuple[np.ndarray, tuple[str, ...], np.ndarray, tuple[int, ...]]:
     return parse_nokov_pose_file(path, scale, max_frames, "xrs")
-
-
-def quaternion_to_matrix(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
-    quat = np.asarray([qx, qy, qz, qw], dtype=np.float64)
-    norm = float(np.linalg.norm(quat))
-    if norm <= 1e-12:
-        return np.eye(3, dtype=np.float32)
-    x, y, z, w = quat / norm
-    return np.asarray(
-        [
-            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
-        ],
-        dtype=np.float32,
-    )
-
-
-def expand_nokov_csv_pose_names(
-    names: Sequence[str],
-    parents: Sequence[int],
-    q_columns: Sequence[tuple[int, int, int, int] | None],
-) -> tuple[tuple[str, ...], tuple[int, ...]]:
-    expanded_names: list[str] = []
-    expanded_parents: list[int] = []
-    segment_origin_indexes: list[int] = []
-    for segment_index, name in enumerate(names):
-        origin_index = len(expanded_names)
-        segment_origin_indexes.append(origin_index)
-        parent = parents[segment_index] if segment_index < len(parents) else -1
-        expanded_names.append(name)
-        expanded_parents.append(segment_origin_indexes[parent] if parent >= 0 else -1)
-        if segment_index < len(q_columns) and q_columns[segment_index] is not None:
-            for axis_name in ("x_axis", "y_axis", "z_axis"):
-                expanded_names.append(f"{name}_{axis_name}")
-                expanded_parents.append(origin_index)
-    return tuple(expanded_names), tuple(expanded_parents)
 
 
 def load_csv_track(
@@ -2034,6 +1956,19 @@ def load_mano_template(model_dir: Path, side: str) -> ManoTemplate:
     weights = chumpy_safe_array(data["weights"]).astype(np.float32)
     return ManoTemplate(
         vertices=vertices, faces=faces, joints=joints, parents=parents, weights=weights
+    )
+
+
+def normalize_mano_template(template: ManoTemplate) -> ManoTemplate:
+    center = template.vertices.mean(axis=0, keepdims=True)
+    centered_vertices = template.vertices - center
+    scale = float(np.percentile(np.linalg.norm(centered_vertices, axis=1), 95))
+    if scale <= 1e-8:
+        scale = 1.0
+    return replace(
+        template,
+        vertices=(centered_vertices / scale).astype(np.float32),
+        joints=((template.joints - center) / scale).astype(np.float32),
     )
 
 
@@ -2179,8 +2114,6 @@ MANO_CHAIN_NAMES = {
     "pinky": (7, 8, 9),
 }
 
-MANO_MCP_INDEXES = (13, 1, 4, 10, 7)
-
 
 def first_named_position(
     marker_names: Sequence[str], positions: np.ndarray, names: Sequence[str]
@@ -2208,88 +2141,10 @@ def finger_joint_names(
         "pinky": "FingerPinky",
     }[finger]
     return (
-        (f"{bvh_prefix}1", f"{trc_prefix}1"),
-        (f"{bvh_prefix}2", f"{trc_prefix}2"),
-        (f"{bvh_prefix}3", f"{trc_prefix}3"),
+        (f"{bvh_prefix}0", f"{trc_prefix}1"),
+        (f"{bvh_prefix}1", f"{trc_prefix}2"),
+        (f"{bvh_prefix}2", f"{trc_prefix}3"),
     )
-
-
-def marker_mano_joint_targets(
-    track: GTMarkerTrack,
-    side: str,
-    positions: np.ndarray,
-) -> tuple[dict[int, np.ndarray], dict[int, np.ndarray], np.ndarray]:
-    origin, fallback_basis, _ = hand_pose_from_markers(track.marker_names, positions)
-    targets: dict[int, np.ndarray] = {0: origin}
-    fingertip_targets: dict[int, np.ndarray] = {}
-    for finger, mano_indexes in MANO_CHAIN_NAMES.items():
-        joint_names = finger_joint_names(side, finger)
-        for mano_index, candidate_names in zip(mano_indexes, joint_names):
-            value = first_named_position(track.marker_names, positions, candidate_names)
-            if value is not None and np.isfinite(value).all():
-                targets[mano_index] = value.astype(np.float32)
-        side_prefix = "LeftHand" if side == "left" else "RightHand"
-        title = "Pinky" if finger == "pinky" else finger.capitalize()
-        trc_prefix = joint_names[0][1][:-1]
-        fingertip = first_named_position(
-            track.marker_names,
-            positions,
-            (f"{trc_prefix}4", f"{side_prefix}{title}End"),
-        )
-        if fingertip is not None and np.isfinite(fingertip).all():
-            fingertip_targets[mano_indexes[-1]] = fingertip.astype(np.float32)
-    if len(targets) < 7:
-        raise ValueError(
-            f"not enough named hand joints for MANO retargeting: found {len(targets) - 1}"
-        )
-    return targets, fingertip_targets, fallback_basis
-
-
-def robust_mano_scale(template: ManoTemplate, targets: dict[int, np.ndarray]) -> float:
-    ratios: list[float] = []
-    for joint_index, target in targets.items():
-        parent = int(template.parents[joint_index])
-        if parent < 0 or parent not in targets:
-            continue
-        rest_length = float(np.linalg.norm(template.joints[joint_index] - template.joints[parent]))
-        target_length = float(np.linalg.norm(target - targets[parent]))
-        if rest_length > 1e-8 and target_length > 1e-8:
-            ratios.append(target_length / rest_length)
-    if not ratios:
-        raise ValueError("no valid corresponding MANO bone lengths")
-    median = float(np.median(ratios))
-    inliers = [ratio for ratio in ratios if 0.45 * median <= ratio <= 2.2 * median]
-    return float(np.median(inliers or ratios))
-
-
-def fit_mano_root_rotation(
-    template: ManoTemplate,
-    targets: dict[int, np.ndarray],
-    fallback_basis: np.ndarray,
-) -> np.ndarray:
-    source_vectors: list[np.ndarray] = []
-    target_vectors: list[np.ndarray] = []
-    for joint_index in MANO_MCP_INDEXES:
-        if joint_index not in targets:
-            continue
-        source_vectors.append(
-            normalize_vector(
-                template.joints[joint_index] - template.joints[0], np.zeros(3, dtype=np.float32)
-            )
-        )
-        target_vectors.append(
-            normalize_vector(targets[joint_index] - targets[0], np.zeros(3, dtype=np.float32))
-        )
-    if len(source_vectors) < 3:
-        return fallback_basis.astype(np.float32)
-
-    covariance = np.stack(source_vectors, axis=0).T @ np.stack(target_vectors, axis=0)
-    u, _, vt = np.linalg.svd(covariance)
-    rotation = vt.T @ u.T
-    if np.linalg.det(rotation) < 0:
-        vt[-1] *= -1
-        rotation = vt.T @ u.T
-    return rotation.astype(np.float32)
 
 
 def target_mano_joints_from_track(
@@ -2297,31 +2152,16 @@ def target_mano_joints_from_track(
     template: ManoTemplate,
     side: str,
     positions: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, float, dict[int, np.ndarray]]:
-    explicit_targets, fingertip_targets, fallback_basis = marker_mano_joint_targets(
-        track, side, positions
-    )
-    hand_scale = robust_mano_scale(template, explicit_targets)
-    root_rotation = fit_mano_root_rotation(template, explicit_targets, fallback_basis)
-    root = explicit_targets[0]
-    target = np.zeros_like(template.joints, dtype=np.float32)
-    target[0] = root
-    for joint_index in range(1, len(template.joints)):
-        parent = int(template.parents[joint_index])
-        rest_vector = template.joints[joint_index] - template.joints[parent]
-        if joint_index in explicit_targets and parent in explicit_targets:
-            direction = explicit_targets[joint_index] - explicit_targets[parent]
-        elif joint_index in explicit_targets:
-            direction = explicit_targets[joint_index] - target[parent]
-        else:
-            direction = root_rotation @ rest_vector
-        target[joint_index] = (
-            target[parent]
-            + normalize_vector(direction, root_rotation @ rest_vector)
-            * float(np.linalg.norm(rest_vector))
-            * hand_scale
-        )
-    return target, root_rotation, hand_scale, fingertip_targets
+) -> tuple[np.ndarray, np.ndarray, float]:
+    origin, basis, hand_scale = hand_pose_from_markers(track.marker_names, positions)
+    target = template.joints * hand_scale @ basis.T + origin[None, :]
+    target[0] = origin
+    for finger, mano_indexes in MANO_CHAIN_NAMES.items():
+        for mano_index, candidate_names in zip(mano_indexes, finger_joint_names(side, finger)):
+            value = first_named_position(track.marker_names, positions, candidate_names)
+            if value is not None and np.isfinite(value).all():
+                target[mano_index] = value
+    return target.astype(np.float32), basis.astype(np.float32), hand_scale
 
 
 def posed_vertices_from_joints(
@@ -2329,35 +2169,16 @@ def posed_vertices_from_joints(
     target_joints: np.ndarray,
     root_basis: np.ndarray,
     root_scale: float,
-    fingertip_targets: dict[int, np.ndarray] | None = None,
 ) -> np.ndarray:
     transforms_r = np.zeros((len(template.joints), 3, 3), dtype=np.float32)
     transforms_t = np.zeros((len(template.joints), 3), dtype=np.float32)
-    children: list[list[int]] = [[] for _ in template.joints]
-    for child, parent in enumerate(template.parents):
-        if parent >= 0:
-            children[int(parent)].append(child)
-    fingertip_targets = fingertip_targets or {}
     for joint_index, parent in enumerate(template.parents):
         if parent < 0:
             rotation = root_basis
-        elif children[joint_index]:
-            child = children[joint_index][0]
-            rest_vec = (template.joints[child] - template.joints[joint_index]) * root_scale
-            target_vec = target_joints[child] - target_joints[joint_index]
-            parent_rotation = transforms_r[parent]
-            rotation = (
-                rotation_between_vectors(parent_rotation @ rest_vec, target_vec) @ parent_rotation
-            )
-        elif joint_index in fingertip_targets:
-            rest_vec = (template.joints[joint_index] - template.joints[parent]) * root_scale
-            target_vec = fingertip_targets[joint_index] - target_joints[joint_index]
-            parent_rotation = transforms_r[parent]
-            rotation = (
-                rotation_between_vectors(parent_rotation @ rest_vec, target_vec) @ parent_rotation
-            )
         else:
-            rotation = transforms_r[parent]
+            rest_vec = (template.joints[joint_index] - template.joints[parent]) * root_scale
+            target_vec = target_joints[joint_index] - target_joints[parent]
+            rotation = rotation_between_vectors(rest_vec, target_vec)
         transforms_r[joint_index] = rotation
         transforms_t[joint_index] = target_joints[joint_index] - rotation @ (
             template.joints[joint_index] * root_scale
@@ -2376,18 +2197,14 @@ def posed_vertices_from_joints(
 def mano_mesh_from_marker_track(
     track: GTMarkerTrack, model_dir: Path, side: str
 ) -> GTManoMeshTrack:
-    template = load_mano_template(model_dir, side)
+    template = normalize_mano_template(load_mano_template(model_dir, side))
 
     frames: list[np.ndarray] = []
     for positions in track.positions:
-        target_joints, root_basis, root_scale, fingertip_targets = target_mano_joints_from_track(
+        target_joints, root_basis, root_scale = target_mano_joints_from_track(
             track, template, side, positions
         )
-        frames.append(
-            posed_vertices_from_joints(
-                template, target_joints, root_basis, root_scale, fingertip_targets
-            )
-        )
+        frames.append(posed_vertices_from_joints(template, target_joints, root_basis, root_scale))
 
     label = f"{track.label}_{side}_mano_mesh"
     color = (0.55, 0.72, 1.0) if side == "left" else (1.0, 0.58, 0.48)
@@ -2836,9 +2653,7 @@ def load_gt_config(args: argparse.Namespace, session_dir: Path) -> GTConfig | No
                 args.gt_coordinate_scale,
                 args.bvh_coordinate_scale,
                 args.gt_max_frames,
-                args.mano_model_dir
-                if not args.no_mano_mesh and args.retarget_model == "mano"
-                else None,
+                args.mano_model_dir if args.retarget_model == "mano" else None,
                 args.gt_file,
             )
         )
@@ -2941,45 +2756,37 @@ def log_gt_skeleton(track: GTSkeletonTrack, capture_window: TimeWindow | None) -
 
 
 def log_gt_mesh(track: GTMeshTrack, capture_window: TimeWindow | None) -> None:
-    mask = time_mask(track.timestamps_ns, capture_window)
-    timestamps_ns = track.timestamps_ns[mask]
-    vertices = track.vertices[mask]
-    if not len(timestamps_ns):
-        return
-    rr.log(
-        GT_MESH_ENTITY,
-        rr.Mesh3D.from_fields(
-            triangle_indices=track.faces,
-            albedo_factor=[0.78, 0.78, 0.82],
-        ),
-        static=True,
-    )
-    rr.send_columns(
-        GT_MESH_ENTITY,
-        indexes=[rr.TimeColumn("capture_time", duration=timestamps_ns * 1e-9)],
-        columns=rr.Mesh3D.columns(vertex_positions=vertices),
-    )
+    for timestamp_ns, vertices in zip(track.timestamps_ns, track.vertices):
+        if capture_window is not None and not (
+            capture_window.start_ns <= timestamp_ns <= capture_window.end_ns
+        ):
+            continue
+        set_capture_time(int(timestamp_ns))
+        rr.log(
+            GT_MESH_ENTITY,
+            rr.Mesh3D(
+                vertex_positions=vertices,
+                triangle_indices=track.faces,
+                albedo_factor=[0.78, 0.78, 0.82],
+            ),
+        )
 
 
 def log_gt_mano_mesh(track: GTManoMeshTrack, capture_window: TimeWindow | None) -> None:
-    mask = time_mask(track.timestamps_ns, capture_window)
-    timestamps_ns = track.timestamps_ns[mask]
-    vertices = track.vertices[mask]
-    if not len(timestamps_ns):
-        return
-    rr.log(
-        track.entity,
-        rr.Mesh3D.from_fields(
-            triangle_indices=track.faces,
-            albedo_factor=list(track.color),
-        ),
-        static=True,
-    )
-    rr.send_columns(
-        track.entity,
-        indexes=[rr.TimeColumn("capture_time", duration=timestamps_ns * 1e-9)],
-        columns=rr.Mesh3D.columns(vertex_positions=vertices),
-    )
+    for timestamp_ns, vertices in zip(track.timestamps_ns, track.vertices):
+        if capture_window is not None and not (
+            capture_window.start_ns <= timestamp_ns <= capture_window.end_ns
+        ):
+            continue
+        set_capture_time(int(timestamp_ns))
+        rr.log(
+            track.entity,
+            rr.Mesh3D(
+                vertex_positions=vertices,
+                triangle_indices=track.faces,
+                albedo_factor=list(track.color),
+            ),
+        )
 
 
 def marker_connection_strips(
@@ -2992,57 +2799,27 @@ def marker_connection_strips(
     ]
 
 
-def line_strip_columns_by_frame(connection_frames: np.ndarray) -> Any:
-    if connection_frames.ndim != 4 or connection_frames.shape[2:] != (2, 3):
-        raise ValueError(
-            "expected line strips shaped [frames, connections, 2, 3], "
-            f"got {connection_frames.shape}"
-        )
-    frame_count, connections_per_frame = connection_frames.shape[:2]
-    flattened = connection_frames.reshape(frame_count * connections_per_frame, 2, 3)
-    # LineStrips3D.columns partitions every strip by default. Repartition the
-    # flattened strips so each timeline row contains all bones from one frame.
-    return rr.LineStrips3D.columns(strips=flattened).partition(
-        np.full(frame_count, connections_per_frame, dtype=np.int64)
-    )
-
-
 def log_gt_marker_track(track: GTMarkerTrack, capture_window: TimeWindow | None) -> None:
     rr.log(f"{track.entity}/labels", rr.TextDocument(", ".join(track.marker_names)), static=True)
-    mask = time_mask(track.timestamps_ns, capture_window)
-    timestamps_ns = track.timestamps_ns[mask]
-    positions = track.positions[mask]
-    if not len(timestamps_ns):
-        return
-    time_column = rr.TimeColumn("capture_time", duration=timestamps_ns * 1e-9)
-    points_entity = f"{track.entity}/points"
-    rr.log(
-        points_entity,
-        rr.Points3D.from_fields(radii=track.radius, colors=list(track.colors)),
-        static=True,
-    )
-    rr.send_columns(
-        points_entity, indexes=[time_column], columns=rr.Points3D.columns(positions=positions)
-    )
-    if track.connections:
-        connection_frames = np.asarray(
-            [
-                marker_connection_strips(frame_positions, track.connections)
-                for frame_positions in positions
-            ],
-            dtype=np.float32,
-        )
-        connections_entity = f"{track.entity}/connections"
+    for timestamp_ns, positions in zip(track.timestamps_ns, track.positions):
+        if capture_window is not None and not (
+            capture_window.start_ns <= timestamp_ns <= capture_window.end_ns
+        ):
+            continue
+        set_capture_time(int(timestamp_ns))
         rr.log(
-            connections_entity,
-            rr.LineStrips3D.from_fields(radii=track.radius * 0.45, colors=list(track.colors)),
-            static=True,
+            f"{track.entity}/points",
+            rr.Points3D(positions, radii=track.radius, colors=list(track.colors)),
         )
-        rr.send_columns(
-            connections_entity,
-            indexes=[time_column],
-            columns=line_strip_columns_by_frame(connection_frames),
-        )
+        if track.connections:
+            rr.log(
+                f"{track.entity}/connections",
+                rr.LineStrips3D(
+                    marker_connection_strips(positions, track.connections),
+                    radii=track.radius * 0.45,
+                    colors=list(track.colors),
+                ),
+            )
 
 
 def log_gt_third_person_video(
@@ -3145,18 +2922,6 @@ def non_empty_grid(
     return rrb.Grid(*views, grid_columns=grid_columns, name=name)
 
 
-def source_has_marker_tracks(gt_config: GTConfig | None, source: str) -> bool:
-    return gt_config is not None and any(
-        track.source == source for track in gt_config.marker_tracks
-    )
-
-
-def source_has_mano_mesh_tracks(gt_config: GTConfig | None, source: str) -> bool:
-    return gt_config is not None and any(
-        track.source == source for track in gt_config.mano_mesh_tracks
-    )
-
-
 def ordered_gt_sources(sources: Iterable[str]) -> list[str]:
     priority = {"bvh": 0, "trc": 1, "csv": 2, "xrs": 3}
     return sorted(set(sources), key=lambda source: (priority.get(source, 99), source))
@@ -3174,51 +2939,43 @@ def gt_mano_sources(gt_config: GTConfig | None) -> list[str]:
     return ordered_gt_sources(track.source for track in gt_config.mano_mesh_tracks)
 
 
-def gt_skeleton_source_view(gt_config: GTConfig | None, source: str) -> rrb.View:
-    if source_has_marker_tracks(gt_config, source):
-        return rrb.Spatial3DView(name=source.upper(), origin=f"{GT_TRACKS_ENTITY}/{source}")
-    return rrb.TextDocumentView(name=source.upper(), origin=GT_NOTE_ENTITY)
+def gt_skeleton_source_view(source: str) -> rrb.View:
+    return rrb.Spatial3DView(name=source.upper(), origin=f"{GT_TRACKS_ENTITY}/{source}")
 
 
-def gt_mesh_source_view(gt_config: GTConfig | None, source: str) -> rrb.View:
-    if source_has_mano_mesh_tracks(gt_config, source):
-        return rrb.Spatial3DView(name=source.upper(), origin=f"{GT_MESH_ENTITY}/{source}")
-    return rrb.TextDocumentView(name=source.upper(), origin=GT_NOTE_ENTITY)
+def gt_mesh_source_view(source: str) -> rrb.View:
+    return rrb.Spatial3DView(name=source.upper(), origin=f"{GT_MESH_ENTITY}/{source}")
 
 
-def gt_skeleton_tabs(gt_config: GTConfig | None) -> rrb.Tabs:
+def gt_skeleton_tabs(gt_config: GTConfig | None) -> rrb.Tabs | None:
     sources = gt_marker_sources(gt_config)
     if not sources:
-        return rrb.Tabs(
-            rrb.TextDocumentView(name="No GT skeleton", origin=GT_NOTE_ENTITY), name="GT skeleton"
-        )
+        return None
     return rrb.Tabs(
-        *(gt_skeleton_source_view(gt_config, source) for source in sources),
+        *(gt_skeleton_source_view(source) for source in sources),
         active_tab=sources[0].upper(),
         name="GT skeleton",
     )
 
 
-def gt_mesh_tabs(gt_config: GTConfig | None) -> rrb.Tabs:
+def gt_mesh_tabs(gt_config: GTConfig | None) -> rrb.Tabs | None:
     sources = gt_mano_sources(gt_config)
     if not sources:
-        return rrb.Tabs(
-            rrb.TextDocumentView(name="No GT MANO mesh", origin=GT_NOTE_ENTITY), name="GT MANO mesh"
-        )
+        return None
     return rrb.Tabs(
-        *(gt_mesh_source_view(gt_config, source) for source in sources),
+        *(gt_mesh_source_view(source) for source in sources),
         active_tab=sources[0].upper(),
         name="GT MANO mesh",
     )
 
 
-def gt_third_person_video_view(gt_config: GTConfig | None) -> rrb.View:
+def gt_third_person_video_view(gt_config: GTConfig | None) -> rrb.View | None:
     if gt_config is not None and gt_config.third_person_video is not None:
         return rrb.Spatial2DView(name="GT third-person video", origin=GT_THIRD_PERSON_VIDEO_ENTITY)
-    return rrb.TextDocumentView(name="GT third-person video", origin=GT_NOTE_ENTITY)
+    return None
 
 
-def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike:
+def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
     mag_view = available_signal_view(config, "middle_mag")
     imu_rows: list[rrb.ContainerLike] = []
     for labels in (
@@ -3240,17 +2997,19 @@ def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike:
         columns.append(rrb.Vertical(*imu_rows, row_shares=[1.0 for _ in imu_rows]))
         column_shares.append(2.0)
     if not columns:
-        return rrb.TextDocumentView(name="Robocap sensors only", origin=GT_NOTE_ENTITY)
+        return None
     return rrb.Horizontal(*columns, column_shares=column_shares, name="Robocap sensors only")
 
 
-def all_signals_container(config: SessionConfig) -> rrb.ContainerLike:
+def all_signals_container(config: SessionConfig) -> rrb.ContainerLike | None:
     views = [
         view
         for label in SIGNAL_SLOT_ORDER
         if (view := available_signal_view(config, label)) is not None
     ]
-    return non_empty_grid("Signals", views, grid_columns=3)
+    if not views:
+        return None
+    return rrb.Grid(*views, grid_columns=3, name="Signals")
 
 
 def display_videos_container(config: SessionConfig) -> rrb.ContainerLike:
@@ -3270,27 +3029,37 @@ def display_videos_container(config: SessionConfig) -> rrb.ContainerLike:
     return rrb.Horizontal(*columns, column_shares=[1.0 for _ in columns], name="Robocap videos")
 
 
-def gt_overview_container(gt_config: GTConfig | None) -> rrb.ContainerLike:
-    return rrb.Horizontal(
-        gt_skeleton_tabs(gt_config),
-        gt_mesh_tabs(gt_config),
-        gt_third_person_video_view(gt_config),
-        column_shares=[1.0, 1.0, 1.25],
-        name="GT",
+def gt_overview_container(gt_config: GTConfig | None) -> rrb.ContainerLike | None:
+    candidates = (
+        (gt_skeleton_tabs(gt_config), 1.0),
+        (gt_mesh_tabs(gt_config), 1.0),
+        (gt_third_person_video_view(gt_config), 1.25),
     )
+    views = [view for view, _share in candidates if view is not None]
+    column_shares = [share for view, share in candidates if view is not None]
+    if not views:
+        return None
+    if len(views) == 1:
+        return views[0]
+    return rrb.Horizontal(*views, column_shares=column_shares, name="GT")
 
 
 def build_display_blueprint(
     config: SessionConfig, gt_config: GTConfig | None = None
 ) -> rrb.Blueprint:
+    rows: list[rrb.ContainerLike] = [display_videos_container(config)]
+    row_shares = [2.4]
+    sensor_overview = robocap_sensors_container(config)
+    if sensor_overview is not None:
+        rows.append(sensor_overview)
+        row_shares.append(1.6)
+    gt_overview = gt_overview_container(gt_config)
+    if gt_overview is not None:
+        rows.append(gt_overview)
+        row_shares.append(2.4)
     return rrb.Blueprint(
         rrb.TimePanel(timeline="capture_time"),
-        rrb.Vertical(
-            display_videos_container(config),
-            robocap_sensors_container(config),
-            gt_overview_container(gt_config),
-            row_shares=[2.4, 1.6, 2.4],
-        ),
+        rrb.Vertical(*rows, row_shares=row_shares),
         collapse_panels=True,
     )
 
@@ -3301,8 +3070,6 @@ def build_blueprint(
     if preset == "display":
         return build_display_blueprint(config, gt_config)
 
-    signals_container = all_signals_container(config)
-
     rows: list[rrb.ContainerLike] = [
         non_empty_grid(
             "Videos",
@@ -3312,12 +3079,17 @@ def build_blueprint(
                 if (view := available_video_view(config, label)) is not None
             ],
             grid_columns=4,
-        ),
-        signals_container,
+        )
     ]
-    row_shares = [2.4, 3.6]
-    rows.append(gt_overview_container(gt_config))
-    row_shares.append(2.4)
+    row_shares = [2.4]
+    signals_container = all_signals_container(config)
+    if signals_container is not None:
+        rows.append(signals_container)
+        row_shares.append(3.6)
+    gt_overview = gt_overview_container(gt_config)
+    if gt_overview is not None:
+        rows.append(gt_overview)
+        row_shares.append(2.4)
 
     return rrb.Blueprint(
         rrb.TimePanel(timeline="capture_time"),
@@ -3505,15 +3277,17 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing MANO_LEFT.pkl and MANO_RIGHT.pkl for GT hand mesh generation.",
     )
     parser.add_argument(
-        "--no-mano-mesh",
-        action="store_true",
-        help="Disable MANO mesh generation from GT hand TRC tracks.",
-    )
-    parser.add_argument(
         "--retarget-model",
         choices=("none", "mano", "smpl", "smplh"),
         default="mano",
         help="Target model for marker-to-mesh retargeting. Currently MANO is implemented; SMPL/SMPLH produce an explicit note.",
+    )
+    parser.add_argument(
+        "--no-mano-mesh",
+        dest="retarget_model",
+        action="store_const",
+        const="none",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--gt-coordinate-scale",

@@ -53,7 +53,7 @@ def test_parse_trc_reads_multiple_markers(tmp_path: Path) -> None:
     assert positions.shape == (1, 4, 3)
 
 
-def test_parse_nokov_csv_expands_segment_pose_axes(tmp_path: Path) -> None:
+def test_parse_nokov_csv_keeps_only_real_segment_nodes(tmp_path: Path) -> None:
     path = tmp_path / "Tracker0.csv"
     path.write_text(
         "\n".join(
@@ -78,9 +78,9 @@ def test_parse_nokov_csv_expands_segment_pose_axes(tmp_path: Path) -> None:
     )
     timestamps_ns, marker_names, positions, parents = parse_nokov_csv(path, 1.0, None)
     assert timestamps_ns.tolist() == [1_000_000_000]
-    assert marker_names == ("Segment1", "Segment1_x_axis", "Segment1_y_axis", "Segment1_z_axis")
-    assert positions.shape == (1, 4, 3)
-    assert parents == (-1, 0, 0, 0)
+    assert marker_names == ("Segment1",)
+    assert positions.shape == (1, 1, 3)
+    assert parents == (-1,)
     assert exporter.infer_nokov_view_up_axis([path]) == "z"
 
 
@@ -110,18 +110,9 @@ def test_parse_xrs_reads_multiple_segments_in_one_space(tmp_path: Path) -> None:
     )
     timestamps_ns, marker_names, positions, parents = parse_xrs(path, 1.0, None)
     assert timestamps_ns.tolist() == [1_000_000_000]
-    assert marker_names == (
-        "RigidA",
-        "RigidA_x_axis",
-        "RigidA_y_axis",
-        "RigidA_z_axis",
-        "RigidB",
-        "RigidB_x_axis",
-        "RigidB_y_axis",
-        "RigidB_z_axis",
-    )
-    assert positions.shape == (1, 8, 3)
-    assert parents == (-1, 0, 0, 0, 0, 4, 4, 4)
+    assert marker_names == ("RigidA", "RigidB")
+    assert positions.shape == (1, 2, 3)
+    assert parents == (-1, 0)
 
 
 def test_parse_xrs_preserves_empty_tab_columns_and_fixed_axis_count(tmp_path: Path) -> None:
@@ -148,10 +139,26 @@ def test_parse_xrs_preserves_empty_tab_columns_and_fixed_axis_count(tmp_path: Pa
 
     timestamps_ns, marker_names, positions, parents = parse_xrs(path, 1.0, None)
     assert timestamps_ns.tolist() == [1_000_000_000, 1_011_000_000]
-    assert marker_names == ("LeftHand", "LeftHand_x_axis", "LeftHand_y_axis", "LeftHand_z_axis")
-    assert positions.shape == (2, 4, 3)
+    assert marker_names == ("LeftHand",)
+    assert positions.shape == (2, 1, 3)
     assert positions[0, 0].tolist() == [1.0, 2.0, 3.0]
-    assert parents == (-1, 0, 0, 0)
+    assert parents == (-1,)
+
+
+def test_parse_xrs_hierarchy_ignores_fixed_width_empty_tab_columns() -> None:
+    lines = [
+        "[SegmentNames&Hierarchy]",
+        "Segment\t\t\tParent",
+        "LeftHand\t\t\t",
+        "LeftHandThumb0\t\t\tLeftHand",
+        "LeftHandThumb1\t\t\tLeftHandThumb0",
+        "[SegmentData]",
+    ]
+
+    names, parents = exporter.parse_nokov_segment_hierarchy(lines, "xrs")
+
+    assert names == ("LeftHand", "LeftHandThumb0", "LeftHandThumb1")
+    assert parents == (-1, 0, 1)
 
 
 def test_nokov_bone_axis_z_maps_to_y_up(tmp_path: Path) -> None:
@@ -169,7 +176,7 @@ def test_nokov_bone_axis_z_maps_to_y_up(tmp_path: Path) -> None:
     assert exporter.infer_nokov_view_up_axis([path]) == "y"
 
 
-def test_mano_retarget_recovers_known_joint_scale_and_rotation() -> None:
+def test_mano_retarget_uses_source_script_bvh_joint_mapping() -> None:
     parents = np.asarray([-1, 0, 1, 2, 0, 4, 5, 0, 7, 8, 0, 10, 11, 0, 13, 14], dtype=np.int64)
     joints = np.zeros((16, 3), dtype=np.float32)
     chain_starts = {
@@ -190,9 +197,7 @@ def test_mano_retarget_recovers_known_joint_scale_and_rotation() -> None:
         parents=parents,
         weights=np.eye(16, dtype=np.float32),
     )
-    rotation = np.asarray([[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]], dtype=np.float32)
     translation = np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
-    expected = joints * 2.0 @ rotation.T + translation
     names = ["WristM", "WristIn", "WristOut", "HandOffset"]
     marker_positions = [
         translation,
@@ -200,21 +205,17 @@ def test_mano_retarget_recovers_known_joint_scale_and_rotation() -> None:
         translation + [0.01, 0.0, 0.0],
         translation,
     ]
+    expected_targets = {0: translation}
     for finger, indexes in exporter.MANO_CHAIN_NAMES.items():
-        prefix = {
-            "thumb": "FingerThumb",
-            "index": "FingerIndex",
-            "middle": "FingerMiddle",
-            "ring": "FingerRing",
-            "pinky": "FingerPinky",
-        }[finger]
-        for marker_number, joint_index in enumerate(indexes, start=1):
+        prefix = f"LeftHand{'Pinky' if finger == 'pinky' else finger.capitalize()}"
+        for marker_number, joint_index in enumerate(indexes):
+            target = translation + np.asarray(
+                [0.01 * joint_index, 0.02 * (marker_number + 1), 0.005 * joint_index],
+                dtype=np.float32,
+            )
             names.append(f"{prefix}{marker_number}")
-            marker_positions.append(expected[joint_index])
-        names.append(f"{prefix}4")
-        marker_positions.append(
-            expected[indexes[-1]] + rotation @ ((joints[indexes[-1]] - joints[indexes[-2]]) * 2.0)
-        )
+            marker_positions.append(target)
+            expected_targets[joint_index] = target
     positions = np.asarray(marker_positions, dtype=np.float32)
     track = exporter.GTMarkerTrack(
         label="left_hand",
@@ -225,23 +226,50 @@ def test_mano_retarget_recovers_known_joint_scale_and_rotation() -> None:
         marker_names=tuple(names),
     )
 
-    target, root_rotation, scale, fingertip_targets = exporter.target_mano_joints_from_track(
+    target, root_rotation, scale = exporter.target_mano_joints_from_track(
         track, template, "left", positions
     )
-    assert abs(scale - 2.0) < 1e-5
-    assert np.allclose(root_rotation, rotation, atol=1e-5)
-    assert np.allclose(target, expected, atol=1e-5)
-    assert len(fingertip_targets) == 5
+    assert exporter.finger_joint_names("left", "index") == (
+        ("LeftHandIndex0", "FingerIndex1"),
+        ("LeftHandIndex1", "FingerIndex2"),
+        ("LeftHandIndex2", "FingerIndex3"),
+    )
+    assert scale > 0
+    assert np.isfinite(root_rotation).all()
+    for joint_index, expected in expected_targets.items():
+        assert np.allclose(target[joint_index], expected, atol=1e-6)
+
+    posed = exporter.posed_vertices_from_joints(template, target, root_rotation, scale)
+    assert np.allclose(posed, target, atol=1e-5)
 
 
-def test_columnar_gt_logging_keeps_geometry_off_static_timeline(monkeypatch) -> None:
+def test_normalize_mano_template_centers_and_scales_vertices() -> None:
+    vertices = np.asarray([[-2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [2.0, 0.0, 0.0]], dtype=np.float32)
+    template = exporter.ManoTemplate(
+        vertices=vertices,
+        faces=np.empty((0, 3), dtype=np.uint32),
+        joints=vertices.copy(),
+        parents=np.asarray([-1, 0, 1], dtype=np.int64),
+        weights=np.eye(3, dtype=np.float32),
+    )
+
+    normalized = exporter.normalize_mano_template(template)
+
+    assert np.allclose(normalized.vertices.mean(axis=0), 0.0, atol=1e-6)
+    radii = np.linalg.norm(normalized.vertices, axis=1)
+    assert np.isclose(np.percentile(radii, 95), 1.0)
+    assert np.allclose(normalized.joints, normalized.vertices)
+
+
+def test_gt_logging_writes_one_geometry_batch_per_timestamp(monkeypatch) -> None:
     logged = []
+    capture_times = []
     monkeypatch.setattr(
         exporter.rr,
         "log",
         lambda entity, archetype, **kwargs: logged.append((entity, archetype, kwargs)),
     )
-    monkeypatch.setattr(exporter.rr, "send_columns", lambda *args, **kwargs: None)
+    monkeypatch.setattr(exporter, "set_capture_time", capture_times.append)
 
     timestamps_ns = np.asarray([1_000_000_000, 2_000_000_000], dtype=np.int64)
     marker_track = exporter.GTMarkerTrack(
@@ -277,36 +305,39 @@ def test_columnar_gt_logging_keeps_geometry_off_static_timeline(monkeypatch) -> 
     exporter.log_gt_marker_track(marker_track, None)
     exporter.log_gt_mano_mesh(mesh_track, None)
 
-    static_components = {
-        entity: {str(batch.component_descriptor()) for batch in archetype.as_component_batches()}
-        for entity, archetype, kwargs in logged
-        if kwargs.get("static") and not entity.endswith("/labels")
-    }
-    assert static_components["gt/tracks/trc/hand/points"] == {
-        "Points3D:radii",
-        "Points3D:colors",
-    }
-    assert static_components["gt/tracks/trc/hand/connections"] == {
-        "LineStrips3D:radii",
-        "LineStrips3D:colors",
-    }
-    assert static_components["gt/mesh/trc/hand_mano_mesh"] == {
-        "Mesh3D:triangle_indices",
-        "Mesh3D:albedo_factor",
-    }
+    assert capture_times == [1_000_000_000, 2_000_000_000] * 2
+    assert [entity for entity, _archetype, _kwargs in logged] == [
+        "gt/tracks/trc/hand/labels",
+        "gt/tracks/trc/hand/points",
+        "gt/tracks/trc/hand/connections",
+        "gt/tracks/trc/hand/points",
+        "gt/tracks/trc/hand/connections",
+        "gt/mesh/trc/hand_mano_mesh",
+        "gt/mesh/trc/hand_mano_mesh",
+    ]
 
 
-def test_line_strip_columns_preserve_all_connections_per_frame() -> None:
-    connection_frames = np.arange(36, dtype=np.float32).reshape(2, 3, 2, 3)
+def test_gt_overview_omits_absent_mesh_and_video_views() -> None:
+    marker_track = exporter.GTMarkerTrack(
+        label="hand",
+        entity="gt/tracks/trc/hand",
+        source="trc",
+        timestamps_ns=np.asarray([0], dtype=np.int64),
+        positions=np.zeros((1, 1, 3), dtype=np.float32),
+        marker_names=("root",),
+    )
+    gt_config = exporter.GTConfig(
+        skeleton=None,
+        mesh=None,
+        marker_tracks=(marker_track,),
+        mano_mesh_tracks=(),
+        third_person_video=None,
+    )
 
-    columns = exporter.line_strip_columns_by_frame(connection_frames)
-    strips = list(columns)[0].as_arrow_array().to_pylist()
-
-    assert len(strips) == 2
-    assert len(strips[0]) == 3
-    assert len(strips[1]) == 3
-    assert strips[0][0] == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
-    assert strips[1][2] == [[30.0, 31.0, 32.0], [33.0, 34.0, 35.0]]
+    assert exporter.gt_mesh_tabs(gt_config) is None
+    assert exporter.gt_third_person_video_view(gt_config) is None
+    assert exporter.gt_overview_container(gt_config).name == "GT skeleton"
+    assert exporter.gt_overview_container(None) is None
 
 
 def test_discover_gt_file_sets_uses_all_supported_files(tmp_path: Path) -> None:
@@ -406,3 +437,11 @@ def test_robocap_sensor_layout_spans_mag_across_two_imu_rows(tmp_path: Path) -> 
         ["left_robocap_acc", "left_robocap_gyro"],
         ["right_robocap_acc", "right_robocap_gyro"],
     ]
+
+
+def test_robocap_sensor_layout_is_omitted_without_mag_or_imu(tmp_path: Path) -> None:
+    (tmp_path / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    config = discover_session(tmp_path, "segment1")
+
+    assert robocap_sensors_container(config) is None
+    assert exporter.all_signals_container(config) is None

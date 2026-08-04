@@ -1068,9 +1068,15 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--gt-file", type=Path, action="append", default=None)
     parser.add_argument("--gt-third-person-video", type=Path, default=None)
     parser.add_argument("--mano-model-dir", type=Path, default=Path("Z:/MODELS/hand_models/mano"))
-    parser.add_argument("--no-mano-mesh", action="store_true")
     parser.add_argument(
         "--retarget-model", choices=("none", "mano", "smpl", "smplh"), default="mano"
+    )
+    parser.add_argument(
+        "--no-mano-mesh",
+        dest="retarget_model",
+        action="store_const",
+        const="none",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument("--gt-coordinate-scale", type=float, default=0.001)
     parser.add_argument("--bvh-coordinate-scale", type=float, default=0.01)
@@ -1129,8 +1135,6 @@ def command_export(args: argparse.Namespace) -> int:
         argv.append("--use-proxy")
     if args.display:
         argv.extend(["--blueprint-preset", "display"])
-    if args.no_mano_mesh:
-        argv.append("--no-mano-mesh")
     if args.no_robowrist:
         argv.append("--no-robowrist")
     if args.no_mag:

@@ -10,6 +10,9 @@ It is intended for session folders shaped like the current `Z:\DATASETS\Frodobot
 - A `test*`, `nokov`, or other GT folder with third-person video, BVH/TRC/CSV/XRS data, camera positions, and hand trajectories.
 - Optional MANO model files for hand mesh generation.
 
+Missing streams are omitted from the Rerun blueprint instead of becoming text placeholders. If both
+Robocap MAG and IMU are absent, the complete sensor row is omitted.
+
 ## Install With uv
 
 Install external tools first:
@@ -182,18 +185,22 @@ Override it when needed:
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --mano-model-dir Z:\MODELS\hand_models\mano
 ```
 
-The MANO retarget maps NOKOV `Finger1/2/3` to MANO MCP/PIP/DIP joints and uses `Finger4/End`
-for fingertip direction. It estimates one robust hand scale from corresponding bone lengths,
-fits the wrist orientation from palm MCP directions, then applies hierarchical joint rotations
-through linear blend skinning for every frame.
+The MANO retarget follows the source script's naming convention: BVH `Finger0/1/2` and
+TRC/CSV/XRS `Finger1/2/3` map to MANO MCP/PIP/DIP joints. It normalizes the MANO template,
+initializes each frame from the wrist origin, palm basis, and hand scale, replaces the mapped joint
+targets with the measured NOKOV positions, and applies linear blend skinning.
 
-If a session should still export without MANO mesh:
+To export skeletons without a retargeted mesh, select the `none` retarget model. The Rerun
+blueprint then omits the mesh view instead of adding a no-data text placeholder:
 
 ```bat
-robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --no-mano-mesh
+robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --retarget-model none
 ```
 
 ## Outputs
+
+Commands launched from the Web UI do not set a process timeout. RRD export, inspection, packaging,
+offset, environment, and Git commands all wait for the underlying command to finish.
 
 Default outputs are written under:
 
