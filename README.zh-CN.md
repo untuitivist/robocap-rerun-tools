@@ -247,7 +247,8 @@ video frame N -> NOKOV frame round(N * main_ratio) + GT 帧 offset
 - 不写 `--ratio`：默认使用 `auto`。
 - `--ratio auto`：读取 `_artifacts/<segment>/inspection/frame_rate_report.md` 表格，分别计算所有
   有效 GT 运动数据 FPS 与 Robocap 视频 FPS 的均值，各自取最近的 10 倍数，再计算
-  `GT 取整 FPS / Robocap 取整 FPS`。报告不存在或无法计算时会先自动生成检查报告。
+  `GT 取整 FPS / Robocap 取整 FPS`，并将这个商再次四舍五入为最接近的正整数，作为实际
+  auto ratio。报告不存在或无法计算时会先自动生成检查报告。
 - `--ratio 8`：需要固定比例时显式覆盖自动值。
 - `--offset 5`：以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap
   视频前移、提前出现，同一视频帧会取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap
@@ -259,7 +260,8 @@ Rerun 中显示的统一帧号为：视频第 `N` 帧位于 `round(N * ratio)`�
 `K - GT 帧 offset`。因此 ratio 8、offset 5 时，视频第 100 帧和 GT 第 840 帧都位于
 统一时间轴的 `frame=800`。
 
-`frame_rate_report.md` 会写出 GT/Robocap 样本数、原始均值、10 倍数取整值和最终 ratio，便于复核。
+`frame_rate_report.md` 会写出 GT/Robocap 样本数、原始均值、10 倍数取整值、最终取整前的商和
+实际使用的整数 ratio，便于复核。
 这取代了旧版“Offset 直接使用 GT 帧数”的定义。
 
 ## MANO Mesh

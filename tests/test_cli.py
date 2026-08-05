@@ -4,10 +4,12 @@ from pathlib import Path
 
 from robocap_rerun_tools import web_app
 from robocap_rerun_tools.cli import (
+    FpsRecord,
     build_parser,
     choose_time_column,
     csv_summary,
     discover_files,
+    estimate_frame_ratio,
     find_nokov_source,
     load_frame_ratio_estimate,
     nearest_multiple_of_ten,
@@ -15,6 +17,7 @@ from robocap_rerun_tools.cli import (
     trc_summary,
     video_to_gt_frame,
 )
+from robocap_rerun_tools.alignment import round_positive_ratio
 from robocap_rerun_tools.data_packager import discover_package_files
 
 
@@ -95,7 +98,7 @@ def write_test_fps_report(path: Path) -> None:
     )
 
 
-def test_auto_ratio_reads_markdown_means_and_rounds_to_tens(tmp_path: Path) -> None:
+def test_auto_ratio_reads_markdown_means_and_rounds_final_ratio(tmp_path: Path) -> None:
     report_path = tmp_path / "frame_rate_report.md"
     write_test_fps_report(report_path)
 
@@ -108,12 +111,30 @@ def test_auto_ratio_reads_markdown_means_and_rounds_to_tens(tmp_path: Path) -> N
     assert abs(estimate.robocap_fps_mean - 27.319047666666665) < 1e-9
     assert estimate.gt_fps_rounded_10 == 60
     assert estimate.robocap_fps_rounded_10 == 30
-    assert estimate.ratio == 2.0
+    assert estimate.ratio_before_rounding == 2.0
+    assert estimate.ratio == 2
 
 
 def test_nearest_multiple_of_ten_uses_half_up_rounding() -> None:
     assert nearest_multiple_of_ten(234.9) == 230
     assert nearest_multiple_of_ten(235.0) == 240
+
+
+def test_auto_ratio_rounds_quotient_to_nearest_positive_integer() -> None:
+    estimate = estimate_frame_ratio(
+        [
+            FpsRecord("motion.trc", "trc", "gt", 80.0),
+            FpsRecord("robocap_video.mp4", "video", "robocap", 30.0),
+        ],
+        "test",
+    )
+
+    assert estimate is not None
+    assert abs(estimate.ratio_before_rounding - (8 / 3)) < 1e-9
+    assert estimate.ratio == 3
+    assert round_positive_ratio(2.49) == 2
+    assert round_positive_ratio(2.5) == 3
+    assert round_positive_ratio(0.4) == 1
 
 
 def test_offset_is_measured_in_robocap_video_frames() -> None:
@@ -156,7 +177,7 @@ def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch
     assert args.func(args) == 0
 
     ratio_index = captured.index("--gt-frame-ratio")
-    assert captured[ratio_index + 1] == "2.000000000"
+    assert captured[ratio_index + 1] == "2"
     offset_index = captured.index("--gt-video-frame-offset")
     assert captured[offset_index + 1] == "-5"
     assert "--gt-frame-offset" not in captured

@@ -49,8 +49,8 @@ timeline is expressed at the GT/NOKOV frame rate: Robocap video frame `N` is log
 `frame = K - GT frame offset`. `capture_time` remains available only as a secondary timeline.
 
 The default is `ratio=auto`. It reads `frame_rate_report.md`, averages all valid GT FPS values and
-all Robocap video FPS values separately, rounds both means to the nearest multiple of 10, then uses
-`rounded GT FPS / rounded Robocap FPS`. Enter a number such as `8` to override it.
+all Robocap video FPS values separately, rounds both means to the nearest multiple of 10, divides
+them, and rounds that ratio to the nearest positive integer. Enter a number such as `8` to override it.
 Robocap video is the reference for the signed offset. A positive value advances NOKOV/GT relative
 to Robocap video, so GT appears earlier and the same video frame selects a later GT frame. A
 negative value delays NOKOV/GT relative to Robocap video, so GT appears later and the same video
@@ -103,7 +103,8 @@ video frame N -> NOKOV frame round(N * ratio) + GT 帧 offset
 `capture_time` 仍会保留，但只作为辅助时间轴，不再是帧对齐版默认显示的时间轴。
 
 默认使用 `ratio=auto`：读取 `frame_rate_report.md`，分别计算有效 GT FPS 和 Robocap 视频 FPS
-的均值，各自取最近的 10 倍数，再用“GT 取整值 / Robocap 取整值”得到 ratio。输入 `8` 等数字可覆盖自动值。
+的均值，各自取最近的 10 倍数，计算“GT 取整值 / Robocap 取整值”，最后把 ratio 四舍五入为
+最接近的正整数。输入 `8` 等数字可覆盖自动值。
 Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap 视频
 前移、提前出现，同一视频帧会选取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap 视频
 后移、延后出现，同一视频帧会选取更靠前的 GT 帧。ratio 为 8 时，offset `5` 会转换成源脚本

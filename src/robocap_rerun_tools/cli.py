@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from .alignment import FrameAlignment
+from .alignment import FrameAlignment, round_positive_ratio
 
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
@@ -53,7 +53,8 @@ class FrameRatioEstimate:
     robocap_fps_mean: float
     gt_fps_rounded_10: int
     robocap_fps_rounded_10: int
-    ratio: float
+    ratio_before_rounding: float
+    ratio: int
 
 
 def write_text(path: Path, text: str) -> None:
@@ -563,6 +564,7 @@ def estimate_frame_ratio(
     robocap_rounded = nearest_multiple_of_ten(robocap_mean)
     if gt_rounded <= 0 or robocap_rounded <= 0:
         return None
+    ratio_before_rounding = gt_rounded / robocap_rounded
     return FrameRatioEstimate(
         source=source,
         report_path=report_path,
@@ -572,7 +574,8 @@ def estimate_frame_ratio(
         robocap_fps_mean=robocap_mean,
         gt_fps_rounded_10=gt_rounded,
         robocap_fps_rounded_10=robocap_rounded,
-        ratio=gt_rounded / robocap_rounded,
+        ratio_before_rounding=ratio_before_rounding,
+        ratio=round_positive_ratio(ratio_before_rounding),
     )
 
 
@@ -735,8 +738,9 @@ def write_inspection(
                 f"- robocap_fps_samples: {ratio_estimate.robocap_sample_count}",
                 f"- robocap_fps_mean: {ratio_estimate.robocap_fps_mean:.9f}",
                 f"- robocap_fps_rounded_10: {ratio_estimate.robocap_fps_rounded_10}",
-                f"- auto_ratio: {ratio_estimate.ratio:.9f}",
-                "- formula: `rounded GT FPS / rounded Robocap FPS`",
+                f"- auto_ratio_before_rounding: {ratio_estimate.ratio_before_rounding:.9f}",
+                f"- auto_ratio_rounded_integer: {ratio_estimate.ratio}",
+                "- formula: `round(rounded GT FPS / rounded Robocap FPS)`",
             ]
         )
     abnormal = [s for s in summaries if s.abnormal_count or s.abnormal_reason]
@@ -831,6 +835,8 @@ def auto_ratio_markdown_lines(estimate: FrameRatioEstimate) -> list[str]:
         f"- robocap_fps_samples: {estimate.robocap_sample_count}",
         f"- robocap_fps_mean: {estimate.robocap_fps_mean:.9f}",
         f"- robocap_fps_rounded_10: {estimate.robocap_fps_rounded_10}",
+        f"- auto_ratio_before_rounding: {estimate.ratio_before_rounding:.9f}",
+        f"- auto_ratio_rounded_integer: {estimate.ratio}",
     ]
     if estimate.report_path is not None:
         lines.insert(1, f"- auto_ratio_report: `{estimate.report_path}`")
@@ -839,7 +845,8 @@ def auto_ratio_markdown_lines(estimate: FrameRatioEstimate) -> list[str]:
 
 def auto_ratio_console_summary(estimate: FrameRatioEstimate) -> str:
     return (
-        f"Auto ratio {estimate.ratio:.9f}: GT mean {estimate.gt_fps_mean:.6f} "
+        f"Auto ratio {estimate.ratio} (before final rounding "
+        f"{estimate.ratio_before_rounding:.9f}): GT mean {estimate.gt_fps_mean:.6f} "
         f"-> {estimate.gt_fps_rounded_10}, Robocap mean "
         f"{estimate.robocap_fps_mean:.6f} -> {estimate.robocap_fps_rounded_10} "
         f"({estimate.source})"
@@ -1056,7 +1063,8 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
         default="auto",
         help=(
             "Frame mode NOKOV/video ratio. Default auto reads frame_rate_report.md, averages GT "
-            "and Robocap FPS separately, rounds both means to the nearest 10, then divides them."
+            "and Robocap FPS separately, rounds both means to the nearest 10, divides them, "
+            "then rounds the ratio to the nearest positive integer."
         ),
     )
     parser.add_argument(
@@ -1124,7 +1132,7 @@ def command_export(args: argparse.Namespace) -> int:
             args.session_dir, args.segment, resolve_ffprobe()
         )
         if ratio_estimate is not None:
-            resolved_ratio = f"{ratio_estimate.ratio:.9f}"
+            resolved_ratio = str(ratio_estimate.ratio)
 
     argv = [
         "--session-dir",

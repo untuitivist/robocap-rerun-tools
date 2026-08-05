@@ -113,9 +113,9 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 if __package__:
-    from .alignment import FrameAlignment
+    from .alignment import FrameAlignment, round_positive_ratio
 else:
-    from alignment import FrameAlignment
+    from alignment import FrameAlignment, round_positive_ratio
 
 
 def ensure_third_party_packages() -> None:
@@ -1093,7 +1093,7 @@ def resolve_gt_frame_ratio(
     gt_rate_hz = infer_gt_frame_rate_hz(gt_config)
     if gt_rate_hz is None or video_rate_hz is None or video_rate_hz <= 0:
         return None
-    return max(1.0, float(gt_rate_hz) / float(video_rate_hz))
+    return float(round_positive_ratio(float(gt_rate_hz) / float(video_rate_hz)))
 
 
 def with_frame_aligned_gt_timestamps(

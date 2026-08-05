@@ -177,9 +177,11 @@ video frame N -> NOKOV frame round(N * main_ratio) + GT frame offset
 Frame alignment defaults to `--ratio auto`. It reads the table in
 `_artifacts/<segment>/inspection/frame_rate_report.md`, averages all valid GT motion-data FPS values
 and all Robocap video FPS values separately, rounds each mean to the nearest multiple of 10, and
-uses `rounded GT FPS / rounded Robocap FPS`. If the report is missing or invalid, the tool generates
-it before calculating the ratio. The report includes the sample counts, raw means, rounded values,
-and resulting ratio. Use a numeric value such as `--ratio 8` to override auto.
+calculates `rounded GT FPS / rounded Robocap FPS`. That quotient is rounded again to the nearest
+positive integer and becomes the actual auto ratio. If the report is missing or invalid, the tool
+generates it before calculating the ratio. The report includes the sample counts, raw means,
+rounded FPS values, quotient before final rounding, and resulting integer ratio. Use a numeric value
+such as `--ratio 8` to override auto.
 
 Offset is measured relative to Robocap video. Positive values advance NOKOV/GT relative to the
 video, so GT appears earlier and the same video frame selects a later GT frame. Negative values

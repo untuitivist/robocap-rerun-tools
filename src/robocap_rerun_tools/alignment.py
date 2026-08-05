@@ -4,6 +4,13 @@ import math
 from dataclasses import dataclass
 
 
+def round_positive_ratio(value: float) -> int:
+    value = float(value)
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"Ratio must be finite and positive, got {value!r}.")
+    return max(1, int(math.floor(value + 0.5)))
+
+
 @dataclass(frozen=True)
 class FrameAlignment:
     """Convert the user-facing Robocap offset into the source script's GT-frame offset."""

@@ -87,6 +87,27 @@ def test_frame_timeline_aligns_video_and_gt_source_frames() -> None:
     assert negative.gt_frame(760) == video_frame
 
 
+def test_exporter_rounds_auto_inferred_ratio_but_preserves_explicit_ratio() -> None:
+    marker_track = exporter.GTMarkerTrack(
+        label="hand",
+        entity="gt/tracks/trc/hand",
+        source="trc",
+        timestamps_ns=np.arange(81, dtype=np.int64) * 12_500_000,
+        positions=np.zeros((81, 1, 3), dtype=np.float32),
+        marker_names=("root",),
+    )
+    gt_config = exporter.GTConfig(
+        skeleton=None,
+        mesh=None,
+        marker_tracks=(marker_track,),
+        mano_mesh_tracks=(),
+        third_person_video=None,
+    )
+
+    assert exporter.resolve_gt_frame_ratio(gt_config, video_rate_hz=30.0, frame_ratio=None) == 3.0
+    assert exporter.resolve_gt_frame_ratio(gt_config, video_rate_hz=30.0, frame_ratio=2.5) == 2.5
+
+
 def test_robocap_frame_range_is_zero_based_inclusive() -> None:
     timestamps_ns = np.asarray([100, 200, 350, 500, 800], dtype=np.int64)
 
