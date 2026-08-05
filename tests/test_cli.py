@@ -335,13 +335,11 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
         "display": True,
         "gt_dir": "",
         "selected_gt_files": [],
-        "retarget_model": "none",
         "include_third_person": False,
         "third_person_video": "",
         "include_robowrist": True,
         "include_mag": False,
         "include_imu": False,
-        "mano_model_dir": "",
         "proxy_height": 540,
     }
     result = web_app.export_rrd(**export_kwargs)
@@ -350,6 +348,8 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     assert "--no-mag" in captured
     assert "--no-imu" in captured
     assert "--no-robowrist" not in captured
+    assert captured[captured.index("--retarget-model") + 1] == "none"
+    assert "--mano-model-dir" not in captured
     assert captured[captured.index("--offset") + 1] == "-5"
     assert captured[captured.index("--robocap-start-frame") + 1] == "10"
     assert captured[captured.index("--robocap-end-frame") + 1] == "20"

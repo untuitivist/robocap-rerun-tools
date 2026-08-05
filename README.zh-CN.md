@@ -114,13 +114,12 @@ http://127.0.0.1:7860
 
 在“导出 RRD / Export”页先点“扫描文件”，网页会列出 GT/NOKOV 目录下的
 `.bvh`、`.trc`、`.csv`、`.xrs` 文件。你可以勾选哪些文件进入 RRD，也可以选择是否包含第三人称视频、
-是否包含 robowrist 数据，以及选择重定向模型。当前真正实现的是 MANO；SMPL/SMPLH 先作为显式选项保留，
-导出时会在记录说明里写明尚未实现，不会假装已经生成对应 mesh。
+是否包含 robowrist、MAG 和 IMU 数据。Web 导出固定记录骨骼和刚体，不执行模型重定向；高级重定向参数
+仍可通过 CLI 使用。
 
-“环境 / Environment”页可以检查 Python、Python 包、ffmpeg/ffprobe、git 分支与本地/远端版本，
-也可以运行 `uv pip install -e ".[web]"` 安装或更新依赖；依赖更新会打开一个新的 `cmd` 窗口，
-先关闭当前 web 进程，再打印更新日志，最后通过 `start_web.bat` 自动重启。源代码更新请使用
-下面的常规 Git 流程。
+“环境 / Environment”页可以检查 Python、Python 包和 ffmpeg/ffprobe，但不会显示或查询 Git 仓库、
+分支、远端与版本信息。它也可以运行 `uv pip install -e ".[web]"` 安装或更新依赖；依赖更新会打开
+一个新的 `cmd` 窗口，先关闭当前 web 进程，再打印更新日志，最后通过 `start_web.bat` 自动重启。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。Viewer 会在独立 `cmd` 窗口里运行，方便查看 Rerun 自己的日志。
@@ -284,8 +283,8 @@ MANO 重定向沿用示例脚本的命名约定：BVH 的 `Finger0/1/2` 与 TRC/
 掌部朝向和手部尺度建立初始姿态，用实际关节点覆盖对应链并执行线性蒙皮。因此每一帧都会产生
 随骨骼姿态变化的 mesh，而不是只把静态模板放到手腕位置。
 
-如果只想导出骨骼，不要 MANO mesh，在“重定向模型”中选择 `none`。此时 Rerun
-不会创建 mesh 窗口，也不会增加无数据的文字占位窗口：
+如果通过 CLI 只导出骨骼而不要 MANO mesh，传入 `--retarget-model none`。此时 Rerun
+不会创建 mesh 窗口，也不会增加无数据的文字占位窗口。Web 导出会自动使用该模式，且不显示模型控件：
 
 ```bat
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --retarget-model none
@@ -293,7 +292,7 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --ret
 
 ## 输出位置
 
-Web 发起的 RRD 导出、检查、打包、Offset、环境与 Git 命令都不设置进程超时，会一直等待命令自行完成。
+Web 发起的 RRD 导出、检查、打包、Offset 与环境命令都不设置进程超时，会一直等待命令自行完成。
 
 默认输出在：
 

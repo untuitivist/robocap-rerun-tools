@@ -69,12 +69,12 @@ synchronizes it across the Export and Offset tabs, and restores it after Web UI 
 the setting is stored in `%LOCALAPPDATA%\robocap-rerun-tools\web_settings.json`.
 On the export tab, use `Scan files` to populate the GT/NOKOV file list. You can then choose which
 `.bvh`, `.trc`, `.csv`, and `.xrs` files enter the RRD, choose whether to include a third-person
-video, choose whether robowrist streams are included, and choose the retarget target. MANO is
-implemented; SMPL/SMPLH are currently explicit placeholders in the recording notes.
-The `Environment` tab checks Python/package/tool versions, ffmpeg/ffprobe, git status, and the
-local/remote commit relationship. It can also run `uv pip install -e ".[web]"` in a separate
-`cmd` window, close the current web process, print update logs there, and restart through
-`start_web.bat`. Source updates are done through the normal Git workflow described below.
+video, and choose whether robowrist, MAG, and IMU streams are included. The Web exporter records
+skeletons and rigid bodies without model retargeting; advanced retargeting remains available from
+the CLI. The `Environment` tab checks Python/package/tool versions and ffmpeg/ffprobe without
+showing or querying Git repository, branch, remote, or version information. It can also run
+`uv pip install -e ".[web]"` in a separate `cmd` window, close the current web process, print
+update logs there, and restart through `start_web.bat`.
 The `Viewer` tab can scan generated `.rrd` files under the current session and open a selected file
 in Rerun Web Viewer. The viewer runs in a separate `cmd` window so its logs stay visible.
 Its port defaults to `0` (auto). A requested port is tested before launch; if Windows reserves it or
@@ -216,8 +216,9 @@ TRC/CSV/XRS `Finger1/2/3` map to MANO MCP/PIP/DIP joints. It normalizes the MANO
 initializes each frame from the wrist origin, palm basis, and hand scale, replaces the mapped joint
 targets with the measured NOKOV positions, and applies linear blend skinning.
 
-To export skeletons without a retargeted mesh, select the `none` retarget model. The Rerun
-blueprint then omits the mesh view instead of adding a no-data text placeholder:
+To export skeletons without a retargeted mesh from the CLI, pass the `none` retarget model. The
+Rerun blueprint then omits the mesh view instead of adding a no-data text placeholder. Web exports
+use this mode automatically and do not show model controls:
 
 ```bat
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --retarget-model none
@@ -226,7 +227,7 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --ret
 ## Outputs
 
 Commands launched from the Web UI do not set a process timeout. RRD export, inspection, packaging,
-offset, environment, and Git commands all wait for the underlying command to finish.
+offset, and environment commands all wait for the underlying command to finish.
 
 Default outputs are written under:
 

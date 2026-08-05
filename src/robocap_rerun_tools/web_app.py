@@ -27,11 +27,10 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 6. Use `Offset` when you need to inspect or sweep a video-to-NOKOV frame offset.
 
 The export controls can independently include or exclude MAG, IMU, robowrist, and third-person video data.
-Only GT formats that are present create tabs. BVH/TRC/CSV/XRS each have separate skeleton and mesh views,
-while rigid bodies from one CSV/XRS source stay in one shared 3D world. NOKOV millimetres are converted to
-metres, and the file's `BoneAxis` selects the matching up axis. MANO retargeting fits hand scale, palm
-orientation, and articulated finger joints on every frame. Select `none` as the retarget model when no
-mesh is wanted; absent skeleton, mesh, and third-person sources do not create placeholder views.
+Only GT formats that are present create tabs. BVH/TRC/CSV/XRS each have separate 3D views, while rigid
+bodies from one CSV/XRS source stay in one shared world. NOKOV millimetres are converted to metres, and
+the file's `BoneAxis` selects the matching up axis. The Web exporter records skeletons and rigid bodies
+without model retargeting. Absent skeleton and third-person sources do not create placeholder views.
 If Robocap MAG and IMU are both absent, the complete sensor row is omitted.
 
 ## Alignment
@@ -83,10 +82,9 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 6. 如果需要检查视频帧和 NOKOV 帧的偏移关系，用“Offset 检查”。
 
 导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。
-只有实际存在的 GT 格式才会生成 tab。BVH/TRC/CSV/XRS 分别有骨骼和 mesh 视图；同一 CSV/XRS
+只有实际存在的 GT 格式才会生成 tab。BVH/TRC/CSV/XRS 分别有独立的 3D 视图；同一 CSV/XRS
 中的多个刚体保留在同一个 3D 世界坐标系。NOKOV 毫米坐标会转换成米，并根据文件中的 `BoneAxis`
-选择向上轴。MANO 重定向会逐帧拟合手部尺度、掌部朝向和各手指关节姿态。
-不需要 mesh 时，在“重定向模型”中选择 `none`；不存在的骨骼、mesh 或第三人称源不会创建占位窗口。
+选择向上轴。Web 导出固定记录骨骼和刚体，不执行模型重定向；不存在的骨骼或第三人称源不会创建占位窗口。
 Robocap MAG 和 IMU 都不存在时，整行传感器窗口也会直接省略。
 
 ## 对齐公式
@@ -150,13 +148,11 @@ LANGUAGE_PACKS = {
         "robocap_start_frame": "Robocap start frame (0-based, inclusive)",
         "robocap_end_frame": "Robocap end frame (0-based, inclusive)",
         "save_path": "Save path",
-        "mano_model_dir": "MANO model dir",
         "use_proxy": "Use compressed proxy video",
         "display": "Display layout",
         "scan_button": "Scan files",
         "gt_dir": "GT/NOKOV export dir",
         "gt_files": "GT files to include",
-        "retarget_model": "Retarget model",
         "third_person_video": "Third-person video",
         "include_third_person": "Include third-person video",
         "include_robowrist": "Include robowrist data",
@@ -172,7 +168,6 @@ LANGUAGE_PACKS = {
         "offset_max": "Offset max",
         "sweep_button": "Sweep Offset",
         "env_check_button": "Check environment",
-        "env_update_check_button": "Check remote version",
         "env_install_button": "Install/update dependencies",
         "env_output": "Environment output",
         "viewer_scan_button": "Scan RRD files",
@@ -207,13 +202,11 @@ LANGUAGE_PACKS = {
         "robocap_start_frame": "Robocap 起始帧（从 0 开始，包含）",
         "robocap_end_frame": "Robocap 结束帧（从 0 开始，包含）",
         "save_path": "RRD 保存路径",
-        "mano_model_dir": "MANO 模型目录",
         "use_proxy": "使用压缩视频",
         "display": "展示版布局",
         "scan_button": "扫描文件",
         "gt_dir": "GT/NOKOV 导出目录",
         "gt_files": "参与导出的 GT 文件",
-        "retarget_model": "重定向模型",
         "third_person_video": "第三人称视频",
         "include_third_person": "包含第三人称视频",
         "include_robowrist": "包含 robowrist 数据",
@@ -229,7 +222,6 @@ LANGUAGE_PACKS = {
         "offset_max": "Offset 最大值",
         "sweep_button": "扫描 Offset",
         "env_check_button": "检查环境",
-        "env_update_check_button": "检查远端版本",
         "env_install_button": "安装/更新依赖",
         "env_output": "环境输出",
         "viewer_scan_button": "扫描 RRD 文件",
@@ -375,29 +367,16 @@ def first_line(command: list[str], cwd: Path | None = None) -> str:
     return line if returncode == 0 else f"failed: {line or returncode}"
 
 
-def git_output(args: list[str]) -> str:
-    returncode, output = run_process(["git", *args], cwd=PROJECT_ROOT)
-    if returncode != 0:
-        return f"{output}\nCommand failed with exit code {returncode}.".strip()
-    return output or "Done."
-
-
-def git_status_short() -> tuple[int, str]:
-    return run_process(["git", "status", "--short"], cwd=PROJECT_ROOT)
-
-
 def check_environment() -> str:
     packages = ("robocap-rerun-tools", "numpy", "rerun-sdk", "scipy", "gradio")
     lines = [
         "# Environment check",
         "",
-        f"- project_root: `{PROJECT_ROOT}`",
         f"- python: `{sys.executable}`",
         f"- python_version: `{platform.python_version()}`",
         f"- platform: `{platform.platform()}`",
         f"- virtual_env: `{os.environ.get('VIRTUAL_ENV', '') or 'not set'}`",
         f"- uv: `{shutil.which('uv') or 'not found'}`",
-        f"- git: `{shutil.which('git') or 'not found'}`",
         f"- ffmpeg: `{shutil.which('ffmpeg') or 'not found'}`",
         f"- ffprobe: `{shutil.which('ffprobe') or 'not found'}`",
         "",
@@ -411,49 +390,7 @@ def check_environment() -> str:
         "",
     ]
     lines.extend(f"- {name}: `{package_version(name)}`" for name in packages)
-    status_returncode, status_output = git_status_short()
-    status_text = status_output if status_returncode == 0 and status_output.strip() else "clean"
-    if status_returncode != 0:
-        status_text = f"{status_output}\nCommand failed with exit code {status_returncode}.".strip()
-    lines.extend(
-        [
-            "",
-            "## Git",
-            "",
-            f"- branch: `{git_output(['branch', '--show-current'])}`",
-            f"- commit: `{git_output(['log', '-1', '--oneline'])}`",
-            f"- remote: `{git_output(['remote', '-v'])}`",
-            "",
-            "```text",
-            status_text,
-            "```",
-        ]
-    )
     return "\n".join(lines)
-
-
-def check_remote_version() -> str:
-    fetch_result = git_output(["fetch", "--prune"])
-    local = git_output(["rev-parse", "--short", "HEAD"])
-    upstream = git_output(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
-    remote = git_output(["rev-parse", "--short", "@{u}"])
-    ahead_behind = git_output(["rev-list", "--left-right", "--count", "HEAD...@{u}"])
-    return "\n".join(
-        [
-            "# Remote version check",
-            "",
-            f"- local: `{local}`",
-            f"- upstream: `{upstream}`",
-            f"- remote: `{remote}`",
-            f"- ahead_behind: `{ahead_behind}` (`local_ahead remote_ahead`)",
-            "",
-            "## Fetch",
-            "",
-            "```text",
-            fetch_result,
-            "```",
-        ]
-    )
 
 
 def install_or_update_dependencies() -> str:
@@ -722,13 +659,11 @@ def export_rrd(
     display: bool,
     gt_dir: str,
     selected_gt_files: list[str] | None,
-    retarget_model: str,
     include_third_person: bool,
     third_person_video: str,
     include_robowrist: bool,
     include_mag: bool,
     include_imu: bool,
-    mano_model_dir: str,
     proxy_height: int,
 ) -> str:
     args = ["export", session_path(session_dir), "--mode", mode]
@@ -756,15 +691,13 @@ def export_rrd(
         args.append("--use-proxy")
     if display:
         args.append("--display")
-    args.extend(["--retarget-model", retarget_model])
+    args.extend(["--retarget-model", "none"])
     if not include_robowrist:
         args.append("--no-robowrist")
     if not include_mag:
         args.append("--no-mag")
     if not include_imu:
         args.append("--no-imu")
-    if optional_text(mano_model_dir):
-        args.extend(["--mano-model-dir", mano_model_dir.strip()])
     args.extend(["--proxy-height", str(int(proxy_height))])
     return run_cli(args)
 
@@ -809,13 +742,11 @@ def language_updates(language: str):
         gr.update(label=labels["robocap_start_frame"]),
         gr.update(label=labels["robocap_end_frame"]),
         gr.update(label=labels["save_path"]),
-        gr.update(label=labels["mano_model_dir"]),
         gr.update(label=labels["use_proxy"]),
         gr.update(label=labels["display"]),
         gr.update(value=labels["scan_button"]),
         gr.update(label=labels["gt_dir"]),
         gr.update(label=labels["gt_files"]),
-        gr.update(label=labels["retarget_model"]),
         gr.update(label=labels["include_third_person"]),
         gr.update(label=labels["third_person_video"]),
         gr.update(label=labels["include_robowrist"]),
@@ -834,7 +765,6 @@ def language_updates(language: str):
         gr.update(label=labels["offset_max"]),
         gr.update(value=labels["sweep_button"]),
         gr.update(value=labels["env_check_button"]),
-        gr.update(value=labels["env_update_check_button"]),
         gr.update(value=labels["env_install_button"]),
         gr.update(label=labels["env_output"]),
         gr.update(value=labels["viewer_scan_button"]),
@@ -889,13 +819,7 @@ def build_app():
 
         with gr.Tab("导出 RRD / Export"):
             scan_button = gr.Button(labels["scan_button"])
-            with gr.Row():
-                gt_dir = gr.Textbox(label=labels["gt_dir"], placeholder=r"Z:\...\nokov")
-                retarget_model = gr.Radio(
-                    label=labels["retarget_model"],
-                    choices=["mano", "none", "smpl", "smplh"],
-                    value="mano",
-                )
+            gt_dir = gr.Textbox(label=labels["gt_dir"], placeholder=r"Z:\...\nokov")
             gt_files = gr.CheckboxGroup(label=labels["gt_files"], choices=[], value=[])
             with gr.Row():
                 mode = gr.Radio(label=labels["mode"], choices=["time", "frame"], value="frame")
@@ -913,13 +837,9 @@ def build_app():
                     label=labels["robocap_end_frame"], value=0, precision=0
                 )
             export_default_offset_button = gr.Button(labels["set_default_offset_button"])
-            with gr.Row():
-                save_path = gr.Textbox(
-                    label=labels["save_path"], placeholder=r"D:\share\session48_frame_offset5.rrd"
-                )
-                mano_model_dir = gr.Textbox(
-                    label=labels["mano_model_dir"], value=r"Z:\MODELS\hand_models\mano"
-                )
+            save_path = gr.Textbox(
+                label=labels["save_path"], placeholder=r"D:\share\session48_frame_offset5.rrd"
+            )
             with gr.Row():
                 use_proxy = gr.Checkbox(label=labels["use_proxy"], value=True)
                 display = gr.Checkbox(label=labels["display"], value=False)
@@ -955,13 +875,11 @@ def build_app():
                     display,
                     gt_dir,
                     gt_files,
-                    retarget_model,
                     include_third_person,
                     third_person_video,
                     include_robowrist,
                     include_mag,
                     include_imu,
-                    mano_model_dir,
                     export_height,
                 ],
                 outputs=output,
@@ -1023,11 +941,9 @@ def build_app():
         with gr.Tab("环境 / Environment"):
             with gr.Row():
                 env_check_button = gr.Button(labels["env_check_button"], variant="primary")
-                env_update_check_button = gr.Button(labels["env_update_check_button"])
                 env_install_button = gr.Button(labels["env_install_button"])
             env_output = gr.Textbox(label=labels["env_output"], lines=22)
             env_check_button.click(check_environment, outputs=env_output)
-            env_update_check_button.click(check_remote_version, outputs=env_output)
             env_install_button.click(install_or_update_dependencies, outputs=env_output)
 
         with gr.Tab("文档 / Docs"):
@@ -1055,13 +971,11 @@ def build_app():
                 robocap_start_frame,
                 robocap_end_frame,
                 save_path,
-                mano_model_dir,
                 use_proxy,
                 display,
                 scan_button,
                 gt_dir,
                 gt_files,
-                retarget_model,
                 include_third_person,
                 third_person_video,
                 include_robowrist,
@@ -1080,7 +994,6 @@ def build_app():
                 offset_max,
                 sweep_button,
                 env_check_button,
-                env_update_check_button,
                 env_install_button,
                 env_output,
                 viewer_scan_button,
