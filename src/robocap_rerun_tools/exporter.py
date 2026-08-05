@@ -37,7 +37,7 @@ session 目录应当大致满足下面这种结构：
 目录结构如下：
 
     inspection/
-      <session-name>_<segment>_dual_hands.rrd
+      <session-name>_<segment>_<alignment>_aligned_<parameters>.rrd
     proxy/
       *.mp4
 
@@ -221,6 +221,12 @@ GT_THIRD_PERSON_VIDEO_ENTITY = "gt/third_person_video"
 GT_NOTE_ENTITY = "notes/gt"
 GT_FILE_SUFFIXES = frozenset({".bvh", ".trc", ".csv", ".xrs"})
 GT_DIRECTORY_IGNORES = frozenset({"_artifacts", ".venv"})
+
+# Saturated colors remain legible against Rerun's dark 3D background.
+GT_LEFT_SKELETON_COLOR = (24, 72, 255)
+GT_RIGHT_SKELETON_COLOR = (255, 45, 45)
+GT_GENERIC_SKELETON_COLOR = (0, 145, 255)
+GT_TRACKER_COLOR = (0, 220, 255)
 
 VIDEO_PATTERNS = {
     "left": "robocap_{segment}_video_left.mp4",
@@ -475,7 +481,7 @@ class GTMarkerTrack:
     positions: np.ndarray
     marker_names: tuple[str, ...]
     connections: tuple[tuple[int, int], ...] = ()
-    colors: tuple[int, int, int] = (255, 210, 80)
+    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR
     radius: float = 0.018
 
 
@@ -528,7 +534,7 @@ class GTFileSet:
     trc: Path | None = None
     csv: Path | None = None
     xrs: Path | None = None
-    colors: tuple[int, int, int] = (255, 210, 80)
+    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR
     radius: float = 0.014
     connect_hands: bool = False
 
@@ -809,7 +815,7 @@ def build_artifact_paths(session_dir: Path, config: SessionConfig) -> ArtifactPa
     root_dir = session_dir / "_artifacts" / config.segment_name
     proxy_dir = root_dir / "proxy"
     inspection_dir = root_dir / "inspection"
-    rrd_path = inspection_dir / f"{session_dir.name}_{config.segment_name}_dual_hands_with_GT.rrd"
+    rrd_path = inspection_dir / base_rrd_filename(session_dir, config)
     return ArtifactPaths(
         root_dir=root_dir,
         proxy_dir=proxy_dir,
@@ -821,10 +827,16 @@ def build_artifact_paths(session_dir: Path, config: SessionConfig) -> ArtifactPa
 def default_rrd_path(
     artifact_paths: ArtifactPaths, session_dir: Path, config: SessionConfig, alignment_mode: str
 ) -> Path:
-    return (
-        artifact_paths.inspection_dir
-        / f"{session_dir.name}_{config.segment_name}_dual_hands_with_GT_{alignment_mode}_aligned.rrd"
-    )
+    return artifact_paths.inspection_dir / base_rrd_filename(session_dir, config, alignment_mode)
+
+
+def base_rrd_filename(
+    session_dir: Path, config: SessionConfig, alignment_mode: str | None = None
+) -> str:
+    parts = [session_dir.name, config.segment_name]
+    if alignment_mode is not None:
+        parts.extend((alignment_mode, "aligned"))
+    return "_".join(parts) + ".rrd"
 
 
 def normalize_robocap_frame_range(
@@ -1803,7 +1815,7 @@ def load_marker_track_from_trc(
     scale: float,
     max_frames: int | None,
     marker_limit: int | None = None,
-    colors: tuple[int, int, int] = (255, 210, 80),
+    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
     radius: float = 0.018,
     connect_hands: bool = False,
 ) -> GTMarkerTrack:
@@ -1971,7 +1983,7 @@ def load_bvh_track(
     scale: float,
     max_frames: int | None,
     timestamps_ns: np.ndarray | None = None,
-    colors: tuple[int, int, int] = (255, 210, 80),
+    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
     radius: float = 0.014,
 ) -> GTMarkerTrack:
     track_timestamps_ns, joint_names, positions, parents = parse_bvh(
@@ -2160,7 +2172,7 @@ def load_csv_track(
     source: str,
     scale: float,
     max_frames: int | None,
-    colors: tuple[int, int, int] = (255, 210, 80),
+    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
     radius: float = 0.014,
 ) -> GTMarkerTrack:
     timestamps_ns, joint_names, positions, parents = parse_nokov_csv(path, scale, max_frames)
@@ -2185,7 +2197,7 @@ def load_xrs_track(
     source: str,
     scale: float,
     max_frames: int | None,
-    colors: tuple[int, int, int] = (80, 200, 255),
+    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
     radius: float = 0.014,
 ) -> GTMarkerTrack:
     timestamps_ns, joint_names, positions, parents = parse_xrs(path, scale, max_frames)
@@ -2595,15 +2607,16 @@ def infer_gt_side(path: Path) -> str | None:
 
 def gt_file_visual_style(path: Path) -> tuple[tuple[int, int, int], float, bool]:
     lowered = path.stem.lower()
-    if "tracker" in lowered or "head" in lowered or path.suffix.lower() in {".csv", ".xrs"}:
-        return (80, 200, 255), 0.035, False
-    if infer_gt_side(path) == "right":
-        return (255, 120, 90), 0.014, True
-    if infer_gt_side(path) == "left":
-        return (255, 210, 80), 0.014, True
+    if "tracker" in lowered or "head" in lowered:
+        return GT_TRACKER_COLOR, 0.035, False
+    side = infer_gt_side(path)
+    if side == "right":
+        return GT_RIGHT_SKELETON_COLOR, 0.014, True
+    if side == "left":
+        return GT_LEFT_SKELETON_COLOR, 0.014, True
     if "hand" in lowered:
-        return (170, 130, 255), 0.014, True
-    return (255, 210, 80), 0.014, False
+        return GT_GENERIC_SKELETON_COLOR, 0.014, True
+    return GT_GENERIC_SKELETON_COLOR, 0.014, False
 
 
 def discover_gt_file_sets(gt_dir: Path) -> list[GTFileSet]:
@@ -3037,12 +3050,14 @@ def log_gt_skeleton(
         timeline.set_time(int(timestamp_ns), frame_index)
         rr.log(
             f"{GT_SKELETON_ENTITY}/joints",
-            rr.Points3D(joints, radii=0.018, colors=[255, 210, 80]),
+            rr.Points3D(joints, radii=0.018, colors=list(GT_GENERIC_SKELETON_COLOR)),
         )
         rr.log(
             f"{GT_SKELETON_ENTITY}/bones",
             rr.LineStrips3D(
-                skeleton_bone_strips(joints, track.parents), radii=0.01, colors=[60, 180, 255]
+                skeleton_bone_strips(joints, track.parents),
+                radii=0.01,
+                colors=list(GT_GENERIC_SKELETON_COLOR),
             ),
         )
 

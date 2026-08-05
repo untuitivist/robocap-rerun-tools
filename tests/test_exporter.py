@@ -203,6 +203,39 @@ def test_rrd_name_fingerprint_changes_with_non_readable_export_parameter() -> No
     assert original != changed
 
 
+def test_default_rrd_names_do_not_include_legacy_dual_hands_gt_suffix(tmp_path: Path) -> None:
+    session_dir = tmp_path / "session39"
+    config = exporter.SessionConfig(segment_name="segment1", videos={}, signals={}, notes={})
+
+    artifacts = exporter.build_artifact_paths(session_dir, config)
+
+    assert artifacts.rrd_path.name == "session39_segment1.rrd"
+    assert (
+        exporter.default_rrd_path(artifacts, session_dir, config, "frame").name
+        == "session39_segment1_frame_aligned.rrd"
+    )
+
+
+def test_gt_visual_style_uses_vivid_side_colors_for_every_skeleton_format() -> None:
+    for suffix in (".bvh", ".trc", ".csv", ".xrs"):
+        left_color, _, _ = exporter.gt_file_visual_style(Path(f"Body0_Left{suffix}"))
+        right_color, _, _ = exporter.gt_file_visual_style(Path(f"Body0_Right{suffix}"))
+        assert left_color == exporter.GT_LEFT_SKELETON_COLOR
+        assert right_color == exporter.GT_RIGHT_SKELETON_COLOR
+
+    tracker_color, _, _ = exporter.gt_file_visual_style(Path("Tracker0.csv"))
+    assert tracker_color == exporter.GT_TRACKER_COLOR
+    assert exporter.GTMarkerTrack.__dataclass_fields__["colors"].default == (
+        exporter.GT_GENERIC_SKELETON_COLOR
+    )
+    assert (255, 210, 80) not in {
+        exporter.GT_LEFT_SKELETON_COLOR,
+        exporter.GT_RIGHT_SKELETON_COLOR,
+        exporter.GT_GENERIC_SKELETON_COLOR,
+        exporter.GT_TRACKER_COLOR,
+    }
+
+
 def test_parse_trc_reads_multiple_markers(tmp_path: Path) -> None:
     path = tmp_path / "Tracker0.trc"
     path.write_text(
