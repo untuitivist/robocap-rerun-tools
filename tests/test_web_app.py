@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 from robocap_rerun_tools import web_app
@@ -38,3 +39,41 @@ def test_check_environment_omits_repository_details(monkeypatch) -> None:
     assert "- remote:" not in report
     assert "- ffmpeg:" in report
     assert "- ffprobe:" in report
+
+
+def test_scan_files_reflects_detected_robowrist_streams(tmp_path) -> None:
+    gt_dir = tmp_path / "nokov"
+    gt_dir.mkdir()
+
+    without_wrist = web_app.scan_files(str(tmp_path), "segment1", str(gt_dir), True)
+
+    assert "Robowrist streams: 0" in without_wrist[0]
+    assert without_wrist[4]["value"] is False
+    assert without_wrist[4]["interactive"] is False
+
+    wrist_dir = tmp_path / "robowrist_device_left"
+    wrist_dir.mkdir()
+    (wrist_dir / "robowrist_segment1_video_left_down.mp4").write_bytes(b"")
+
+    preserved_off = web_app.scan_files(str(tmp_path), "segment1", str(gt_dir), False)
+    detected_on = web_app.scan_files(str(tmp_path), "segment1", str(gt_dir), True)
+
+    assert "Robowrist streams: 1" in detected_on[0]
+    assert preserved_off[4]["value"] is False
+    assert preserved_off[4]["interactive"] is True
+    assert detected_on[4]["value"] is True
+    assert detected_on[4]["interactive"] is True
+
+
+def test_scan_rrd_files_selects_newest_recording(tmp_path) -> None:
+    old_rrd = tmp_path / "a_old.rrd"
+    new_rrd = tmp_path / "z_new.rrd"
+    old_rrd.write_bytes(b"")
+    new_rrd.write_bytes(b"")
+    os.utime(old_rrd, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+    os.utime(new_rrd, ns=(1_800_000_000_000_000_000, 1_800_000_000_000_000_000))
+
+    _summary, update = web_app.scan_rrd_files(str(tmp_path))
+
+    assert update["value"] == str(new_rrd)
+    assert update["choices"] == [str(new_rrd), str(old_rrd)]

@@ -315,6 +315,9 @@ def test_web_viewer_port_falls_back_when_requested_port_is_unavailable(monkeypat
 
 def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None:
     captured: list[str] = []
+    wrist_dir = tmp_path / "robowrist_device_left"
+    wrist_dir.mkdir()
+    (wrist_dir / "robowrist_segment1_video_left_down.mp4").write_bytes(b"")
 
     def fake_run_cli(args: list[str]) -> str:
         captured.extend(args)
@@ -355,10 +358,24 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     assert captured[captured.index("--robocap-end-frame") + 1] == "20"
 
     captured.clear()
+    export_kwargs["include_robowrist"] = False
+    web_app.export_rrd(**export_kwargs)
+    assert "--no-robowrist" in captured
+
+    captured.clear()
+    export_kwargs["include_robowrist"] = True
     export_kwargs["limit_robocap_frames"] = False
     web_app.export_rrd(**export_kwargs)
     assert "--robocap-start-frame" not in captured
     assert "--robocap-end-frame" not in captured
+
+    captured.clear()
+    session_without_wrist = tmp_path / "without_wrist"
+    session_without_wrist.mkdir()
+    export_kwargs["session_dir"] = str(session_without_wrist)
+    result = web_app.export_rrd(**export_kwargs)
+    assert "--no-robowrist" in captured
+    assert result.startswith("Robowrist: no matching video or sensor streams")
 
 
 def test_hierarchical_nokov_csv_summary_uses_timestamp(tmp_path: Path) -> None:

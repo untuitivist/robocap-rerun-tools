@@ -71,12 +71,15 @@ On the export tab, use `Scan files` to populate the GT/NOKOV file list. You can 
 `.bvh`, `.trc`, `.csv`, and `.xrs` files enter the RRD, choose whether to include a third-person
 video, and choose whether robowrist, MAG, and IMU streams are included. The Web exporter records
 skeletons and rigid bodies without model retargeting; advanced retargeting remains available from
-the CLI. The `Environment` tab checks Python/package/tool versions and ffmpeg/ffprobe without
+the CLI. Scanning also detects standard robowrist video and sensor streams. If none exist, the
+robowrist checkbox is cleared and disabled, and the export is named with `rw0`. The `Environment`
+tab checks Python/package/tool versions and ffmpeg/ffprobe without
 showing or querying Git repository, branch, remote, or version information. It can also run
 `uv pip install -e ".[web]"` in a separate `cmd` window, close the current web process, print
 update logs there, and restart through `start_web.bat`.
 The `Viewer` tab can scan generated `.rrd` files under the current session and open a selected file
-in Rerun Web Viewer. The viewer runs in a separate `cmd` window so its logs stay visible.
+in Rerun Web Viewer. The newest RRD is selected by default. The viewer runs in a separate `cmd`
+window so its logs stay visible.
 Its port defaults to `0` (auto). A requested port is tested before launch; if Windows reserves it or
 another process already uses it, the UI selects an available localhost port and fills in the actual
 port. Rerun itself opens the connected recording URL in the default browser; the bare HTTP root only

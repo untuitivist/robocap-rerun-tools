@@ -27,6 +27,8 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 6. Use `Offset` when you need to inspect or sweep a video-to-NOKOV frame offset.
 
 The export controls can independently include or exclude MAG, IMU, robowrist, and third-person video data.
+`Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
+control is turned off and disabled instead of pretending that wrist data can be exported.
 Only GT formats that are present create tabs. BVH/TRC/CSV/XRS each have separate 3D views, while rigid
 bodies from one CSV/XRS source stay in one shared world. NOKOV millimetres are converted to metres, and
 the file's `BoneAxis` selects the matching up axis. The Web exporter records skeletons and rigid bodies
@@ -82,6 +84,8 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 6. 如果需要检查视频帧和 NOKOV 帧的偏移关系，用“Offset 检查”。
 
 导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。
+“扫描文件”会检测标准 robowrist 目录和数据流；没有检测到时会自动取消并禁用 robowrist 选项，
+不会继续显示一个实际无数据可导出的开启状态。
 只有实际存在的 GT 格式才会生成 tab。BVH/TRC/CSV/XRS 分别有独立的 3D 视图；同一 CSV/XRS
 中的多个刚体保留在同一个 3D 世界坐标系。NOKOV 毫米坐标会转换成米，并根据文件中的 `BoneAxis`
 选择向上轴。Web 导出固定记录骨骼和刚体，不执行模型重定向；不存在的骨骼或第三人称源不会创建占位窗口。
@@ -155,7 +159,7 @@ LANGUAGE_PACKS = {
         "gt_files": "GT files to include",
         "third_person_video": "Third-person video",
         "include_third_person": "Include third-person video",
-        "include_robowrist": "Include robowrist data",
+        "include_robowrist": "Include detected robowrist video and sensors",
         "include_mag": "Include MAG data",
         "include_imu": "Include IMU data",
         "export_height": "Proxy height",
@@ -209,7 +213,7 @@ LANGUAGE_PACKS = {
         "gt_files": "参与导出的 GT 文件",
         "third_person_video": "第三人称视频",
         "include_third_person": "包含第三人称视频",
-        "include_robowrist": "包含 robowrist 数据",
+        "include_robowrist": "包含检测到的 robowrist 视频与传感器",
         "include_mag": "包含 MAG 数据",
         "include_imu": "包含 IMU 数据",
         "export_height": "压缩视频高度",
@@ -442,8 +446,41 @@ def default_gt_dir(path: Path) -> Path | None:
         return None
 
 
-def scan_files(session_dir: str, gt_dir_value: str) -> tuple[str, object, str, str]:
+def detected_robowrist_streams(session_dir: Path, segment: str) -> tuple[str, ...]:
+    from robocap_rerun_tools.exporter import discover_session, robowrist_stream_labels
+
+    try:
+        config = discover_session(
+            session_dir,
+            optional_text(segment),
+            include_robowrist=True,
+            include_mag=True,
+            include_imu=True,
+        )
+    except (OSError, ValueError):
+        return ()
+    return robowrist_stream_labels(config)
+
+
+def scan_files(
+    session_dir: str,
+    segment: str,
+    gt_dir_value: str,
+    include_robowrist: bool,
+) -> tuple[str, object, str, str, object]:
     path = Path(session_path(session_dir))
+    robowrist_streams = detected_robowrist_streams(path, segment)
+    has_robowrist = bool(robowrist_streams)
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError(
+            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+        ) from exc
+    robowrist_update = gr.update(
+        value=bool(include_robowrist and has_robowrist),
+        interactive=has_robowrist,
+    )
     gt_dir = (
         Path(gt_dir_value.strip().strip('"'))
         if optional_text(gt_dir_value)
@@ -452,9 +489,10 @@ def scan_files(session_dir: str, gt_dir_value: str) -> tuple[str, object, str, s
     if gt_dir is None or not gt_dir.exists():
         return (
             "No single GT/NOKOV data directory found. Fill GT/NOKOV export dir manually.",
-            [],
+            gr.update(choices=[], value=[]),
             "",
             "",
+            robowrist_update,
         )
 
     gt_suffixes = {".bvh", ".trc", ".csv", ".xrs"}
@@ -475,23 +513,29 @@ def scan_files(session_dir: str, gt_dir_value: str) -> tuple[str, object, str, s
             f"GT files: {len(choices)}",
             f"Third-person video candidates: {len(videos)}",
             f"Robowrist folders: {robowrist_count}",
+            f"Robowrist streams: {len(robowrist_streams)}",
+            *(f"- {label}" for label in robowrist_streams),
         ]
     )
-    try:
-        import gradio as gr
-    except ImportError as exc:
-        raise RuntimeError(
-            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
-        ) from exc
-    return summary, gr.update(choices=choices, value=choices), str(gt_dir), third_person
+    return (
+        summary,
+        gr.update(choices=choices, value=choices),
+        str(gt_dir),
+        third_person,
+        robowrist_update,
+    )
 
 
 def scan_rrd_files(session_dir: str) -> tuple[str, object]:
     path = Path(session_path(session_dir))
     rrd_files = sorted(
-        file
-        for file in path.rglob("*.rrd")
-        if file.is_file() and ".venv" not in file.relative_to(path).parts
+        (
+            file
+            for file in path.rglob("*.rrd")
+            if file.is_file() and ".venv" not in file.relative_to(path).parts
+        ),
+        key=lambda file: (file.stat().st_mtime_ns, str(file).lower()),
+        reverse=True,
     )
     choices = [str(file) for file in rrd_files]
     summary = "\n".join(
@@ -666,7 +710,12 @@ def export_rrd(
     include_imu: bool,
     proxy_height: int,
 ) -> str:
-    args = ["export", session_path(session_dir), "--mode", mode]
+    resolved_session_dir = Path(session_path(session_dir))
+    robowrist_streams = (
+        detected_robowrist_streams(resolved_session_dir, segment) if include_robowrist else ()
+    )
+    effective_include_robowrist = bool(include_robowrist and robowrist_streams)
+    args = ["export", str(resolved_session_dir), "--mode", mode]
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
     if mode == "frame":
@@ -692,14 +741,19 @@ def export_rrd(
     if display:
         args.append("--display")
     args.extend(["--retarget-model", "none"])
-    if not include_robowrist:
+    if not effective_include_robowrist:
         args.append("--no-robowrist")
     if not include_mag:
         args.append("--no-mag")
     if not include_imu:
         args.append("--no-imu")
     args.extend(["--proxy-height", str(int(proxy_height))])
-    return run_cli(args)
+    result = run_cli(args)
+    if include_robowrist and not robowrist_streams:
+        return (
+            "Robowrist: no matching video or sensor streams; automatically excluded.\n\n" + result
+        )
+    return result
 
 
 def language_values(language: str) -> dict[str, str]:
@@ -855,8 +909,8 @@ def build_app():
                 )
             scan_button.click(
                 scan_files,
-                inputs=[session_dir, gt_dir],
-                outputs=[output, gt_files, gt_dir, third_person_video],
+                inputs=[session_dir, segment, gt_dir, include_robowrist],
+                outputs=[output, gt_files, gt_dir, third_person_video, include_robowrist],
             )
             export_button = gr.Button(labels["export_button"], variant="primary")
             export_button.click(

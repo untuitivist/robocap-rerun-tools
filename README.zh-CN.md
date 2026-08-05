@@ -115,14 +115,16 @@ http://127.0.0.1:7860
 在“导出 RRD / Export”页先点“扫描文件”，网页会列出 GT/NOKOV 目录下的
 `.bvh`、`.trc`、`.csv`、`.xrs` 文件。你可以勾选哪些文件进入 RRD，也可以选择是否包含第三人称视频、
 是否包含 robowrist、MAG 和 IMU 数据。Web 导出固定记录骨骼和刚体，不执行模型重定向；高级重定向参数
-仍可通过 CLI 使用。
+仍可通过 CLI 使用。扫描时还会检测标准 robowrist 视频与传感器数据；没有检测到时，robowrist 复选框会
+自动取消并禁用，导出文件名使用 `rw0`，不会再用 `rw1` 表示不存在的数据。
 
 “环境 / Environment”页可以检查 Python、Python 包和 ffmpeg/ffprobe，但不会显示或查询 Git 仓库、
 分支、远端与版本信息。它也可以运行 `uv pip install -e ".[web]"` 安装或更新依赖；依赖更新会打开
 一个新的 `cmd` 窗口，先关闭当前 web 进程，再打印更新日志，最后通过 `start_web.bat` 自动重启。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
-打开。Viewer 会在独立 `cmd` 窗口里运行，方便查看 Rerun 自己的日志。
+打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`
+窗口里运行，方便查看 Rerun 自己的日志。
 端口默认填 `0`，表示自动选择。指定端口如果被 Windows 保留或已被其他程序占用，网页会自动改用
 可绑定的本机端口并回填实际端口。Rerun 会在默认浏览器中自动打开已连接 recording 的完整地址；
 不要单独打开 HTTP 根地址，根地址只会显示 Rerun 欢迎页。

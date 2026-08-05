@@ -174,6 +174,18 @@ SIGNAL_SLOT_ORDER = (
     "right_wrist_gyro",
 )
 
+ROBOWRIST_VIDEO_LABELS = frozenset({"left_wrist_down", "right_wrist_down"})
+ROBOWRIST_SIGNAL_LABELS = frozenset(
+    {
+        "left_wrist_mag",
+        "left_wrist_acc",
+        "left_wrist_gyro",
+        "right_wrist_mag",
+        "right_wrist_acc",
+        "right_wrist_gyro",
+    }
+)
+
 DEFAULT_SKELETON_PARENTS = (
     -1,
     0,
@@ -728,6 +740,20 @@ def detect_segment_name(videos: dict[str, VideoSpec], signals: dict[str, SignalS
     return next(iter(candidates))
 
 
+def robowrist_stream_labels(config: SessionConfig) -> tuple[str, ...]:
+    video_labels = (
+        label
+        for label in VIDEO_SLOT_ORDER
+        if label in ROBOWRIST_VIDEO_LABELS and label in config.videos
+    )
+    signal_labels = (
+        label
+        for label in SIGNAL_SLOT_ORDER
+        if label in ROBOWRIST_SIGNAL_LABELS and label in config.signals
+    )
+    return (*video_labels, *signal_labels)
+
+
 def discover_session(
     session_dir: Path,
     segment_name: str | None = None,
@@ -740,7 +766,7 @@ def discover_session(
     notes: dict[str, NoteSpec] = {}
 
     for label, pattern in VIDEO_PATTERNS.items():
-        if not include_robowrist and "wrist" in label:
+        if not include_robowrist and label in ROBOWRIST_VIDEO_LABELS:
             continue
         pattern = pattern.format(segment=segment_name or "*")
         relative_path = find_first_relative_path(session_dir, pattern)
@@ -752,7 +778,7 @@ def discover_session(
             )
 
     for label, (pattern, table, columns) in SIGNAL_SPECS.items():
-        if not include_robowrist and "wrist" in label:
+        if not include_robowrist and label in ROBOWRIST_SIGNAL_LABELS:
             continue
         if not include_mag and label.endswith("_mag"):
             continue
@@ -3863,7 +3889,7 @@ def main() -> None:
         bvh_coordinate_scale=args.bvh_coordinate_scale,
         gt_time_offset_ns=args.gt_time_offset_ns,
         gt_max_frames=args.gt_max_frames,
-        include_robowrist=not args.no_robowrist,
+        include_robowrist=bool(robowrist_stream_labels(config)),
         include_mag=not args.no_mag,
         include_imu=not args.no_imu,
         gt_dir=str(args.gt_dir) if args.gt_dir is not None else None,

@@ -14,6 +14,7 @@ from robocap_rerun_tools.exporter import (
     parse_trc,
     parse_xrs,
     robocap_sensors_container,
+    robowrist_stream_labels,
     synthesize_frame_aligned_timestamps,
 )
 
@@ -595,6 +596,33 @@ def test_discover_session_can_exclude_mag_and_imu_streams(tmp_path: Path) -> Non
     without_imu = discover_session(tmp_path, "segment1", include_imu=False)
     assert "middle_mag" in without_imu.signals
     assert not any(label.endswith(("_acc", "_gyro")) for label in without_imu.signals)
+
+
+def test_discover_session_can_exclude_all_robowrist_streams(tmp_path: Path) -> None:
+    (tmp_path / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    left_dir = tmp_path / "robowrist_device_left"
+    right_dir = tmp_path / "robowrist_device_right"
+    left_dir.mkdir()
+    right_dir.mkdir()
+    for directory, side in ((left_dir, "left"), (right_dir, "right")):
+        (directory / f"robowrist_segment1_video_{side}_down.mp4").write_bytes(b"")
+        (directory / f"robowrist_segment1_mag_{side}.db").write_bytes(b"")
+        (directory / f"robowrist_segment1_imu_{side}.db").write_bytes(b"")
+
+    included = discover_session(tmp_path, "segment1", include_robowrist=True)
+    excluded = discover_session(tmp_path, "segment1", include_robowrist=False)
+
+    assert robowrist_stream_labels(included) == (
+        "left_wrist_down",
+        "right_wrist_down",
+        "left_wrist_mag",
+        "left_wrist_acc",
+        "left_wrist_gyro",
+        "right_wrist_mag",
+        "right_wrist_acc",
+        "right_wrist_gyro",
+    )
+    assert robowrist_stream_labels(excluded) == ()
 
 
 def test_robocap_sensor_layout_spans_mag_across_two_imu_rows(tmp_path: Path) -> None:
