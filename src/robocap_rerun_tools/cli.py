@@ -35,6 +35,7 @@ class StreamSummary:
     max_dt_ms: float | None
     abnormal_count: int
     abnormal_reason: str
+    dropped_frames: int | None = None
     stream: str = ""
     time_basis: str = ""
 
@@ -332,13 +333,33 @@ def summarize_times(path: Path, kind: str, times_s: list[float]) -> StreamSummar
         )
     med = statistics.median(diffs_ms)
     fps = 1000.0 / med if med > 0 else None
-    tolerance = max(2.0, med * 0.2)
-    abnormal = [d for d in diffs_ms if abs(d - med) > tolerance]
+    tolerance = max(2.0, med * 0.25)
+    dropped_frame_intervals = []
+    other_abnormal = []
+    for d in diffs_ms:
+        if d <= med * 1.5:
+            if abs(d - med) > tolerance:
+                other_abnormal.append(d)
+            continue
+        multiples = round(d / med)
+        if multiples >= 2 and abs(d - multiples * med) <= tolerance:
+            dropped_frame_intervals.append(d)
+        else:
+            other_abnormal.append(d)
+
     reasons = []
     if non_positive:
         reasons.append(f"{len(non_positive)} non-increasing timestamp intervals")
-    if abnormal:
-        reasons.append(f"{len(abnormal)} intervals differ from median by > max(2ms, 20%)")
+    if dropped_frame_intervals:
+        dropped_count = len(dropped_frame_intervals)
+        estimated_dropped = sum(max(1, round(d / med) - 1) for d in dropped_frame_intervals)
+        reasons.append(
+            f"{dropped_count} likely dropped-frame intervals (estimated {estimated_dropped} missing frames)"
+        )
+    if other_abnormal:
+        reasons.append(
+            f"{len(other_abnormal)} intervals differ from median by > max(2ms, 25%) (non-dropped jitter)"
+        )
     return StreamSummary(
         path,
         kind,
@@ -349,8 +370,9 @@ def summarize_times(path: Path, kind: str, times_s: list[float]) -> StreamSummar
         med,
         min(diffs_ms),
         max(diffs_ms),
-        len(non_positive) + len(abnormal),
+        len(non_positive) + len(dropped_frame_intervals) + len(other_abnormal),
         "; ".join(reasons),
+        dropped_frames=estimated_dropped if dropped_frame_intervals else 0,
     )
 
 
@@ -418,7 +440,19 @@ def bvh_summary(path: Path) -> StreamSummary:
     fps = 1.0 / frame_time if frame_time > 0 else None
     end_s = (frames - 1) * frame_time if frames > 0 else None
     dt_ms = frame_time * 1000.0
-    return StreamSummary(path, "bvh", frames, fps, 0.0, end_s, dt_ms, dt_ms, dt_ms, 0, "")
+    return StreamSummary(
+        path,
+        "bvh",
+        frames,
+        fps,
+        0.0,
+        end_s,
+        dt_ms,
+        dt_ms,
+        dt_ms,
+        0,
+        "",
+    )
 
 
 def csv_summary(path: Path) -> StreamSummary:
@@ -908,6 +942,47 @@ def inspection_files(session_dir: Path, segment: str | None) -> list[Path]:
     ]
 
 
+def reference_robocap_frame_count(
+    session_dir: Path, summaries: Iterable[StreamSummary]
+) -> int | None:
+    robocap_videos: list[StreamSummary] = []
+    for item in summaries:
+        if item.kind != "video" or item.frame_count is None:
+            continue
+        rel = (
+            item.path.relative_to(session_dir)
+            if item.path.is_relative_to(session_dir)
+            else item.path
+        )
+        if infer_fps_source(rel, item.kind) == "robocap":
+            robocap_videos.append(item)
+    if not robocap_videos:
+        return None
+    preferred = [
+        item
+        for item in robocap_videos
+        if item.path.name.lower().endswith("video_left.mp4") or item.path.name.lower() == "left.mp4"
+    ]
+    return (preferred or robocap_videos)[0].frame_count
+
+
+def expected_frame_count(
+    source: str,
+    kind: str,
+    stream: str,
+    reference_robocap_frames: int | None,
+) -> int | None:
+    if reference_robocap_frames is None or reference_robocap_frames < 0:
+        return None
+    if stream == "third_person_video":
+        return reference_robocap_frames + 1
+    if source == "robocap" and kind == "video":
+        return reference_robocap_frames
+    if source == "gt" and kind.lower() in GT_FPS_KINDS:
+        return 8 * (reference_robocap_frames + 1)
+    return None
+
+
 def write_inspection(
     session_dir: Path, segment: str | None, summaries: list[StreamSummary], out_dir: Path
 ) -> FrameRatioEstimate | None:
@@ -920,6 +995,9 @@ def write_inspection(
     ratio_estimate = estimate_frame_ratio(
         fps_records, "frame_rate_report.md", report_path=report_path
     )
+    reference_n = reference_robocap_frame_count(session_dir, summaries)
+    expected_mocap = 8 * (reference_n + 1) if reference_n is not None else None
+    expected_third = reference_n + 1 if reference_n is not None else None
     rows = [
         [
             "path",
@@ -928,6 +1006,8 @@ def write_inspection(
             "time_basis",
             "source",
             "frames",
+            "expected_frames",
+            "delta_frames",
             "fps",
             "start_s",
             "end_s",
@@ -936,9 +1016,15 @@ def write_inspection(
             "min_dt_ms",
             "max_dt_ms",
             "abnormal_intervals",
+            "dropped_frames",
             "abnormal_reason",
         ]
     ]
+    known_dropped = [item.dropped_frames for item in summaries if item.dropped_frames is not None]
+    unknown_dropped = sum(1 for item in summaries if item.dropped_frames is None)
+    dropped_total_text = str(sum(known_dropped)) if known_dropped else "n/a"
+    if unknown_dropped:
+        dropped_total_text += f" (n/a for {unknown_dropped} streams)"
     md = [
         f"# Robocap/NOKOV inspection",
         "",
@@ -947,9 +1033,14 @@ def write_inspection(
         f"- third_person_videos: {sum(item.stream == 'third_person_video' for item in summaries)}",
         f"- imu_streams: {sum(item.kind.startswith('imu_') for item in summaries)}",
         f"- mag_streams: {sum(item.kind == 'mag' for item in summaries)}",
+        f"- dropped_frames_total: {dropped_total_text}",
+        f"- reference_robocap_frames: {fmt(reference_n)}",
+        f"- expected_frames_formula: robocap=n, mocap=8*(n+1), third_person_video=n+1",
+        f"- expected_mocap_frames: {fmt(expected_mocap)}",
+        f"- expected_third_person_video_frames: {fmt(expected_third)}",
         "",
-        "| file | kind | stream | time_basis | source | frames | fps | start_s | end_s | median_dt_ms | abnormal |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| file | kind | stream | time_basis | source | frames | expected | delta | fps | start_s | end_s | median_dt_ms | abnormal | dropped |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for item in summaries:
         rel = (
@@ -963,6 +1054,12 @@ def write_inspection(
             else None
         )
         source = infer_fps_source(rel, item.kind)
+        expected = expected_frame_count(source, item.kind, item.stream, reference_n)
+        delta = (
+            item.frame_count - expected
+            if item.frame_count is not None and expected is not None
+            else None
+        )
         rows.append(
             [
                 str(rel),
@@ -971,6 +1068,8 @@ def write_inspection(
                 item.time_basis,
                 source,
                 fmt(item.frame_count),
+                fmt(expected),
+                fmt(delta),
                 fmt(item.fps, 9),
                 fmt(item.start_s, 6),
                 fmt(item.end_s, 6),
@@ -979,15 +1078,16 @@ def write_inspection(
                 fmt(item.min_dt_ms, 6),
                 fmt(item.max_dt_ms, 6),
                 str(item.abnormal_count),
+                ("n/a" if item.dropped_frames is None else str(item.dropped_frames)),
                 item.abnormal_reason,
             ]
         )
         md.append(
             f"| `{rel}` | {item.kind} | {item.stream} | {item.time_basis} | {source} | "
-            f"{fmt(item.frame_count)} | "
+            f"{fmt(item.frame_count)} | {fmt(expected)} | {fmt(delta)} | "
             f"{fmt(item.fps, 9)} | "
             f"{fmt(item.start_s, 3)} | {fmt(item.end_s, 3)} | {fmt(item.median_dt_ms, 3)} | "
-            f"{item.abnormal_count} |"
+            f"{item.abnormal_count} | {('n/a' if item.dropped_frames is None else str(item.dropped_frames))} |"
         )
     md.extend(["", "## Auto frame ratio", ""])
     if ratio_estimate is None:
@@ -1019,6 +1119,21 @@ def write_inspection(
             md.append(f"- `{rel}` [{stream}]: {item.abnormal_reason or 'summary unavailable'}")
     else:
         md.append("- No abnormal stream intervals detected by the median-delta rule.")
+    unavailable = [s for s in summaries if s.dropped_frames is None]
+    md.extend(["", "## Dropped-frame detection unavailable", ""])
+    if unavailable:
+        for item in unavailable:
+            rel = (
+                item.path.relative_to(session_dir)
+                if item.path.is_relative_to(session_dir)
+                else item.path
+            )
+            stream = item.stream or item.kind
+            md.append(
+                f"- `{rel}` [{stream}]: interval timestamps unavailable, dropped-frame estimate not computed"
+            )
+    else:
+        md.append("- None")
     write_text(report_path, "\n".join(md) + "\n")
     with (out_dir / "frame_rate_report.tsv").open("w", encoding="utf-8", newline="") as f:
         csv.writer(f, delimiter="\t").writerows(rows)

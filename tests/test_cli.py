@@ -26,6 +26,32 @@ from robocap_rerun_tools.alignment import round_positive_ratio
 from robocap_rerun_tools.data_packager import discover_package_files
 
 
+def make_inspection_summary(
+    path: Path | str,
+    kind: str,
+    frames: int | None,
+    stream: str = "",
+    fps: float | None = None,
+) -> cli.StreamSummary:
+    dt_ms = 1000.0 / fps if fps else None
+    end_s = (frames - 1) / fps if frames is not None and fps else None
+    return cli.StreamSummary(
+        Path(path),
+        kind,
+        frames,
+        fps,
+        0.0,
+        end_s,
+        dt_ms,
+        dt_ms,
+        dt_ms,
+        0,
+        "",
+        dropped_frames=0,
+        stream=stream,
+    )
+
+
 def test_export_parser_accepts_frame_offset() -> None:
     parser = build_parser()
     args = parser.parse_args(
@@ -325,8 +351,25 @@ def test_sqlite_sensor_summary_checks_each_imu_and_mag_table(tmp_path: Path) -> 
     assert abs((by_stream["acc_data"].fps or 0.0) - 200.0) < 1e-6
     assert by_stream["acc_data"].abnormal_count == 0
     assert by_stream["gyro_data"].abnormal_count == 1
-    assert "differ from median" in by_stream["gyro_data"].abnormal_reason
+    assert by_stream["gyro_data"].dropped_frames == 3
+    assert "likely dropped-frame intervals" in by_stream["gyro_data"].abnormal_reason
     assert by_stream["acc_data"].time_basis.startswith("timestamp")
+
+
+def test_summarize_times_counts_dropped_frames(tmp_path: Path) -> None:
+    dropped_one = cli.summarize_times(
+        tmp_path / "one.trc", "trc", [0.0, 0.0167, 0.0333, 0.0667, 0.0833, 0.1000]
+    )
+    dropped_two = cli.summarize_times(
+        tmp_path / "two.trc", "trc", [0.0, 0.0167, 0.0333, 0.0833, 0.1000]
+    )
+
+    assert dropped_one.dropped_frames == 1
+    assert dropped_one.abnormal_count == 1
+    assert "likely dropped-frame intervals" in dropped_one.abnormal_reason
+    assert "estimated 1 missing frames" in dropped_one.abnormal_reason
+    assert dropped_two.dropped_frames == 2
+    assert "estimated 2 missing frames" in dropped_two.abnormal_reason
 
 
 def test_video_capture_start_uses_mp4_comment_microseconds() -> None:
@@ -368,6 +411,36 @@ def test_video_summary_keeps_average_fps_and_checks_real_frame_intervals(
     assert summary.end_s == 10.1
     assert summary.stream == "third_person_video"
     assert summary.time_basis.startswith("capture_time")
+
+
+def test_video_summary_reports_dropped_frames(tmp_path: Path, monkeypatch) -> None:
+    class FakeAssetVideo:
+        def __init__(self, path: Path):
+            self.path = path
+
+        def read_frame_timestamps_nanos(self):
+            return [0, 33_000_000, 66_000_000, 99_000_000, 165_000_000, 198_000_000]
+
+    class FakeRerun:
+        AssetVideo = FakeAssetVideo
+
+    monkeypatch.setitem(sys.modules, "rerun", FakeRerun)
+    monkeypatch.setattr(
+        cli,
+        "ffprobe_video",
+        lambda path, ffprobe: (
+            {
+                "streams": [{"avg_frame_rate": "30000/1001", "nb_frames": "6"}],
+                "format": {"duration": "0.2", "tags": {"comment": "10000000"}},
+            },
+            None,
+        ),
+    )
+
+    summary = cli.video_summary(tmp_path / "third-person.mp4", "ffprobe")
+
+    assert summary.dropped_frames == 1
+    assert "likely dropped-frame intervals" in summary.abnormal_reason
 
 
 def test_choose_time_column_accepts_common_tracker_names() -> None:
@@ -548,6 +621,103 @@ def test_hierarchical_nokov_csv_summary_uses_timestamp(tmp_path: Path) -> None:
     summary = csv_summary(path)
     assert summary.frame_count == 3
     assert abs((summary.fps or 0) - 90.909) < 0.01
+
+
+def test_expected_frame_counts_use_reference_robocap_n(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    (session / "nokov").mkdir(parents=True)
+    summaries = [
+        make_inspection_summary(
+            session / "robocap_segment1_video_left.mp4", "video", 50, "robocap_video", 30.0
+        ),
+        make_inspection_summary(
+            session / "robocap_segment1_video_right.mp4", "video", 50, "robocap_video", 30.0
+        ),
+        make_inspection_summary(session / "nokov" / "motion.trc", "trc", 408, "", 60.0),
+        make_inspection_summary(
+            session / "nokov" / "capture-1.mp4", "video", 51, "third_person_video", 30.0
+        ),
+    ]
+
+    n = cli.reference_robocap_frame_count(session, summaries)
+
+    assert n == 50
+    assert cli.expected_frame_count("robocap", "video", "robocap_video", n) == 50
+    assert cli.expected_frame_count("gt", "trc", "", n) == 408
+    assert cli.expected_frame_count("gt", "video", "third_person_video", n) == 51
+
+
+def test_write_inspection_includes_expected_frame_counts(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    (session / "nokov").mkdir(parents=True)
+    summaries = [
+        make_inspection_summary(
+            session / "robocap_segment1_video_left.mp4", "video", 50, "robocap_video", 30.0
+        ),
+        make_inspection_summary(session / "nokov" / "motion.trc", "trc", 400, "", 60.0),
+        make_inspection_summary(
+            session / "nokov" / "capture-1.mp4", "video", 52, "third_person_video", 30.0
+        ),
+    ]
+    out = tmp_path / "inspection"
+
+    cli.write_inspection(session, "segment1", summaries, out)
+    md = (out / "frame_rate_report.md").read_text(encoding="utf-8")
+
+    assert "- reference_robocap_frames: 50" in md
+    assert "- expected_mocap_frames: 408" in md
+    assert "- expected_third_person_video_frames: 51" in md
+    assert "| 50 | 50 | 0 |" in md
+    assert "| 400 | 408 | -8 |" in md
+    assert "| 52 | 51 | 1 |" in md
+    assert "## Dropped-frame detection unavailable" in md
+    assert "- None" in md
+
+
+def test_bvh_summary_marks_dropped_detection_unavailable(tmp_path: Path) -> None:
+    path = tmp_path / "motion.bvh"
+    content = (
+        "HIERARCHY\r\n"
+        "ROOT root\r\n"
+        "{\r\n"
+        " OFFSET 0 0 0\r\n"
+        " CHANNELS 3 Xposition Yposition Zposition\r\n"
+        "}\r\n"
+        "MOTION\r\n"
+        "Frames: 3\r\n"
+        "Frame Time: 0.0166667\r\n"
+    )
+    path.write_text(content, encoding="utf-8", newline="")
+
+    summary = cli.bvh_summary(path)
+
+    assert summary.frame_count == 3
+    assert summary.dropped_frames is None
+    assert summary.abnormal_reason == ""
+
+
+def test_trc_summary_reports_dropped_frames(tmp_path: Path) -> None:
+    path = tmp_path / "Tracker0.trc"
+    content = (
+        "PathFileType\t4\t(X/Y/Z)\tD:/Tracker0.trc\r\n"
+        "DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\r\n"
+        "60\t60\t6\t1\tmm\r\n"
+        "Frame#\tTime\tMarker1\t\t\r\n"
+        "\t\tX1\tY1\tZ1\r\n"
+        "1\t0.000\t1\t2\t3\r\n"
+        "2\t0.0167\t4\t5\t6\r\n"
+        "3\t0.0333\t7\t8\t9\r\n"
+        "4\t0.0667\t10\t11\t12\r\n"
+        "5\t0.0833\t13\t14\t15\r\n"
+        "6\t0.1000\t16\t17\t18\r\n"
+    )
+    path.write_text(content, encoding="utf-8", newline="")
+
+    summary = trc_summary(path)
+
+    assert summary.frame_count == 6
+    assert summary.dropped_frames == 1
+    assert "likely dropped-frame intervals" in summary.abnormal_reason
 
 
 def test_trc_summary_tolerates_gbk_path_metadata(tmp_path: Path) -> None:
