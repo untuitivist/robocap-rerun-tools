@@ -144,8 +144,10 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --seg
 
 The display layout keeps:
 
-- Top video row: `left/right`, `left_eye/right_eye`, `left_front/right_front`.
-- Robocap sensors: `middle_mag` spans both rows; left `acc/gyro` share one row and right `acc/gyro` share the other.
+- Top video row: `left/right`, `left_eye/right_eye`, `left_front/right_front`; when
+  robowrist is enabled and present, `left_wrist_down/right_wrist_down` is added.
+- Sensor row: Robocap sensors plus optional left/right wrist MAG/IMU rows. `middle_mag`
+  spans both Robocap IMU rows; left `acc/gyro` share one row and right `acc/gyro` share the other.
 - Bottom row views for the GT formats that are actually present. Multiple rigid bodies from one
   XRS/CSV file are shown in the same 3D space for that format. Skeleton and mesh sources use
   separate format tabs, with the third-person video beside them. Missing formats do not create

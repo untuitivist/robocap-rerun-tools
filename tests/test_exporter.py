@@ -13,6 +13,8 @@ from robocap_rerun_tools.exporter import (
     parse_nokov_csv,
     parse_trc,
     parse_xrs,
+    display_sensors_container,
+    display_videos_container,
     robocap_sensors_container,
     robowrist_stream_labels,
     synthesize_frame_aligned_timestamps,
@@ -763,3 +765,54 @@ def test_robocap_sensor_layout_is_omitted_without_mag_or_imu(tmp_path: Path) -> 
 
     assert robocap_sensors_container(config) is None
     assert exporter.all_signals_container(config) is None
+
+
+def _write_display_session_files(tmp_path: Path) -> None:
+    for name in (
+        "robocap_segment1_video_left.mp4",
+        "robocap_segment1_video_left_eye.mp4",
+        "robocap_segment1_video_left_front.mp4",
+        "robocap_segment1_video_right.mp4",
+        "robocap_segment1_video_right_eye.mp4",
+        "robocap_segment1_video_right_front.mp4",
+        "robocap_segment1_mag_middle.db",
+        "robocap_segment1_imu_left.db",
+        "robocap_segment1_imu_right.db",
+    ):
+        (tmp_path / name).write_bytes(b"")
+    for side in ("left", "right"):
+        wrist_dir = tmp_path / f"robowrist_device_{side}"
+        wrist_dir.mkdir()
+        (wrist_dir / f"robowrist_segment1_video_{side}_down.mp4").write_bytes(b"")
+        (wrist_dir / f"robowrist_segment1_mag_{side}.db").write_bytes(b"")
+        (wrist_dir / f"robowrist_segment1_imu_{side}.db").write_bytes(b"")
+
+
+def test_display_layout_renders_robowrist_only_when_enabled(tmp_path: Path) -> None:
+    _write_display_session_files(tmp_path)
+
+    included = discover_session(tmp_path, "segment1", include_robowrist=True)
+    videos = display_videos_container(included)
+    sensors = display_sensors_container(included)
+    assert [column.name for column in videos.contents] == [
+        "left / right",
+        "left eye / right eye",
+        "left front / right front",
+        "left wrist / right wrist",
+    ]
+    assert [row.name for row in sensors.contents] == [
+        "Robocap sensors only",
+        "Robowrist sensors",
+    ]
+    exporter.build_display_blueprint(included)
+
+    excluded = discover_session(tmp_path, "segment1", include_robowrist=False)
+    videos = display_videos_container(excluded)
+    sensors = display_sensors_container(excluded)
+    assert [column.name for column in videos.contents] == [
+        "left / right",
+        "left eye / right eye",
+        "left front / right front",
+    ]
+    assert [row.name for row in sensors.contents] == ["Robocap sensors only"]
+    exporter.build_display_blueprint(excluded)

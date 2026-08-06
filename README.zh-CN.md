@@ -213,8 +213,8 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --seg
 
 展示版布局会保留：
 
-- 第一行：Robocap 三组视频列，分别是 left/right、left_eye/right_eye、left_front/right_front。
-- 第二行：Robocap sensors；`middle_mag` 跨两行，左手 `acc/gyro` 同一行，右手 `acc/gyro` 同一行。
+- 第一行：Robocap 三组视频列，分别是 left/right、left_eye/right_eye、left_front/right_front；当勾选并检测到 robowrist 时，额外加入 left_wrist_down/right_wrist_down 视频列。
+- 第二行：Robocap sensors + 可选的左/右 wrist MAG/IMU 行；`middle_mag` 跨两行，左手 `acc/gyro` 同一行，右手 `acc/gyro` 同一行。
 - 第三行：实际存在的 BVH、TRC、CSV、XRS 分别进入骨骼 tabs 和 mesh tabs，旁边显示第三人称视频。不会为空缺格式创建占位 tab。
 
 NOKOV 导出的坐标默认按毫米读取，并用 `0.001` 转换为 Rerun 中的米。脚本还会读取文件头的

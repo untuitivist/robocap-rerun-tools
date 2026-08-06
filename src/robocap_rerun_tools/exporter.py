@@ -3365,6 +3365,42 @@ def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None
     return rrb.Horizontal(*columns, column_shares=column_shares, name="Robocap sensors only")
 
 
+def wrist_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
+    rows: list[rrb.ContainerLike] = []
+    row_shares: list[float] = []
+    for name, labels in (
+        ("Left wrist sensors", ("left_wrist_mag", "left_wrist_acc", "left_wrist_gyro")),
+        ("Right wrist sensors", ("right_wrist_mag", "right_wrist_acc", "right_wrist_gyro")),
+    ):
+        views = [
+            view for label in labels if (view := available_signal_view(config, label)) is not None
+        ]
+        if views:
+            rows.append(
+                rrb.Horizontal(*views, column_shares=[1.0 for _ in views], name=name)
+            )
+            row_shares.append(1.0)
+    if not rows:
+        return None
+    return rrb.Vertical(*rows, row_shares=row_shares, name="Robowrist sensors")
+
+
+def display_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
+    robocap_overview = robocap_sensors_container(config)
+    wrist_overview = wrist_sensors_container(config)
+    if robocap_overview is None and wrist_overview is None:
+        return None
+    rows: list[rrb.ContainerLike] = []
+    row_shares: list[float] = []
+    if robocap_overview is not None:
+        rows.append(robocap_overview)
+        row_shares.append(1.6)
+    if wrist_overview is not None:
+        rows.append(wrist_overview)
+        row_shares.append(1.0)
+    return rrb.Vertical(*rows, row_shares=row_shares, name="Display sensors")
+
+
 def all_signals_container(config: SessionConfig) -> rrb.ContainerLike | None:
     views = [
         view
@@ -3382,6 +3418,7 @@ def display_videos_container(config: SessionConfig) -> rrb.ContainerLike:
         ("left / right", ("left", "right")),
         ("left eye / right eye", ("left_eye", "right_eye")),
         ("left front / right front", ("left_front", "right_front")),
+        ("left wrist / right wrist", ("left_wrist_down", "right_wrist_down")),
     ):
         views = [
             view for label in labels if (view := available_video_view(config, label)) is not None
@@ -3415,7 +3452,7 @@ def build_display_blueprint(
 ) -> rrb.Blueprint:
     rows: list[rrb.ContainerLike] = [display_videos_container(config)]
     row_shares = [2.4]
-    sensor_overview = robocap_sensors_container(config)
+    sensor_overview = display_sensors_container(config)
     if sensor_overview is not None:
         rows.append(sensor_overview)
         row_shares.append(1.6)
@@ -3610,7 +3647,7 @@ def parse_args() -> argparse.Namespace:
         "--blueprint-preset",
         choices=("default", "display"),
         default="default",
-        help="Blueprint layout preset. display uses 3 video columns, robocap sensors only, and BVH/CSV/TRC skeleton row.",
+        help="Blueprint layout preset. display uses compact Robocap video/sensor rows and adds robowrist streams when enabled.",
     )
     parser.add_argument(
         "--gt-skeleton",
