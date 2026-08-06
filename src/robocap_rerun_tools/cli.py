@@ -62,6 +62,16 @@ class FrameRatioEstimate:
     ratio: int
 
 
+@dataclass(frozen=True)
+class FrameMissingDetail:
+    path: Path
+    kind: str
+    expected_frames: int | None
+    actual_frames: int | None
+    missing_ids: tuple[int, ...]
+    missing_timestamp_ids: tuple[int, ...] = ()
+
+
 def write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
@@ -473,12 +483,21 @@ def csv_summary(path: Path) -> StreamSummary:
             )
         time_col = choose_time_column(reader.fieldnames)
         if time_col is None:
-            hierarchical = hierarchical_csv_times(path)
-            if hierarchical is None:
+            metadata = hierarchical_csv_metadata(path)
+            if metadata is None:
                 return StreamSummary(
                     path, "csv", None, None, None, None, None, None, None, 1, "no known time column"
                 )
-            return summarize_times(path, "csv", hierarchical)
+            hierarchical_times, missing_timestamps, num_frames = metadata
+            summary = summarize_times(path, "csv", hierarchical_times)
+            if num_frames is not None:
+                summary = replace(summary, frame_count=num_frames)
+            reasons = (
+                [f"{missing_timestamps} rows have missing/zero Timestamp values"]
+                if missing_timestamps
+                else []
+            )
+            return with_summary_details(summary, reasons=reasons)
         raw = [row.get(time_col, "") for row in reader]
     vals = numeric(raw)
     times = normalize_time_values(vals, time_col)
@@ -503,7 +522,7 @@ def normalize_time_values(vals: list[float], column_name: str) -> list[float]:
     return vals
 
 
-def hierarchical_csv_times(path: Path) -> list[float] | None:
+def hierarchical_csv_metadata(path: Path) -> tuple[list[float], int, int | None] | None:
     with open_csv(path) as f:
         rows = list(csv.reader(f))
     header_index = None
@@ -517,53 +536,355 @@ def hierarchical_csv_times(path: Path) -> list[float] | None:
             break
     if header_index is None or time_index is None:
         return None
+    num_frames = None
+    for index, row in enumerate(rows[:header_index]):
+        if row and row[0].strip() == "NumFrames":
+            for candidate in rows[index + 1 :]:
+                if candidate and candidate[0].strip().isdigit():
+                    num_frames = int(candidate[0].strip())
+                    break
+            break
     vals: list[float] = []
+    missing_timestamps = 0
     for row in rows[header_index + 1 :]:
+        if not row or all(not cell.strip() for cell in row):
+            continue
         if len(row) <= time_index:
+            missing_timestamps += 1
             continue
         try:
-            vals.append(float(row[time_index]))
+            value = float(row[time_index])
         except ValueError:
+            missing_timestamps += 1
             continue
+        if value == 0 or not math.isfinite(value):
+            missing_timestamps += 1
+            continue
+        vals.append(value)
     if not vals:
         return None
-    return normalize_time_values(vals, "timestamp")
+    return normalize_time_values(vals, "timestamp"), missing_timestamps, num_frames
+
+
+def hierarchical_csv_times(path: Path) -> list[float] | None:
+    metadata = hierarchical_csv_metadata(path)
+    return metadata[0] if metadata is not None else None
+
+
+def trc_frame_ids(path: Path) -> list[int] | None:
+    with open_csv(path) as f:
+        rows = list(csv.reader(f, delimiter="\t"))
+    header_idx = next(
+        (
+            i
+            for i, row in enumerate(rows)
+            if len(row) >= 2 and row[0].strip() == "Frame#" and row[1].strip() == "Time"
+        ),
+        None,
+    )
+    if header_idx is None:
+        return None
+    ids: list[int] = []
+    for row in rows[header_idx + 2 :]:
+        if not row or not row[0].strip():
+            continue
+        try:
+            ids.append(int(float(row[0])))
+        except ValueError:
+            continue
+    return ids or None
+
+
+def csv_frame_rows(path: Path) -> tuple[list[int], list[int]] | None:
+    with open_csv(path) as f:
+        rows = list(csv.reader(f))
+    frame_header_idx = next(
+        (i for i, row in enumerate(rows) if row and row[0].strip().lower() == "frame#"),
+        None,
+    )
+    if frame_header_idx is None:
+        return None
+    timestamp_col = None
+    if frame_header_idx + 1 < len(rows):
+        timestamp_col = next(
+            (
+                j
+                for j, cell in enumerate(rows[frame_header_idx + 1])
+                if cell.strip().lower() == "timestamp"
+            ),
+            None,
+        )
+    ids: list[int] = []
+    missing_timestamp_ids: list[int] = []
+    for row in rows[frame_header_idx + 2 :]:
+        if not row or not row[0].strip():
+            continue
+        try:
+            frame_id = int(float(row[0]))
+        except ValueError:
+            continue
+        ids.append(frame_id)
+        if timestamp_col is not None:
+            try:
+                value = float(row[timestamp_col]) if len(row) > timestamp_col else 0.0
+            except ValueError:
+                value = 0.0
+            if value == 0 or not math.isfinite(value):
+                missing_timestamp_ids.append(frame_id)
+    if not ids:
+        return None
+    return ids, missing_timestamp_ids
+
+
+def frame_missing_details(
+    session_dir: Path,
+    summaries: Iterable[StreamSummary],
+    reference_n: int | None,
+    ratio: int | None = 8,
+) -> list[FrameMissingDetail]:
+    if reference_n is None:
+        return []
+    details: list[FrameMissingDetail] = []
+    for item in summaries:
+        rel = (
+            item.path.relative_to(session_dir)
+            if item.path.is_relative_to(session_dir)
+            else item.path
+        )
+        source = infer_fps_source(rel, item.kind)
+        if source != "gt" or item.kind.lower() not in {"bvh", "trc", "csv", "xrs"}:
+            continue
+        expected = expected_frame_count(source, item.kind, item.stream, reference_n, ratio)
+        if expected is None:
+            continue
+        actual_ids: list[int] | None = None
+        missing_timestamp_ids: list[int] = []
+        try:
+            if item.kind.lower() == "trc":
+                actual_ids = trc_frame_ids(item.path)
+            elif item.kind.lower() == "csv":
+                csv_rows = csv_frame_rows(item.path)
+                if csv_rows is not None:
+                    actual_ids, missing_timestamp_ids = csv_rows
+                elif item.frame_count is not None and item.path.exists():
+                    actual_ids = list(range(1, item.frame_count + 1))
+            elif item.kind.lower() == "xrs":
+                xrs_rows = xrs_frame_rows(item.path)
+                if xrs_rows is not None:
+                    actual_ids, missing_timestamp_ids = xrs_rows
+                elif item.frame_count is not None and item.path.exists():
+                    actual_ids = list(range(1, item.frame_count + 1))
+            elif item.kind.lower() == "bvh" and item.frame_count is not None:
+                actual_ids = list(range(1, item.frame_count + 1))
+        except OSError:
+            actual_ids = None
+        if not actual_ids:
+            continue
+        present = set(actual_ids)
+        missing_ids = tuple(
+            frame_id for frame_id in range(1, expected + 1) if frame_id not in present
+        )
+        details.append(
+            FrameMissingDetail(
+                item.path,
+                item.kind,
+                expected,
+                item.frame_count,
+                missing_ids,
+                tuple(missing_timestamp_ids),
+            )
+        )
+    return details
+
+
+def format_frame_ranges(frame_ids: Iterable[int], max_chars: int = 2500) -> str:
+    values = sorted(set(frame_ids))
+    if not values:
+        return ""
+    ranges: list[str] = []
+    start = prev = values[0]
+    for value in values[1:]:
+        if value == prev + 1:
+            prev = value
+            continue
+        ranges.append(f"{start}-{prev}" if start != prev else str(start))
+        start = prev = value
+    ranges.append(f"{start}-{prev}" if start != prev else str(start))
+    text = ", ".join(ranges)
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip(", ") + " ..."
+    return text
+
+
+def write_missing_frame_reports(
+    session_dir: Path,
+    details: list[FrameMissingDetail],
+    out_dir: Path,
+    ratio: int | None = 8,
+) -> list[str]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    missing_rows: list[list[str | int]] = []
+    timestamp_rows: list[list[str | int]] = []
+    ratio_label = "8" if ratio is None else str(ratio)
+    for detail in details:
+        rel = (
+            detail.path.relative_to(session_dir)
+            if detail.path.is_relative_to(session_dir)
+            else detail.path
+        )
+        for frame_id in detail.missing_ids:
+            missing_rows.append(
+                [str(rel), detail.kind, frame_id, f"missing from expected {ratio_label}*(n+1)"]
+            )
+        for frame_id in detail.missing_timestamp_ids:
+            timestamp_rows.append([str(rel), detail.kind, frame_id, "Timestamp missing/zero"])
+    with (out_dir / "missing_frames.tsv").open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["path", "kind", "frame_id", "note"])
+        writer.writerows(missing_rows)
+    with (out_dir / "missing_timestamp_frames.tsv").open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, delimiter="\t")
+        writer.writerow(["path", "kind", "frame_id", "note"])
+        writer.writerows(timestamp_rows)
+    md: list[str] = []
+    md.extend(["", f"## Missing frame IDs (expected {ratio_label}*(n+1))", ""])
+    if details:
+        for detail in details:
+            rel = (
+                detail.path.relative_to(session_dir)
+                if detail.path.is_relative_to(session_dir)
+                else detail.path
+            )
+            if detail.missing_ids:
+                md.append(
+                    f"- {rel}: expected {detail.expected_frames}, "
+                    f"actual {detail.actual_frames}, missing {len(detail.missing_ids)}: "
+                    f"{format_frame_ranges(detail.missing_ids)}"
+                )
+            else:
+                md.append(f"- {rel}: no missing frame IDs")
+    else:
+        md.append("- None")
+    timestamp_details = [d for d in details if d.missing_timestamp_ids]
+    md.extend(["", "## Missing timestamps", ""])
+    if timestamp_details:
+        for detail in timestamp_details:
+            rel = (
+                detail.path.relative_to(session_dir)
+                if detail.path.is_relative_to(session_dir)
+                else detail.path
+            )
+            md.append(
+                f"- {rel}: {len(detail.missing_timestamp_ids)} frames have "
+                f"missing/zero Timestamp; frame IDs: "
+                f"{format_frame_ranges(detail.missing_timestamp_ids)}"
+            )
+    else:
+        md.append("- None")
+    return md
+
+
+def xrs_metadata(
+    path: Path,
+) -> tuple[list[float], int, int | None, list[int], list[int]] | None:
+    with open_csv(path) as f:
+        rows = list(csv.reader(f, delimiter="\t"))
+    header_index = None
+    timestamp_index = None
+    for index, row in enumerate(rows):
+        lowered = [cell.strip().lower() for cell in row]
+        if "timestamp" in lowered:
+            header_index = index
+            timestamp_index = lowered.index("timestamp")
+            break
+    if header_index is None or timestamp_index is None:
+        return None
+    frame_col = 0
+    if header_index > 0:
+        for j, cell in enumerate(rows[header_index - 1]):
+            if cell.strip().lower() == "frame#":
+                frame_col = j
+                break
+    num_frames = None
+    for index, row in enumerate(rows[:header_index]):
+        if row and row[0].strip() == "NumFrames":
+            for candidate in rows[index + 1 :]:
+                if candidate and candidate[0].strip().isdigit():
+                    num_frames = int(candidate[0].strip())
+                    break
+            break
+    vals: list[float] = []
+    missing_timestamps = 0
+    frame_ids: list[int] = []
+    missing_timestamp_ids: list[int] = []
+    for row in rows[header_index + 1 :]:
+        if not row or all(not cell.strip() for cell in row):
+            continue
+        try:
+            frame_id = int(float(row[frame_col]))
+        except (IndexError, ValueError):
+            frame_id = None
+        if frame_id is not None:
+            frame_ids.append(frame_id)
+        try:
+            value = float(row[timestamp_index]) if len(row) > timestamp_index else 0.0
+        except ValueError:
+            value = 0.0
+        if value == 0 or not math.isfinite(value):
+            missing_timestamps += 1
+            if frame_id is not None:
+                missing_timestamp_ids.append(frame_id)
+        else:
+            vals.append(value)
+    if not vals and num_frames is None:
+        return vals, missing_timestamps, num_frames, frame_ids, missing_timestamp_ids
+    return (
+        normalize_time_values(vals, "timestamp"),
+        missing_timestamps,
+        num_frames,
+        frame_ids,
+        missing_timestamp_ids,
+    )
+
+
+def xrs_frame_rows(path: Path) -> tuple[list[int], list[int]] | None:
+    metadata = xrs_metadata(path)
+    if metadata is None:
+        return None
+    return metadata[3], metadata[4]
 
 
 def xrs_summary(path: Path) -> StreamSummary:
-    header_index = None
-    time_index = None
-    rows: list[list[str]] = []
-    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
-        for line in f:
-            stripped = line.strip()
-            if not stripped:
-                continue
-            cells = stripped.split()
-            rows.append(cells)
-            lowered = [cell.lower() for cell in cells]
-            if "timestamp" in lowered:
-                header_index = len(rows) - 1
-                time_index = lowered.index("timestamp")
-                if time_index == 0:
-                    time_index = 1
-    if header_index is None or time_index is None:
+    metadata = xrs_metadata(path)
+    if metadata is None:
         return StreamSummary(
             path, "xrs", None, None, None, None, None, None, None, 1, "missing XRS Timestamp header"
         )
-    vals: list[float] = []
-    for row in rows[header_index + 1 :]:
-        if len(row) <= time_index:
-            continue
-        try:
-            vals.append(float(row[time_index]))
-        except ValueError:
-            continue
-    if not vals:
+    times, missing_timestamps, num_frames, _, _ = metadata
+    if not times:
+        reason = "no XRS timestamp rows"
+        if missing_timestamps:
+            reason += f"; {missing_timestamps} rows have missing/zero Timestamp values"
         return StreamSummary(
-            path, "xrs", 0, None, None, None, None, None, None, 1, "no XRS timestamp rows"
+            path,
+            "xrs",
+            num_frames,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            1,
+            reason,
         )
-    return summarize_times(path, "xrs", normalize_time_values(vals, "timestamp"))
+    summary = summarize_times(path, "xrs", times)
+    if num_frames is not None:
+        summary = replace(summary, frame_count=num_frames)
+    reasons = []
+    if missing_timestamps:
+        reasons.append(f"{missing_timestamps} rows have missing/zero Timestamp values")
+    return with_summary_details(summary, reasons=reasons)
 
 
 def choose_time_column(fieldnames: list[str]) -> str | None:
@@ -971,6 +1292,7 @@ def expected_frame_count(
     kind: str,
     stream: str,
     reference_robocap_frames: int | None,
+    ratio: int | None = 8,
 ) -> int | None:
     if reference_robocap_frames is None or reference_robocap_frames < 0:
         return None
@@ -979,7 +1301,8 @@ def expected_frame_count(
     if source == "robocap" and kind == "video":
         return reference_robocap_frames
     if source == "gt" and kind.lower() in GT_FPS_KINDS:
-        return 8 * (reference_robocap_frames + 1)
+        effective_ratio = ratio if ratio is not None else 8
+        return effective_ratio * (reference_robocap_frames + 1)
     return None
 
 
@@ -996,8 +1319,10 @@ def write_inspection(
         fps_records, "frame_rate_report.md", report_path=report_path
     )
     reference_n = reference_robocap_frame_count(session_dir, summaries)
-    expected_mocap = 8 * (reference_n + 1) if reference_n is not None else None
+    ratio = ratio_estimate.ratio if ratio_estimate is not None else 8
+    expected_mocap = ratio * (reference_n + 1) if reference_n is not None else None
     expected_third = reference_n + 1 if reference_n is not None else None
+    missing_details = frame_missing_details(session_dir, summaries, reference_n, ratio)
     rows = [
         [
             "path",
@@ -1035,7 +1360,7 @@ def write_inspection(
         f"- mag_streams: {sum(item.kind == 'mag' for item in summaries)}",
         f"- dropped_frames_total: {dropped_total_text}",
         f"- reference_robocap_frames: {fmt(reference_n)}",
-        f"- expected_frames_formula: robocap=n, mocap=8*(n+1), third_person_video=n+1",
+        f"- expected_frames_formula: robocap=n, mocap={ratio}*(n+1), third_person_video=n+1",
         f"- expected_mocap_frames: {fmt(expected_mocap)}",
         f"- expected_third_person_video_frames: {fmt(expected_third)}",
         "",
@@ -1054,7 +1379,7 @@ def write_inspection(
             else None
         )
         source = infer_fps_source(rel, item.kind)
-        expected = expected_frame_count(source, item.kind, item.stream, reference_n)
+        expected = expected_frame_count(source, item.kind, item.stream, reference_n, ratio)
         delta = (
             item.frame_count - expected
             if item.frame_count is not None and expected is not None
@@ -1134,6 +1459,7 @@ def write_inspection(
             )
     else:
         md.append("- None")
+    md.extend(write_missing_frame_reports(session_dir, missing_details, out_dir, ratio))
     write_text(report_path, "\n".join(md) + "\n")
     with (out_dir / "frame_rate_report.tsv").open("w", encoding="utf-8", newline="") as f:
         csv.writer(f, delimiter="\t").writerows(rows)

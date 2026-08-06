@@ -152,7 +152,7 @@ LANGUAGE_PACKS = {
             "`GT frame offset = round(Robocap frame offset * ratio)`. **Frame-mode RRD uses "
             "`frame` as its primary timeline (GT/NOKOV frame scale): video frame N is at "
             "`round(N * ratio)` and GT source frame K is at `K - GT frame offset`; "
-            "`capture_time` is secondary.**"
+            "`capture_time` is secondary. Third-person video follows the same frame offset in frame-mode RRDs.**"
         ),
         "limit_robocap_frames": "Limit Robocap frame range",
         "robocap_start_frame": "Robocap start frame (0-based, inclusive)",
@@ -206,7 +206,7 @@ LANGUAGE_PACKS = {
             "相对 Robocap 视频后移 N 帧、延后出现，同一视频帧会取更靠前的 GT 帧。进入源脚本"
             "前转换为：`GT 帧 offset = round(Robocap 帧 offset * ratio)`。**帧对齐 RRD 的"
             "主时间轴是 GT/NOKOV 帧尺度的 `frame`：视频第 N 帧位于 `round(N * ratio)`，GT "
-            "源数据第 K 帧位于 `K - GT 帧 offset`；`capture_time` 只作辅助时间轴。**"
+            "源数据第 K 帧位于 `K - GT 帧 offset`；`capture_time` 只作辅助时间轴。第三人称视频在帧对齐 RRD 中也使用同一个 offset，与 NOKOV/GT 一起前后移动。**"
         ),
         "limit_robocap_frames": "限制 Robocap 帧范围",
         "robocap_start_frame": "Robocap 起始帧（从 0 开始，包含）",

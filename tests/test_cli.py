@@ -598,6 +598,33 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     assert result.startswith("Robowrist: no matching video or sensor streams")
 
 
+def test_hierarchical_csv_ignores_zero_timestamps_and_keeps_header_count(tmp_path: Path) -> None:
+    path = tmp_path / "Tracker0.csv"
+    content = (
+        "#Hierarchical Translation and Rotation (.csv) file\n"
+        "[Head]\n"
+        "NumFrames,NumSegments,DataFrameRate\n"
+        "6,1,250\n"
+        "[SegmentData]\n"
+        " Frame# ,,Segment1\n"
+        ",Timestamp,XToGlobal1\n"
+        "1,100,1.0\n"
+        "2,104,2.0\n"
+        "3,0,0.0\n"
+        "4,0,0.0\n"
+        "5,116,3.0\n"
+        "6,120,4.0\n"
+    )
+    path.write_text(content, encoding="utf-8", newline="")
+
+    summary = csv_summary(path)
+
+    assert summary.frame_count == 6
+    assert summary.dropped_frames == 2
+    assert "2 rows have missing/zero Timestamp values" in summary.abnormal_reason
+    assert "likely dropped-frame intervals" in summary.abnormal_reason
+
+
 def test_hierarchical_nokov_csv_summary_uses_timestamp(tmp_path: Path) -> None:
     path = tmp_path / "Tracker0.csv"
     path.write_text(
@@ -654,7 +681,7 @@ def test_write_inspection_includes_expected_frame_counts(tmp_path: Path) -> None
         make_inspection_summary(
             session / "robocap_segment1_video_left.mp4", "video", 50, "robocap_video", 30.0
         ),
-        make_inspection_summary(session / "nokov" / "motion.trc", "trc", 400, "", 60.0),
+        make_inspection_summary(session / "nokov" / "motion.trc", "trc", 400, "", 240.0),
         make_inspection_summary(
             session / "nokov" / "capture-1.mp4", "video", 52, "third_person_video", 30.0
         ),
@@ -672,6 +699,65 @@ def test_write_inspection_includes_expected_frame_counts(tmp_path: Path) -> None
     assert "| 52 | 51 | 1 |" in md
     assert "## Dropped-frame detection unavailable" in md
     assert "- None" in md
+
+
+def test_write_inspection_writes_exact_missing_frames(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    (session / "nokov").mkdir(parents=True)
+    trc_path = session / "nokov" / "motion.trc"
+    trc_lines = [
+        "PathFileType\t4\t(X/Y/Z)\tfile.trc",
+        "DataRate\tCameraRate\tNumFrames\tNumMarkers",
+        "Frame#\tTime\tTimestamp",
+        "\t\t",
+    ]
+    trc_lines.extend(f"{i}\t{(i - 1) * 0.004}\t{i}" for i in range(1, 401))
+    trc_path.write_text("\n".join(trc_lines), encoding="utf-8", newline="")
+    csv_path = session / "nokov" / "motion.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "#Hierarchical Translation and Rotation (.csv) file",
+                "[Head]",
+                "NumFrames,NumSegments,DataFrameRate",
+                "6,1,250",
+                "[SegmentData]",
+                " Frame# ,,Segment1",
+                ",Timestamp,XToGlobal1",
+                "1,100,1.0",
+                "2,104,2.0",
+                "3,0,0.0",
+                "4,0,0.0",
+                "5,116,3.0",
+                "6,120,4.0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    summaries = [
+        make_inspection_summary(
+            session / "robocap_segment1_video_left.mp4",
+            "video",
+            50,
+            "robocap_video",
+            30.0,
+        ),
+        make_inspection_summary(trc_path, "trc", 400, fps=250.0),
+        make_inspection_summary(csv_path, "csv", 6, fps=250.0),
+    ]
+    out = tmp_path / "inspection"
+    cli.write_inspection(session, "segment1", summaries, out)
+    missing = (out / "missing_frames.tsv").read_text(encoding="utf-8")
+    assert "motion.trc\ttrc\t401\tmissing from expected 8*(n+1)" in missing
+    assert "motion.trc\ttrc\t408\tmissing from expected 8*(n+1)" in missing
+    assert "motion.csv\tcsv\t408\tmissing from expected 8*(n+1)" in missing
+    timestamps = (out / "missing_timestamp_frames.tsv").read_text(encoding="utf-8")
+    assert "motion.csv\tcsv\t3\tTimestamp missing/zero" in timestamps
+    assert "motion.csv\tcsv\t4\tTimestamp missing/zero" in timestamps
+    md = (out / "frame_rate_report.md").read_text(encoding="utf-8")
+    assert "## Missing frame IDs (expected 8*(n+1))" in md
+    assert "## Missing timestamps" in md
 
 
 def test_bvh_summary_marks_dropped_detection_unavailable(tmp_path: Path) -> None:

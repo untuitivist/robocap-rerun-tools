@@ -1089,6 +1089,31 @@ def infer_gt_frame_rate_hz(gt_config: GTConfig) -> float | None:
     return None
 
 
+def reference_timestamp_at_video_frame(
+    video_frame_float: float,
+    reference_video_timestamps: np.ndarray,
+) -> int:
+    if len(reference_video_timestamps) == 0:
+        raise ValueError("Reference video timestamps must not be empty.")
+    if len(reference_video_timestamps) == 1:
+        return int(reference_video_timestamps[0])
+    video_dt_ns = int(np.median(np.diff(reference_video_timestamps)))
+    video_index = int(np.floor(video_frame_float))
+    fraction = video_frame_float - video_index
+    if video_index < 0:
+        return int(round(int(reference_video_timestamps[0]) + video_frame_float * video_dt_ns))
+    if video_index + 1 < len(reference_video_timestamps):
+        start_ns = int(reference_video_timestamps[video_index])
+        end_ns = int(reference_video_timestamps[video_index + 1])
+        return int(round(start_ns + (end_ns - start_ns) * fraction))
+    return int(
+        round(
+            int(reference_video_timestamps[-1])
+            + (video_frame_float - (len(reference_video_timestamps) - 1)) * video_dt_ns
+        )
+    )
+
+
 def synthesize_frame_aligned_timestamps(
     frame_count: int,
     reference_video_timestamps: np.ndarray,
@@ -1097,30 +1122,16 @@ def synthesize_frame_aligned_timestamps(
 ) -> np.ndarray:
     if frame_count <= 0:
         return np.asarray([], dtype=np.int64)
-    if len(reference_video_timestamps) == 1:
-        return np.full(frame_count, int(reference_video_timestamps[0]), dtype=np.int64)
-    video_dt_ns = int(np.median(np.diff(reference_video_timestamps)))
-    result = np.empty(frame_count, dtype=np.int64)
-    for gt_index in range(frame_count):
-        video_float = (gt_index - frame_offset) / ratio
-        video_index = int(np.floor(video_float))
-        fraction = video_float - video_index
-        if video_index < 0:
-            result[gt_index] = int(
-                round(int(reference_video_timestamps[0]) + video_float * video_dt_ns)
+    return np.asarray(
+        [
+            reference_timestamp_at_video_frame(
+                (gt_index - frame_offset) / ratio,
+                reference_video_timestamps,
             )
-        elif video_index + 1 < len(reference_video_timestamps):
-            start_ns = int(reference_video_timestamps[video_index])
-            end_ns = int(reference_video_timestamps[video_index + 1])
-            result[gt_index] = int(round(start_ns + (end_ns - start_ns) * fraction))
-        else:
-            result[gt_index] = int(
-                round(
-                    int(reference_video_timestamps[-1])
-                    + (video_float - (len(reference_video_timestamps) - 1)) * video_dt_ns
-                )
-            )
-    return result
+            for gt_index in range(frame_count)
+        ],
+        dtype=np.int64,
+    )
 
 
 def describe_frame_alignment(ratio: float, video_frame_offset: int) -> str:
@@ -1191,7 +1202,9 @@ def with_frame_aligned_gt_timestamps(
         mesh=mesh,
         marker_tracks=marker_tracks,
         mano_mesh_tracks=mano_mesh_tracks,
-        third_person_start_ns=int(reference_video_timestamps[0]),
+        third_person_start_ns=reference_timestamp_at_video_frame(
+            -float(video_frame_offset), reference_video_timestamps
+        ),
         note=note,
     )
 

@@ -88,6 +88,47 @@ def test_frame_timeline_aligns_video_and_gt_source_frames() -> None:
     assert negative.gt_frame(760) == video_frame
 
 
+def test_third_person_video_start_follows_frame_offset() -> None:
+    reference_timestamps = np.arange(20, dtype=np.int64) * 100
+    marker_track = exporter.GTMarkerTrack(
+        label="hand",
+        entity="gt/tracks/trc/hand",
+        source="trc",
+        timestamps_ns=np.arange(81, dtype=np.int64) * 12_500_000,
+        positions=np.zeros((81, 1, 3), dtype=np.float32),
+        marker_names=("root",),
+    )
+    gt_config = exporter.GTConfig(
+        skeleton=None,
+        mesh=None,
+        marker_tracks=(marker_track,),
+        mano_mesh_tracks=(),
+        third_person_video=Path("third-person.mp4"),
+    )
+
+    positive = exporter.with_frame_aligned_gt_timestamps(
+        gt_config,
+        reference_timestamps,
+        video_rate_hz=30.0,
+        frame_ratio=8.0,
+        video_frame_offset=5,
+    )
+    negative = exporter.with_frame_aligned_gt_timestamps(
+        gt_config,
+        reference_timestamps,
+        video_rate_hz=30.0,
+        frame_ratio=8.0,
+        video_frame_offset=-5,
+    )
+
+    assert exporter.reference_timestamp_at_video_frame(-5.0, reference_timestamps) == -500
+    assert exporter.reference_timestamp_at_video_frame(5.0, reference_timestamps) == 500
+    assert positive is not None
+    assert negative is not None
+    assert positive.third_person_start_ns == -500
+    assert negative.third_person_start_ns == 500
+
+
 def test_exporter_rounds_auto_inferred_ratio_but_preserves_explicit_ratio() -> None:
     marker_track = exporter.GTMarkerTrack(
         label="hand",
