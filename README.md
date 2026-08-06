@@ -97,6 +97,12 @@ Inspect one session before exporting:
 robocap-rerun inspect Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1
 ```
 
+Inspection includes Robocap/robowrist videos, third-person videos, GT motion files, and timestamped
+tables in IMU/MAG SQLite databases. ACC, gyro, and MAG tables are reported as separate streams.
+Video `fps` is the full-stream average reported by ffprobe, while median/min/max interval and abnormal
+counts come from the actual frame timestamps. When an MP4 has a numeric `comment` capture timestamp,
+its start/end values are placed on that capture-time axis; otherwise the report marks them as media-relative.
+
 Export a time-aligned RRD:
 
 ```bat

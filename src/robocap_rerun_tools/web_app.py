@@ -21,12 +21,14 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 
 1. Enter a session directory, for example `C:\\Users\\Administrator\\Desktop\\20260803_032401_session29`.
 2. Enter the segment name, usually `segment1`.
-3. Run `Inspect` first to check FPS, frame counts, and abnormal intervals.
+3. Run `Inspect` first to check FPS, frame/sample counts, and abnormal intervals.
 4. Use `Package Data` to create a zip for sharing. Videos are compressed by default.
 5. Use `Export RRD` to create time-aligned or frame-aligned Rerun files.
 6. Use `Offset` when you need to inspect or sweep a video-to-NOKOV frame offset.
 
 The export controls can independently include or exclude MAG, IMU, robowrist, and third-person video data.
+Inspection always discovers third-person videos and checks each timestamped ACC, gyro, and MAG SQLite
+table as a separate stream. Video average FPS comes from ffprobe; interval statistics use real frame timestamps.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
 control is turned off and disabled instead of pretending that wrist data can be exported.
 Only GT formats that are present create tabs. BVH/TRC/CSV/XRS each have separate 3D views, while rigid
@@ -78,12 +80,14 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 
 1. 输入 session 目录，例如 `C:\\Users\\Administrator\\Desktop\\20260803_032401_session29`。
 2. 输入 segment，通常是 `segment1`。
-3. 先运行“检查”，查看视频 FPS、帧数和异常帧间隔。
+3. 先运行“检查”，查看 FPS、帧/样本数和异常间隔。
 4. 用“打包数据”生成 zip 给别人使用。默认会压缩视频。
 5. 用“导出 RRD”生成时间对齐或帧对齐的 Rerun 文件。
 6. 如果需要检查视频帧和 NOKOV 帧的偏移关系，用“Offset 检查”。
 
 导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。
+检查会始终发现第三人称视频，并把 SQLite 中带时间戳的 ACC、GYRO、MAG 表作为独立数据流检查。
+视频平均 FPS 来自 ffprobe，帧间隔统计使用真实逐帧时间戳。
 “扫描文件”会检测标准 robowrist 目录和数据流；没有检测到时会自动取消并禁用 robowrist 选项，
 不会继续显示一个实际无数据可导出的开启状态。
 只有实际存在的 GT 格式才会生成 tab。BVH/TRC/CSV/XRS 分别有独立的 3D 视图；同一 CSV/XRS

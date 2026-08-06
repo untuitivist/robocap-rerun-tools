@@ -1,8 +1,9 @@
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
-from robocap_rerun_tools import web_app
+from robocap_rerun_tools import cli, web_app
 from robocap_rerun_tools.cli import (
     FpsRecord,
     build_parser,
@@ -11,10 +12,14 @@ from robocap_rerun_tools.cli import (
     discover_files,
     estimate_frame_ratio,
     find_nokov_source,
+    inspection_files,
     load_frame_ratio_estimate,
     nearest_multiple_of_ten,
     resolve_ffprobe,
+    sqlite_sensor_summaries,
     trc_summary,
+    video_capture_start_s,
+    video_stream_name,
     video_to_gt_frame,
 )
 from robocap_rerun_tools.alignment import round_positive_ratio
@@ -238,6 +243,133 @@ def test_inspection_discovery_ignores_package_manifest(tmp_path: Path) -> None:
     assert [path.name for path in discover_files(tmp_path)] == ["data.trc"]
 
 
+def test_inspection_includes_sensor_databases_and_non_segment_third_person_video(
+    tmp_path: Path,
+) -> None:
+    nokov_dir = tmp_path / "nokov"
+    nokov_dir.mkdir()
+    third_person = nokov_dir / "capture-1.mp4"
+    third_person.write_bytes(b"")
+    segment1_db = tmp_path / "robocap_segment1_imu_left.db"
+    segment1_db.write_bytes(b"")
+    segment2_db = tmp_path / "robocap_segment2_imu_left.db"
+    segment2_db.write_bytes(b"")
+    segment1_video = tmp_path / "robocap_segment1_video_left.mp4"
+    segment1_video.write_bytes(b"")
+    segment2_video = tmp_path / "robocap_segment2_video_left.mp4"
+    segment2_video.write_bytes(b"")
+
+    selected = inspection_files(tmp_path, "segment1")
+
+    assert third_person in selected
+    assert segment1_db in selected
+    assert segment1_video in selected
+    assert segment2_db not in selected
+    assert segment2_video not in selected
+    assert video_stream_name(third_person) == "third_person_video"
+    assert video_stream_name(segment1_video) == "robocap_video"
+
+
+def test_sqlite_sensor_summary_checks_each_imu_and_mag_table(tmp_path: Path) -> None:
+    path = tmp_path / "robocap_segment1_sensors.db"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE acc_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                x INTEGER,
+                y INTEGER,
+                z INTEGER,
+                timestamp INTEGER
+            );
+            CREATE TABLE gyro_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                x INTEGER,
+                y INTEGER,
+                z INTEGER,
+                timestamp INTEGER
+            );
+            CREATE TABLE mag_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                mag_x INTEGER,
+                mag_y INTEGER,
+                mag_z INTEGER,
+                timestamp INTEGER
+            );
+            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);
+            """
+        )
+        regular = [1_000_000_000, 1_005_000_000, 1_010_000_000, 1_015_000_000]
+        delayed = [1_000_000_000, 1_005_000_000, 1_010_000_000, 1_030_000_000]
+        connection.executemany(
+            "INSERT INTO acc_data (x, y, z, timestamp) VALUES (0, 0, 0, ?)",
+            [(timestamp,) for timestamp in regular],
+        )
+        connection.executemany(
+            "INSERT INTO gyro_data (x, y, z, timestamp) VALUES (0, 0, 0, ?)",
+            [(timestamp,) for timestamp in delayed],
+        )
+        connection.executemany(
+            "INSERT INTO mag_data (mag_x, mag_y, mag_z, timestamp) VALUES (0, 0, 0, ?)",
+            [(timestamp,) for timestamp in regular],
+        )
+
+    summaries = sqlite_sensor_summaries(path)
+    by_stream = {summary.stream: summary for summary in summaries}
+
+    assert set(by_stream) == {"acc_data", "gyro_data", "mag_data"}
+    assert by_stream["acc_data"].kind == "imu_acc"
+    assert by_stream["gyro_data"].kind == "imu_gyro"
+    assert by_stream["mag_data"].kind == "mag"
+    assert by_stream["acc_data"].frame_count == 4
+    assert abs((by_stream["acc_data"].fps or 0.0) - 200.0) < 1e-6
+    assert by_stream["acc_data"].abnormal_count == 0
+    assert by_stream["gyro_data"].abnormal_count == 1
+    assert "differ from median" in by_stream["gyro_data"].abnormal_reason
+    assert by_stream["acc_data"].time_basis.startswith("timestamp")
+
+
+def test_video_capture_start_uses_mp4_comment_microseconds() -> None:
+    assert video_capture_start_s({"format": {"tags": {"comment": "18690178780"}}}) == (18_690.17878)
+    assert video_capture_start_s({"format": {"tags": {}}}) is None
+
+
+def test_video_summary_keeps_average_fps_and_checks_real_frame_intervals(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeAssetVideo:
+        def __init__(self, path: Path):
+            self.path = path
+
+        def read_frame_timestamps_nanos(self):
+            return [0, 33_000_000, 70_000_000, 100_000_000]
+
+    class FakeRerun:
+        AssetVideo = FakeAssetVideo
+
+    monkeypatch.setitem(sys.modules, "rerun", FakeRerun)
+    monkeypatch.setattr(
+        cli,
+        "ffprobe_video",
+        lambda path, ffprobe: (
+            {
+                "streams": [{"avg_frame_rate": "30000/1001", "nb_frames": "4"}],
+                "format": {"duration": "0.1", "tags": {"comment": "10000000"}},
+            },
+            None,
+        ),
+    )
+
+    summary = cli.video_summary(tmp_path / "third-person.mp4", "ffprobe")
+
+    assert abs((summary.fps or 0.0) - 30000 / 1001) < 1e-9
+    assert abs((summary.median_dt_ms or 0.0) - 33.0) < 1e-9
+    assert summary.start_s == 10.0
+    assert summary.end_s == 10.1
+    assert summary.stream == "third_person_video"
+    assert summary.time_basis.startswith("capture_time")
+
+
 def test_choose_time_column_accepts_common_tracker_names() -> None:
     assert choose_time_column(["Frame", "Time (Seconds)", "X", "Y", "Z"]) == "Time (Seconds)"
     assert choose_time_column(["frame", "capture_time_ns", "value"]) == "capture_time_ns"
@@ -249,6 +381,21 @@ def test_resolve_ffprobe_from_ffmpeg_sibling(tmp_path: Path) -> None:
     ffmpeg.write_text("", encoding="utf-8")
     ffprobe.write_text("", encoding="utf-8")
     assert resolve_ffprobe("missing-ffprobe", str(ffmpeg)) == str(ffprobe)
+
+
+def test_ffprobe_video_requests_capture_comment_metadata(tmp_path: Path, monkeypatch) -> None:
+    captured = []
+    monkeypatch.setattr(
+        cli,
+        "run_json",
+        lambda command: captured.extend(command) or {"streams": [{}], "format": {}},
+    )
+
+    data, error = cli.ffprobe_video(tmp_path / "video.mp4", "ffprobe")
+
+    assert data is not None
+    assert error is None
+    assert any("format_tags=comment" in argument for argument in captured)
 
 
 def test_web_language_values_include_docs() -> None:

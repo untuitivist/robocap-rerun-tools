@@ -5,10 +5,11 @@ import csv
 import json
 import math
 import shutil
+import sqlite3
 import statistics
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
 
@@ -17,6 +18,7 @@ from .alignment import FrameAlignment, round_positive_ratio
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 TEXT_SUFFIXES = {".csv", ".tsv", ".trc", ".bvh", ".xrs"}
+DATABASE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
 GT_FPS_KINDS = {"bvh", "csv", "trc", "tsv", "xrs"}
 
 
@@ -33,6 +35,8 @@ class StreamSummary:
     max_dt_ms: float | None
     abnormal_count: int
     abnormal_reason: str
+    stream: str = ""
+    time_basis: str = ""
 
 
 @dataclass(frozen=True)
@@ -107,9 +111,7 @@ def ffprobe_video(path: Path, ffprobe: str) -> tuple[dict | None, str | None]:
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "stream=nb_frames,r_frame_rate,avg_frame_rate,duration",
-                "-show_entries",
-                "format=duration,tags",
+                "stream=nb_frames,r_frame_rate,avg_frame_rate,duration:format=duration:format_tags=comment",
                 "-of",
                 "json",
                 str(path),
@@ -143,14 +145,88 @@ def ratio_to_float(value: str | None) -> float | None:
     return num / den
 
 
+def video_stream_name(path: Path) -> str:
+    name = path.name.lower()
+    parent_names = {parent.name.lower() for parent in path.parents}
+    if name.startswith("robocap_"):
+        return "robocap_video"
+    if name.startswith("robowrist_") or any(name.startswith("robowrist_") for name in parent_names):
+        return "robowrist_video"
+    return "third_person_video"
+
+
+def video_capture_start_s(data: dict | None) -> float | None:
+    if not data:
+        return None
+    comment = (data.get("format") or {}).get("tags", {}).get("comment")
+    try:
+        return float(comment) / 1e6
+    except (TypeError, ValueError):
+        return None
+
+
+def with_summary_details(
+    summary: StreamSummary,
+    *,
+    stream: str | None = None,
+    time_basis: str | None = None,
+    reasons: Iterable[str] = (),
+    abnormal_count_delta: int = 0,
+) -> StreamSummary:
+    reason_parts = [summary.abnormal_reason] if summary.abnormal_reason else []
+    reason_parts.extend(reason for reason in reasons if reason)
+    return replace(
+        summary,
+        abnormal_count=summary.abnormal_count + abnormal_count_delta,
+        abnormal_reason="; ".join(reason_parts),
+        stream=summary.stream if stream is None else stream,
+        time_basis=summary.time_basis if time_basis is None else time_basis,
+    )
+
+
+def ffprobe_video_summary(path: Path, data: dict, capture_start_s: float | None) -> StreamSummary:
+    stream = (data.get("streams") or [{}])[0]
+    fmt = data.get("format") or {}
+    fps = ratio_to_float(stream.get("avg_frame_rate")) or ratio_to_float(stream.get("r_frame_rate"))
+    duration = float(stream.get("duration") or fmt.get("duration") or 0.0) or None
+    frame_count = int(stream["nb_frames"]) if str(stream.get("nb_frames", "")).isdigit() else None
+    if frame_count is None and duration and fps:
+        frame_count = int(round(duration * fps))
+    median_dt = 1000.0 / fps if fps else None
+    start_s = capture_start_s if capture_start_s is not None else 0.0
+    end_s = (
+        start_s + duration
+        if duration is not None
+        else (
+            start_s + (frame_count - 1) / fps if frame_count and fps and frame_count > 0 else None
+        )
+    )
+    return StreamSummary(
+        path,
+        "video",
+        frame_count,
+        fps,
+        start_s,
+        end_s,
+        median_dt,
+        median_dt,
+        median_dt,
+        0,
+        "",
+    )
+
+
 def video_summary(path: Path, ffprobe: str) -> StreamSummary:
     data, ffprobe_error = ffprobe_video(path, ffprobe)
-    if not data:
-        try:
-            import rerun as rr
+    capture_start_s = video_capture_start_s(data)
+    stream_name = video_stream_name(path)
+    time_basis = "capture_time (MP4 comment us)" if capture_start_s is not None else "media_time"
+    try:
+        import rerun as rr
 
-            frame_timestamps_ns = list(rr.AssetVideo(path=path).read_frame_timestamps_nanos())
-        except Exception as exc:
+        frame_timestamps_ns = list(rr.AssetVideo(path=path).read_frame_timestamps_nanos())
+    except Exception as exc:
+        if not data:
             return StreamSummary(
                 path,
                 "video",
@@ -163,41 +239,49 @@ def video_summary(path: Path, ffprobe: str) -> StreamSummary:
                 None,
                 1,
                 f"{ffprobe_error}; Rerun video probe failed: {exc}",
+                stream=stream_name,
+                time_basis=time_basis,
             )
-        times_s = [float(value) / 1e9 for value in frame_timestamps_ns]
-        summary = summarize_times(path, "video", times_s)
-        if summary.abnormal_reason:
-            reason = f"{ffprobe_error}; Rerun fallback used; {summary.abnormal_reason}"
-        else:
-            reason = f"{ffprobe_error}; Rerun fallback used"
-        return StreamSummary(
-            path,
-            summary.kind,
-            summary.frame_count,
-            summary.fps,
-            summary.start_s,
-            summary.end_s,
-            summary.median_dt_ms,
-            summary.min_dt_ms,
-            summary.max_dt_ms,
-            summary.abnormal_count,
-            reason,
+        fallback = ffprobe_video_summary(path, data, capture_start_s)
+        reasons = [f"Rerun frame timestamp probe failed: {exc}; interval anomalies unavailable"]
+        if capture_start_s is None:
+            reasons.append("missing MP4 comment capture timestamp; times are media-relative")
+        return with_summary_details(
+            fallback,
+            stream=stream_name,
+            time_basis=time_basis,
+            reasons=reasons,
+            abnormal_count_delta=1,
         )
-    stream = (data.get("streams") or [{}])[0]
-    fmt = data.get("format") or {}
-    fps = ratio_to_float(stream.get("avg_frame_rate")) or ratio_to_float(stream.get("r_frame_rate"))
-    duration = float(stream.get("duration") or fmt.get("duration") or 0.0) or None
-    frame_count = int(stream["nb_frames"]) if str(stream.get("nb_frames", "")).isdigit() else None
-    if frame_count is None and duration and fps:
-        frame_count = int(round(duration * fps))
-    median_dt = 1000.0 / fps if fps else None
-    end_s = (
-        duration
-        if duration is not None
-        else ((frame_count - 1) / fps if frame_count and fps and frame_count > 0 else None)
-    )
-    return StreamSummary(
-        path, "video", frame_count, fps, 0.0, end_s, median_dt, median_dt, median_dt, 0, ""
+
+    offset_s = capture_start_s or 0.0
+    times_s = [offset_s + float(value) / 1e9 for value in frame_timestamps_ns]
+    summary = summarize_times(path, "video", times_s)
+    reasons: list[str] = []
+    abnormal_count_delta = 0
+    if ffprobe_error:
+        reasons.append(ffprobe_error)
+    if capture_start_s is None:
+        reasons.append("missing MP4 comment capture timestamp; times are media-relative")
+    if data:
+        metadata_summary = ffprobe_video_summary(path, data, capture_start_s)
+        if metadata_summary.fps is not None:
+            summary = replace(summary, fps=metadata_summary.fps)
+        if (
+            metadata_summary.frame_count is not None
+            and metadata_summary.frame_count != summary.frame_count
+        ):
+            reasons.append(
+                f"ffprobe frame count {metadata_summary.frame_count} differs from decoded timestamp "
+                f"count {summary.frame_count}"
+            )
+            abnormal_count_delta += 1
+    return with_summary_details(
+        summary,
+        stream=stream_name,
+        time_basis=time_basis,
+        reasons=reasons,
+        abnormal_count_delta=abnormal_count_delta,
     )
 
 
@@ -215,6 +299,7 @@ def numeric(values: Iterable[str]) -> list[float]:
 def summarize_times(path: Path, kind: str, times_s: list[float]) -> StreamSummary:
     times_s = [t for t in times_s if math.isfinite(t)]
     if len(times_s) < 2:
+        reason = "no timestamps" if not times_s else "only one timestamp; interval/FPS unavailable"
         return StreamSummary(
             path,
             kind,
@@ -225,10 +310,12 @@ def summarize_times(path: Path, kind: str, times_s: list[float]) -> StreamSummar
             None,
             None,
             None,
-            0,
-            "",
+            1,
+            reason,
         )
-    diffs_ms = [(b - a) * 1000.0 for a, b in zip(times_s, times_s[1:]) if b >= a]
+    all_diffs_ms = [(b - a) * 1000.0 for a, b in zip(times_s, times_s[1:])]
+    non_positive = [diff for diff in all_diffs_ms if diff <= 0]
+    diffs_ms = [diff for diff in all_diffs_ms if diff > 0]
     if not diffs_ms:
         return StreamSummary(
             path,
@@ -240,16 +327,18 @@ def summarize_times(path: Path, kind: str, times_s: list[float]) -> StreamSummar
             None,
             None,
             None,
-            1,
-            "non-monotonic timestamps",
+            len(non_positive),
+            f"{len(non_positive)} non-increasing timestamp intervals",
         )
     med = statistics.median(diffs_ms)
     fps = 1000.0 / med if med > 0 else None
     tolerance = max(2.0, med * 0.2)
     abnormal = [d for d in diffs_ms if abs(d - med) > tolerance]
-    reason = ""
+    reasons = []
+    if non_positive:
+        reasons.append(f"{len(non_positive)} non-increasing timestamp intervals")
     if abnormal:
-        reason = f"{len(abnormal)} intervals differ from median by > max(2ms, 20%)"
+        reasons.append(f"{len(abnormal)} intervals differ from median by > max(2ms, 20%)")
     return StreamSummary(
         path,
         kind,
@@ -260,8 +349,8 @@ def summarize_times(path: Path, kind: str, times_s: list[float]) -> StreamSummar
         med,
         min(diffs_ms),
         max(diffs_ms),
-        len(abnormal),
-        reason,
+        len(non_positive) + len(abnormal),
+        "; ".join(reasons),
     )
 
 
@@ -479,6 +568,156 @@ def choose_time_column(fieldnames: list[str]) -> str | None:
     return None
 
 
+def quote_sqlite_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def sensor_stream_kind(table_name: str) -> str:
+    lowered = table_name.lower()
+    if "gyro" in lowered:
+        return "imu_gyro"
+    if "acc" in lowered:
+        return "imu_acc"
+    if "mag" in lowered:
+        return "mag"
+    return "sensor"
+
+
+def sqlite_sensor_summaries(path: Path) -> list[StreamSummary]:
+    try:
+        connection = sqlite3.connect(path)
+    except sqlite3.Error as exc:
+        return [
+            StreamSummary(
+                path,
+                "database",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                1,
+                f"failed to open SQLite database: {exc}",
+                stream="database",
+            )
+        ]
+
+    summaries: list[StreamSummary] = []
+    try:
+        tables = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+            )
+            if not str(row[0]).lower().startswith("sqlite_")
+        ]
+        for table in tables:
+            quoted_table = quote_sqlite_identifier(table)
+            try:
+                column_rows = list(connection.execute(f"PRAGMA table_info({quoted_table})"))
+                columns = [str(row[1]) for row in column_rows]
+                time_column = choose_time_column(columns)
+                if time_column is None:
+                    continue
+                primary_keys = [
+                    (int(row[5]), str(row[1])) for row in column_rows if int(row[5] or 0) > 0
+                ]
+                if primary_keys:
+                    order_by = ", ".join(
+                        quote_sqlite_identifier(name) for _, name in sorted(primary_keys)
+                    )
+                else:
+                    order_by = "rowid"
+                rows = list(
+                    connection.execute(
+                        f"SELECT {quote_sqlite_identifier(time_column)} FROM {quoted_table} "
+                        f"ORDER BY {order_by}"
+                    )
+                )
+            except sqlite3.Error as exc:
+                summaries.append(
+                    StreamSummary(
+                        path,
+                        sensor_stream_kind(table),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        1,
+                        f"failed to inspect SQLite table {table}: {exc}",
+                        stream=table,
+                    )
+                )
+                continue
+
+            values: list[float] = []
+            invalid_count = 0
+            for (value,) in rows:
+                try:
+                    values.append(float(value))
+                except (TypeError, ValueError):
+                    invalid_count += 1
+            times_s = normalize_time_values(values, time_column)
+            summary = summarize_times(path, sensor_stream_kind(table), times_s)
+            reasons = (
+                [f"{invalid_count} rows have invalid or NULL {time_column} values"]
+                if invalid_count
+                else []
+            )
+            summaries.append(
+                with_summary_details(
+                    summary,
+                    stream=table,
+                    time_basis=f"{time_column} (auto-normalized to seconds)",
+                    reasons=reasons,
+                    abnormal_count_delta=invalid_count,
+                )
+            )
+    except sqlite3.Error as exc:
+        return [
+            StreamSummary(
+                path,
+                "database",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                1,
+                f"failed to enumerate SQLite tables: {exc}",
+                stream="database",
+            )
+        ]
+    finally:
+        connection.close()
+
+    if summaries:
+        return summaries
+    return [
+        StreamSummary(
+            path,
+            "database",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            1,
+            "no timestamped sensor tables found",
+            stream="database",
+        )
+    ]
+
+
 def discover_files(session_dir: Path) -> list[Path]:
     ignored_names = {"manifest.json", "manifest.tsv"}
     return sorted(
@@ -487,7 +726,11 @@ def discover_files(session_dir: Path) -> list[Path]:
         if p.is_file()
         and p.name.lower() not in ignored_names
         and "_artifacts" not in p.relative_to(session_dir).parts
-        and (p.suffix.lower() in VIDEO_SUFFIXES or p.suffix.lower() in TEXT_SUFFIXES)
+        and (
+            p.suffix.lower() in VIDEO_SUFFIXES
+            or p.suffix.lower() in TEXT_SUFFIXES
+            or p.suffix.lower() in DATABASE_SUFFIXES
+        )
     )
 
 
@@ -504,6 +747,12 @@ def summarize_file(path: Path, ffprobe: str) -> StreamSummary:
     if suffix in {".csv", ".tsv"}:
         return csv_summary(path)
     return StreamSummary(path, suffix.lstrip("."), None, None, None, None, None, None, None, 0, "")
+
+
+def summarize_path(path: Path, ffprobe: str) -> list[StreamSummary]:
+    if path.suffix.lower() in DATABASE_SUFFIXES:
+        return sqlite_sensor_summaries(path)
+    return [summarize_file(path, ffprobe)]
 
 
 def fmt(value: float | int | None, digits: int = 6) -> str:
@@ -642,15 +891,21 @@ def inspection_output_dir(session_dir: Path, segment: str | None) -> Path:
     return session_dir / "_artifacts" / (segment or "all") / "inspection"
 
 
+def inspection_file_matches_segment(path: Path, segment: str | None) -> bool:
+    if not segment or path.suffix.lower() not in VIDEO_SUFFIXES | DATABASE_SUFFIXES:
+        return True
+    name = path.name.lower()
+    if not name.startswith(("robocap_", "robowrist_")):
+        return True
+    return segment.lower() in name
+
+
 def inspection_files(session_dir: Path, segment: str | None) -> list[Path]:
-    files = discover_files(session_dir)
-    if segment:
-        files = [
-            path
-            for path in files
-            if segment in path.name or path.suffix.lower() not in VIDEO_SUFFIXES
-        ]
-    return files
+    return [
+        path
+        for path in discover_files(session_dir)
+        if inspection_file_matches_segment(path, segment)
+    ]
 
 
 def write_inspection(
@@ -669,6 +924,8 @@ def write_inspection(
         [
             "path",
             "kind",
+            "stream",
+            "time_basis",
             "source",
             "frames",
             "fps",
@@ -687,9 +944,12 @@ def write_inspection(
         "",
         f"- session: `{session_dir}`",
         f"- segment: `{segment or 'auto/all'}`",
+        f"- third_person_videos: {sum(item.stream == 'third_person_video' for item in summaries)}",
+        f"- imu_streams: {sum(item.kind.startswith('imu_') for item in summaries)}",
+        f"- mag_streams: {sum(item.kind == 'mag' for item in summaries)}",
         "",
-        "| file | kind | source | frames | fps | start_s | end_s | median_dt_ms | abnormal |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| file | kind | stream | time_basis | source | frames | fps | start_s | end_s | median_dt_ms | abnormal |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for item in summaries:
         rel = (
@@ -707,6 +967,8 @@ def write_inspection(
             [
                 str(rel),
                 item.kind,
+                item.stream,
+                item.time_basis,
                 source,
                 fmt(item.frame_count),
                 fmt(item.fps, 9),
@@ -721,7 +983,8 @@ def write_inspection(
             ]
         )
         md.append(
-            f"| `{rel}` | {item.kind} | {source} | {fmt(item.frame_count)} | "
+            f"| `{rel}` | {item.kind} | {item.stream} | {item.time_basis} | {source} | "
+            f"{fmt(item.frame_count)} | "
             f"{fmt(item.fps, 9)} | "
             f"{fmt(item.start_s, 3)} | {fmt(item.end_s, 3)} | {fmt(item.median_dt_ms, 3)} | "
             f"{item.abnormal_count} |"
@@ -752,9 +1015,10 @@ def write_inspection(
                 if item.path.is_relative_to(session_dir)
                 else item.path
             )
-            md.append(f"- `{rel}`: {item.abnormal_reason or 'summary unavailable'}")
+            stream = item.stream or item.kind
+            md.append(f"- `{rel}` [{stream}]: {item.abnormal_reason or 'summary unavailable'}")
     else:
-        md.append("- No abnormal text-stream intervals detected by the median-delta rule.")
+        md.append("- No abnormal stream intervals detected by the median-delta rule.")
     write_text(report_path, "\n".join(md) + "\n")
     with (out_dir / "frame_rate_report.tsv").open("w", encoding="utf-8", newline="") as f:
         csv.writer(f, delimiter="\t").writerows(rows)
@@ -771,7 +1035,7 @@ def resolve_session_auto_ratio(
         if estimate is not None:
             return estimate
     files = inspection_files(session_dir, segment)
-    summaries = [summarize_file(path, ffprobe) for path in files]
+    summaries = [summary for path in files for summary in summarize_path(path, ffprobe)]
     return write_inspection(session_dir, segment, summaries, out_dir)
 
 
@@ -1198,7 +1462,7 @@ def command_export(args: argparse.Namespace) -> int:
 def command_inspect(args: argparse.Namespace) -> int:
     files = inspection_files(args.session_dir, args.segment)
     ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
-    summaries = [summarize_file(path, ffprobe) for path in files]
+    summaries = [summary for path in files for summary in summarize_path(path, ffprobe)]
     out_dir = args.output or inspection_output_dir(args.session_dir, args.segment)
     write_inspection(args.session_dir, args.segment, summaries, out_dir)
     print(f"Wrote inspection reports to {out_dir}")

@@ -216,24 +216,61 @@ def test_default_rrd_names_do_not_include_legacy_dual_hands_gt_suffix(tmp_path: 
     )
 
 
-def test_gt_visual_style_uses_vivid_side_colors_for_every_skeleton_format() -> None:
+def test_gt_visual_style_uses_only_point_and_line_colors_for_all_formats() -> None:
     for suffix in (".bvh", ".trc", ".csv", ".xrs"):
-        left_color, _, _ = exporter.gt_file_visual_style(Path(f"Body0_Left{suffix}"))
-        right_color, _, _ = exporter.gt_file_visual_style(Path(f"Body0_Right{suffix}"))
-        assert left_color == exporter.GT_LEFT_SKELETON_COLOR
-        assert right_color == exporter.GT_RIGHT_SKELETON_COLOR
+        for stem in ("Body0_Left", "Body0_Right", "Tracker0"):
+            style = exporter.gt_file_visual_style(Path(f"{stem}{suffix}"))
+            assert style.point_color == exporter.GT_POINT_COLOR
+            assert style.line_color == exporter.GT_LINE_COLOR
 
-    tracker_color, _, _ = exporter.gt_file_visual_style(Path("Tracker0.csv"))
-    assert tracker_color == exporter.GT_TRACKER_COLOR
-    assert exporter.GTMarkerTrack.__dataclass_fields__["colors"].default == (
-        exporter.GT_GENERIC_SKELETON_COLOR
+    assert exporter.GTMarkerTrack.__dataclass_fields__["point_color"].default == (
+        exporter.GT_POINT_COLOR
     )
-    assert (255, 210, 80) not in {
-        exporter.GT_LEFT_SKELETON_COLOR,
-        exporter.GT_RIGHT_SKELETON_COLOR,
-        exporter.GT_GENERIC_SKELETON_COLOR,
-        exporter.GT_TRACKER_COLOR,
+    assert exporter.GTMarkerTrack.__dataclass_fields__["line_color"].default == (
+        exporter.GT_LINE_COLOR
+    )
+    assert {exporter.GT_POINT_COLOR, exporter.GT_LINE_COLOR} == {
+        (24, 72, 255),
+        (255, 45, 45),
     }
+
+
+def test_gt_logging_writes_blue_points_and_red_lines(monkeypatch) -> None:
+    point_calls = []
+    line_calls = []
+
+    class FakeTimeline:
+        alignment_mode = "time"
+
+        def set_time(self, timestamp_ns, frame_index=None):
+            return None
+
+    monkeypatch.setattr(
+        exporter.rr,
+        "Points3D",
+        lambda *args, **kwargs: point_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        exporter.rr,
+        "LineStrips3D",
+        lambda *args, **kwargs: line_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(exporter.rr, "log", lambda *args, **kwargs: None)
+
+    track = exporter.GTMarkerTrack(
+        label="body",
+        entity="gt/tracks/trc/body",
+        source="trc",
+        timestamps_ns=np.asarray([0], dtype=np.int64),
+        positions=np.asarray([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]], dtype=np.float32),
+        marker_names=("root", "tip"),
+        connections=((0, 1),),
+    )
+
+    exporter.log_gt_marker_track(track, None, FakeTimeline())
+
+    assert point_calls == [{"radii": track.radius, "colors": list(exporter.GT_POINT_COLOR)}]
+    assert line_calls == [{"radii": track.radius * 0.45, "colors": list(exporter.GT_LINE_COLOR)}]
 
 
 def test_parse_trc_reads_multiple_markers(tmp_path: Path) -> None:

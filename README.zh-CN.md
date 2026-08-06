@@ -165,6 +165,11 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 robocap-rerun inspect Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1
 ```
 
+检查范围包含 Robocap/robowrist 视频、第三人称视频、GT 运动文件，以及 IMU/MAG SQLite 数据库中
+带时间戳的数据表。ACC、GYRO、MAG 会作为独立数据流分别报告。视频 `fps` 使用 ffprobe 给出的全程
+平均值；中位/最小/最大帧间隔和异常数量使用真实逐帧时间戳计算。MP4 存在数值型 `comment` 捕获时间时，
+起终时间会落在该 capture-time 轴上；缺少该 metadata 时，报告会明确标记为相对媒体时间。
+
 生成时间对齐版 RRD：
 
 ```bat

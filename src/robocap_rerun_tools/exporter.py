@@ -222,11 +222,9 @@ GT_NOTE_ENTITY = "notes/gt"
 GT_FILE_SUFFIXES = frozenset({".bvh", ".trc", ".csv", ".xrs"})
 GT_DIRECTORY_IGNORES = frozenset({"_artifacts", ".venv"})
 
-# Saturated colors remain legible against Rerun's dark 3D background.
-GT_LEFT_SKELETON_COLOR = (24, 72, 255)
-GT_RIGHT_SKELETON_COLOR = (255, 45, 45)
-GT_GENERIC_SKELETON_COLOR = (0, 145, 255)
-GT_TRACKER_COLOR = (0, 220, 255)
+# Use exactly two saturated colors for all rigid-body and skeleton geometry.
+GT_POINT_COLOR = (24, 72, 255)
+GT_LINE_COLOR = (255, 45, 45)
 
 VIDEO_PATTERNS = {
     "left": "robocap_{segment}_video_left.mp4",
@@ -481,7 +479,8 @@ class GTMarkerTrack:
     positions: np.ndarray
     marker_names: tuple[str, ...]
     connections: tuple[tuple[int, int], ...] = ()
-    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR
+    point_color: tuple[int, int, int] = GT_POINT_COLOR
+    line_color: tuple[int, int, int] = GT_LINE_COLOR
     radius: float = 0.018
 
 
@@ -527,6 +526,14 @@ class GTConfig:
 
 
 @dataclass(frozen=True)
+class GTVisualStyle:
+    point_color: tuple[int, int, int] = GT_POINT_COLOR
+    line_color: tuple[int, int, int] = GT_LINE_COLOR
+    radius: float = 0.014
+    connect_hands: bool = False
+
+
+@dataclass(frozen=True)
 class GTFileSet:
     label: str
     side: str | None
@@ -534,7 +541,8 @@ class GTFileSet:
     trc: Path | None = None
     csv: Path | None = None
     xrs: Path | None = None
-    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR
+    point_color: tuple[int, int, int] = GT_POINT_COLOR
+    line_color: tuple[int, int, int] = GT_LINE_COLOR
     radius: float = 0.014
     connect_hands: bool = False
 
@@ -1815,7 +1823,8 @@ def load_marker_track_from_trc(
     scale: float,
     max_frames: int | None,
     marker_limit: int | None = None,
-    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
+    point_color: tuple[int, int, int] = GT_POINT_COLOR,
+    line_color: tuple[int, int, int] = GT_LINE_COLOR,
     radius: float = 0.018,
     connect_hands: bool = False,
 ) -> GTMarkerTrack:
@@ -1830,7 +1839,8 @@ def load_marker_track_from_trc(
         positions=positions,
         marker_names=marker_names,
         connections=default_hand_connections(marker_names) if connect_hands else (),
-        colors=colors,
+        point_color=point_color,
+        line_color=line_color,
         radius=radius,
     )
 
@@ -1983,7 +1993,8 @@ def load_bvh_track(
     scale: float,
     max_frames: int | None,
     timestamps_ns: np.ndarray | None = None,
-    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
+    point_color: tuple[int, int, int] = GT_POINT_COLOR,
+    line_color: tuple[int, int, int] = GT_LINE_COLOR,
     radius: float = 0.014,
 ) -> GTMarkerTrack:
     track_timestamps_ns, joint_names, positions, parents = parse_bvh(
@@ -1998,7 +2009,8 @@ def load_bvh_track(
         positions=positions,
         marker_names=joint_names,
         connections=connections,
-        colors=colors,
+        point_color=point_color,
+        line_color=line_color,
         radius=radius,
     )
 
@@ -2172,7 +2184,8 @@ def load_csv_track(
     source: str,
     scale: float,
     max_frames: int | None,
-    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
+    point_color: tuple[int, int, int] = GT_POINT_COLOR,
+    line_color: tuple[int, int, int] = GT_LINE_COLOR,
     radius: float = 0.014,
 ) -> GTMarkerTrack:
     timestamps_ns, joint_names, positions, parents = parse_nokov_csv(path, scale, max_frames)
@@ -2185,7 +2198,8 @@ def load_csv_track(
         positions=positions,
         marker_names=joint_names,
         connections=connections,
-        colors=colors,
+        point_color=point_color,
+        line_color=line_color,
         radius=radius,
     )
 
@@ -2197,7 +2211,8 @@ def load_xrs_track(
     source: str,
     scale: float,
     max_frames: int | None,
-    colors: tuple[int, int, int] = GT_GENERIC_SKELETON_COLOR,
+    point_color: tuple[int, int, int] = GT_POINT_COLOR,
+    line_color: tuple[int, int, int] = GT_LINE_COLOR,
     radius: float = 0.014,
 ) -> GTMarkerTrack:
     timestamps_ns, joint_names, positions, parents = parse_xrs(path, scale, max_frames)
@@ -2210,7 +2225,8 @@ def load_xrs_track(
         positions=positions,
         marker_names=joint_names,
         connections=connections,
-        colors=colors,
+        point_color=point_color,
+        line_color=line_color,
         radius=radius,
     )
 
@@ -2605,18 +2621,14 @@ def infer_gt_side(path: Path) -> str | None:
     return None
 
 
-def gt_file_visual_style(path: Path) -> tuple[tuple[int, int, int], float, bool]:
+def gt_file_visual_style(path: Path) -> GTVisualStyle:
     lowered = path.stem.lower()
-    if "tracker" in lowered or "head" in lowered:
-        return GT_TRACKER_COLOR, 0.035, False
     side = infer_gt_side(path)
-    if side == "right":
-        return GT_RIGHT_SKELETON_COLOR, 0.014, True
-    if side == "left":
-        return GT_LEFT_SKELETON_COLOR, 0.014, True
-    if "hand" in lowered:
-        return GT_GENERIC_SKELETON_COLOR, 0.014, True
-    return GT_GENERIC_SKELETON_COLOR, 0.014, False
+    is_tracker = "tracker" in lowered or "head" in lowered
+    return GTVisualStyle(
+        radius=0.035 if is_tracker else 0.014,
+        connect_hands=not is_tracker and (side is not None or "hand" in lowered),
+    )
 
 
 def discover_gt_file_sets(gt_dir: Path) -> list[GTFileSet]:
@@ -2672,13 +2684,14 @@ def gt_file_sets_from_paths(gt_dir: Path, paths: Sequence[Path]) -> list[GTFileS
         count = used_labels.get(base_label, 0)
         used_labels[base_label] = count + 1
         label = base_label if count == 0 else f"{base_label}_{count + 1}"
-        colors, radius, connect_hands = gt_file_visual_style(representative)
+        visual_style = gt_file_visual_style(representative)
         kwargs: dict[str, Any] = {
             "label": label,
             "side": infer_gt_side(representative),
-            "colors": colors,
-            "radius": radius,
-            "connect_hands": connect_hands,
+            "point_color": visual_style.point_color,
+            "line_color": visual_style.line_color,
+            "radius": visual_style.radius,
+            "connect_hands": visual_style.connect_hands,
         }
         for path in group:
             kwargs[suffix_to_field[path.suffix.lower()]] = path
@@ -2743,7 +2756,8 @@ def load_test_gt_dir(
                     timestamps_ns=timestamps_from_trc(file_set.trc)
                     if file_set.trc is not None
                     else None,
-                    colors=file_set.colors,
+                    point_color=file_set.point_color,
+                    line_color=file_set.line_color,
                     radius=file_set.radius,
                 )
             except Exception as exc:
@@ -2768,7 +2782,8 @@ def load_test_gt_dir(
                     scale,
                     max_frames,
                     marker_limit=4 if file_set.label == "camera_trackers" else None,
-                    colors=file_set.colors,
+                    point_color=file_set.point_color,
+                    line_color=file_set.line_color,
                     radius=file_set.radius,
                     connect_hands=file_set.connect_hands,
                 )
@@ -2793,7 +2808,8 @@ def load_test_gt_dir(
                     "csv",
                     scale,
                     max_frames,
-                    colors=file_set.colors,
+                    point_color=file_set.point_color,
+                    line_color=file_set.line_color,
                     radius=file_set.radius,
                 )
             except Exception as exc:
@@ -2817,7 +2833,8 @@ def load_test_gt_dir(
                     "xrs",
                     scale,
                     max_frames,
-                    colors=file_set.colors,
+                    point_color=file_set.point_color,
+                    line_color=file_set.line_color,
                     radius=file_set.radius,
                 )
             except Exception as exc:
@@ -3050,14 +3067,14 @@ def log_gt_skeleton(
         timeline.set_time(int(timestamp_ns), frame_index)
         rr.log(
             f"{GT_SKELETON_ENTITY}/joints",
-            rr.Points3D(joints, radii=0.018, colors=list(GT_GENERIC_SKELETON_COLOR)),
+            rr.Points3D(joints, radii=0.018, colors=list(GT_POINT_COLOR)),
         )
         rr.log(
             f"{GT_SKELETON_ENTITY}/bones",
             rr.LineStrips3D(
                 skeleton_bone_strips(joints, track.parents),
                 radii=0.01,
-                colors=list(GT_GENERIC_SKELETON_COLOR),
+                colors=list(GT_LINE_COLOR),
             ),
         )
 
@@ -3137,7 +3154,7 @@ def log_gt_marker_track(
         timeline.set_time(int(timestamp_ns), frame_index)
         rr.log(
             f"{track.entity}/points",
-            rr.Points3D(positions, radii=track.radius, colors=list(track.colors)),
+            rr.Points3D(positions, radii=track.radius, colors=list(track.point_color)),
         )
         if track.connections:
             rr.log(
@@ -3145,7 +3162,7 @@ def log_gt_marker_track(
                 rr.LineStrips3D(
                     marker_connection_strips(positions, track.connections),
                     radii=track.radius * 0.45,
-                    colors=list(track.colors),
+                    colors=list(track.line_color),
                 ),
             )
 
