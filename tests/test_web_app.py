@@ -18,6 +18,44 @@ def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
     assert "timeout" not in invocation["kwargs"]
 
 
+def test_web_inspect_prints_generated_markdown_report(tmp_path, monkeypatch) -> None:
+    report_path = tmp_path / "_artifacts" / "segment1" / "inspection" / "frame_rate_report.md"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(
+        "# Robocap/NOKOV inspection\n\n| file | kind |\n|---|---|\n| `third.mp4` | video |\n",
+        encoding="utf-8",
+    )
+    captured = []
+    monkeypatch.setattr(
+        web_app,
+        "run_cli_result",
+        lambda args: (
+            captured.extend(args) or (0, f"Wrote inspection reports to {report_path.parent}")
+        ),
+    )
+
+    output = web_app.inspect_session(str(tmp_path), "segment1")
+
+    assert captured == ["inspect", str(tmp_path), "--segment", "segment1"]
+    assert "Wrote inspection reports" in output
+    assert f"Report: `{report_path}`" in output
+    assert "# Robocap/NOKOV inspection" in output
+    assert "| `third.mp4` | video |" in output
+
+
+def test_web_inspect_does_not_print_stale_report_after_failure(tmp_path, monkeypatch) -> None:
+    report_path = tmp_path / "_artifacts" / "segment1" / "inspection" / "frame_rate_report.md"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("# stale report\n", encoding="utf-8")
+    monkeypatch.setattr(web_app, "run_cli_result", lambda _args: (2, "inspection failed"))
+
+    output = web_app.inspect_session(str(tmp_path), "segment1")
+
+    assert "inspection failed" in output
+    assert "Command failed with exit code 2" in output
+    assert "stale report" not in output
+
+
 def test_check_environment_omits_repository_details(monkeypatch) -> None:
     queried_tools: list[str] = []
 

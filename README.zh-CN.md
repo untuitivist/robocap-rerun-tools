@@ -122,6 +122,8 @@ http://127.0.0.1:7860
 分支、远端与版本信息。它也可以运行 `uv pip install -e ".[web]"` 安装或更新依赖；依赖更新会打开
 一个新的 `cmd` 窗口，先关闭当前 web 进程，再打印更新日志，最后通过 `start_web.bat` 自动重启。
 
+Web“检查”成功后，顶部输出框会直接打印完整的 `frame_rate_report.md`，而不只显示报告保存路径。
+
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`
 窗口里运行，方便查看 Rerun 自己的日志。

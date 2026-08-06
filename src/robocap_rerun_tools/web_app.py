@@ -29,6 +29,7 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 The export controls can independently include or exclude MAG, IMU, robowrist, and third-person video data.
 Inspection always discovers third-person videos and checks each timestamped ACC, gyro, and MAG SQLite
 table as a separate stream. Video average FPS comes from ffprobe; interval statistics use real frame timestamps.
+After inspection, the output box prints the complete generated Markdown report.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
 control is turned off and disabled instead of pretending that wrist data can be exported.
 Only GT formats that are present create tabs. BVH/TRC/CSV/XRS each have separate 3D views, while rigid
@@ -88,6 +89,7 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。
 检查会始终发现第三人称视频，并把 SQLite 中带时间戳的 ACC、GYRO、MAG 表作为独立数据流检查。
 视频平均 FPS 来自 ffprobe，帧间隔统计使用真实逐帧时间戳。
+检查完成后，输出框会直接打印生成的完整 Markdown 报告。
 “扫描文件”会检测标准 robowrist 目录和数据流；没有检测到时会自动取消并禁用 robowrist 选项，
 不会继续显示一个实际无数据可导出的开启状态。
 只有实际存在的 GT 格式才会生成 tab。BVH/TRC/CSV/XRS 分别有独立的 3D 视图；同一 CSV/XRS
@@ -353,13 +355,21 @@ def run_process(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
     return proc.returncode, "\n".join(output_parts)
 
 
-def run_cli(args: list[str]) -> str:
+def run_cli_result(args: list[str]) -> tuple[int, str]:
     command = [sys.executable, "-m", "robocap_rerun_tools.cli", *args]
-    returncode, output = run_process(command)
+    return run_process(command)
+
+
+def format_cli_result(returncode: int, output: str) -> str:
     if returncode != 0:
         suffix = f"\nCommand failed with exit code {returncode}."
         return f"{output}{suffix}" if output else suffix.strip()
     return output or "Done."
+
+
+def run_cli(args: list[str]) -> str:
+    returncode, output = run_cli_result(args)
+    return format_cli_result(returncode, output)
 
 
 def package_version(name: str) -> str:
@@ -634,10 +644,31 @@ def open_rerun_webviewer(rrd_file: str, viewer_port: int) -> tuple[str, int]:
 
 
 def inspect_session(session_dir: str, segment: str) -> str:
-    args = ["inspect", session_path(session_dir)]
-    if optional_text(segment):
-        args.extend(["--segment", segment.strip()])
-    return run_cli(args)
+    resolved_session = Path(session_path(session_dir))
+    resolved_segment = optional_text(segment)
+    args = ["inspect", str(resolved_session)]
+    if resolved_segment:
+        args.extend(["--segment", resolved_segment])
+    returncode, command_output = run_cli_result(args)
+    output = format_cli_result(returncode, command_output)
+    if returncode != 0:
+        return output
+
+    report_path = (
+        resolved_session
+        / "_artifacts"
+        / (resolved_segment or "all")
+        / "inspection"
+        / "frame_rate_report.md"
+    )
+    try:
+        report = report_path.read_text(encoding="utf-8-sig", errors="replace").strip()
+    except OSError as exc:
+        return (
+            f"{output}\n\nInspection command succeeded, but the Markdown report could not be read:\n"
+            f"`{report_path}`\n\n{exc}"
+        )
+    return f"{output}\n\nReport: `{report_path}`\n\n{report}"
 
 
 def package_data(

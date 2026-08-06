@@ -64,6 +64,8 @@ start_web.bat
 
 Then use `http://127.0.0.1:7860` for inspect, package, offset inspection, and RRD export.
 The web UI has a Chinese/English language switch and a built-in Docs tab.
+After a successful Web inspection, the output box prints the complete generated
+`frame_rate_report.md`, not only the report path.
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
 synchronizes it across the Export and Offset tabs, and restores it after Web UI restarts. On Windows,
 the setting is stored in `%LOCALAPPDATA%\robocap-rerun-tools\web_settings.json`.
