@@ -158,7 +158,9 @@ VIDEO_SLOT_ORDER = (
     "right_wrist_down",
 )
 
-EXPORT_CONFIG_SCHEMA = "source-script-frame-timeline-v1"
+EXPORT_CONFIG_SCHEMA = "source-script-frame-timeline-v2"
+NOKOV_FRAME_RATE_HZ = 240.0
+MAX_INTERPOLATION_GAP_FRAMES = 240
 
 SIGNAL_SLOT_ORDER = (
     "middle_mag",
@@ -225,6 +227,8 @@ GT_DIRECTORY_IGNORES = frozenset({"_artifacts", ".venv"})
 # Use exactly two saturated colors for all rigid-body and skeleton geometry.
 GT_POINT_COLOR = (24, 72, 255)
 GT_LINE_COLOR = (255, 45, 45)
+GT_INTERPOLATED_COLOR = (255, 0, 0)
+GT_INTERPOLATED_MESH_COLOR = (1.0, 0.0, 0.0)
 
 VIDEO_PATTERNS = {
     "left": "robocap_{segment}_video_left.mp4",
@@ -442,6 +446,7 @@ class ExportNameParameters:
     bvh_coordinate_scale: float
     gt_time_offset_ns: int
     gt_max_frames: int | None
+    interpolate_dropped_frames: bool
     include_robowrist: bool
     include_mag: bool
     include_imu: bool
@@ -482,6 +487,7 @@ class GTMarkerTrack:
     point_color: tuple[int, int, int] = GT_POINT_COLOR
     line_color: tuple[int, int, int] = GT_LINE_COLOR
     radius: float = 0.018
+    interpolated_mask: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -493,6 +499,16 @@ class GTManoMeshTrack:
     vertices: np.ndarray
     faces: np.ndarray
     color: tuple[float, float, float] = (0.78, 0.78, 0.82)
+    interpolated_mask: np.ndarray | None = None
+
+
+@dataclass(frozen=True)
+class InterpolatedSamples:
+    timestamps_ns: np.ndarray
+    values: np.ndarray
+    interpolated_mask: np.ndarray
+    inserted_frames: int
+    skipped_discontinuities: int
 
 
 @dataclass(frozen=True)
@@ -547,11 +563,54 @@ class GTFileSet:
     connect_hands: bool = False
 
 
-def find_first_relative_path(session_dir: Path, pattern: str) -> str | None:
-    matches = sorted(session_dir.glob(pattern))
+def source_file_candidates(session_dir: Path, pattern: str) -> list[Path]:
+    """Find source files without accidentally selecting generated artifacts."""
+    direct_matches = list(session_dir.glob(pattern))
+    recursive_matches = list(session_dir.rglob(Path(pattern).name))
+    direct_keys = {
+        path.relative_to(session_dir).as_posix().casefold()
+        for path in direct_matches
+        if path.is_file()
+    }
+    candidates: dict[str, Path] = {}
+    for path in (*direct_matches, *recursive_matches):
+        if not path.is_file():
+            continue
+        relative_path = path.relative_to(session_dir)
+        if any(part in GT_DIRECTORY_IGNORES for part in relative_path.parts):
+            continue
+        candidates.setdefault(relative_path.as_posix().casefold(), path)
+    ordered_keys = sorted(candidates, key=lambda key: (key not in direct_keys, key))
+    return [candidates[key] for key in ordered_keys]
+
+
+def signal_candidate_rank(path: Path, table: str, columns: Sequence[str]) -> int:
+    """Prefer a non-empty SQLite stream with the expected table and columns."""
+    try:
+        with sqlite3.connect(path) as connection:
+            available_columns = {
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            }
+            if not {"timestamp", *columns}.issubset(available_columns):
+                return 2
+            row_count = int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+    except sqlite3.Error:
+        return 3
+    return 0 if row_count > 0 else 1
+
+
+def find_first_relative_path(
+    session_dir: Path,
+    pattern: str,
+    table: str | None = None,
+    columns: Sequence[str] = (),
+) -> str | None:
+    matches = source_file_candidates(session_dir, pattern)
+    if table is not None:
+        matches.sort(key=lambda path: (signal_candidate_rank(path, table, columns), str(path)))
     if not matches:
         return None
-    return str(matches[0].relative_to(session_dir)).replace("\\", "/")
+    return matches[0].relative_to(session_dir).as_posix()
 
 
 def run_json(cmd: list[str]) -> dict:
@@ -712,6 +771,13 @@ def fetch_signal_rows(
     cols = tuple(columns)
     select_cols = ", ".join(("timestamp", *cols))
     with sqlite3.connect(db_path) as con:
+        available_columns = {str(row[1]) for row in con.execute(f"PRAGMA table_info({table})")}
+        missing_columns = {"timestamp", *cols} - available_columns
+        if missing_columns:
+            raise ValueError(
+                f"missing SQLite columns in {db_path}:{table}: {sorted(missing_columns)}; "
+                f"available={sorted(available_columns)}"
+            )
         rows = con.execute(f"select {select_cols} from {table} order by timestamp").fetchall()
 
     if not rows:
@@ -799,7 +865,7 @@ def discover_session(
         if not include_imu and label.endswith(("_acc", "_gyro")):
             continue
         pattern = pattern.format(segment=segment_name or "*")
-        relative_path = find_first_relative_path(session_dir, pattern)
+        relative_path = find_first_relative_path(session_dir, pattern, table, columns)
         if relative_path is None:
             notes[label] = NoteSpec(label=label, origin=f"notes/signal/{label}", text="no data")
         else:
@@ -933,6 +999,7 @@ def with_export_parameter_suffix(path: Path, parameters: ExportNameParameters) -
     readable_tokens = [
         *alignment_tokens,
         frame_token,
+        f"interp{int(parameters.interpolate_dropped_frames)}",
         f"rt-{compact_filename_token(parameters.retarget_model)}",
         media_token,
         f"bp-{compact_filename_token(parameters.blueprint_preset)}",
@@ -1087,6 +1154,193 @@ def infer_gt_frame_rate_hz(gt_config: GTConfig) -> float | None:
         if duration_s > 0:
             return round((len(timestamps_ns) - 1) / duration_s)
     return None
+
+
+def interpolate_dropped_samples_with_mask(
+    timestamps_ns: np.ndarray,
+    values: np.ndarray,
+    expected_fps: float = NOKOV_FRAME_RATE_HZ,
+    max_gap_frames: int = MAX_INTERPOLATION_GAP_FRAMES,
+    existing_interpolated_mask: np.ndarray | None = None,
+) -> InterpolatedSamples:
+    """Linearly fill timestamp gaps that imply missing samples at the expected rate."""
+    timestamps_ns = np.asarray(timestamps_ns, dtype=np.int64)
+    values = np.asarray(values)
+    if values.ndim == 0 or values.shape[0] != len(timestamps_ns):
+        raise ValueError(
+            "Interpolation values must have the same leading dimension as timestamps: "
+            f"timestamps={len(timestamps_ns)}, values={values.shape}"
+        )
+    if not np.isfinite(expected_fps) or expected_fps <= 0:
+        raise ValueError(f"Interpolation FPS must be finite and positive, got {expected_fps!r}.")
+    if max_gap_frames < 0:
+        raise ValueError("Maximum interpolation gap must be non-negative.")
+    if existing_interpolated_mask is None:
+        source_interpolated_mask = np.zeros(len(timestamps_ns), dtype=bool)
+    else:
+        source_interpolated_mask = np.asarray(existing_interpolated_mask, dtype=bool)
+        if len(source_interpolated_mask) != len(timestamps_ns):
+            raise ValueError(
+                "Existing interpolation mask must have the same length as timestamps: "
+                f"timestamps={len(timestamps_ns)}, mask={len(source_interpolated_mask)}"
+            )
+    if len(timestamps_ns) < 2:
+        return InterpolatedSamples(
+            timestamps_ns=timestamps_ns.copy(),
+            values=values.copy(),
+            interpolated_mask=source_interpolated_mask.copy(),
+            inserted_frames=0,
+            skipped_discontinuities=0,
+        )
+
+    spans: list[int] = []
+    inserted_frames = 0
+    skipped_discontinuities = 0
+    for source_index in range(len(timestamps_ns) - 1):
+        start_ns = timestamps_ns[source_index]
+        end_ns = timestamps_ns[source_index + 1]
+        delta_ns = int(end_ns) - int(start_ns)
+        estimated_span = (
+            max(1, int(np.floor(delta_ns * expected_fps / 1e9 + 0.5))) if delta_ns > 0 else 1
+        )
+        missing_frames = estimated_span - 1
+        if missing_frames > max_gap_frames:
+            spans.append(1)
+            skipped_discontinuities += 1
+        else:
+            spans.append(estimated_span)
+            inserted_frames += missing_frames
+
+    output_count = 1 + sum(spans)
+    output_timestamps = np.empty(output_count, dtype=np.int64)
+    output_values = np.empty((output_count, *values.shape[1:]), dtype=values.dtype)
+    output_interpolated_mask = np.zeros(output_count, dtype=bool)
+    output_timestamps[0] = timestamps_ns[0]
+    output_values[0] = values[0]
+    output_interpolated_mask[0] = source_interpolated_mask[0]
+    output_index = 1
+    for source_index, span in enumerate(spans):
+        start_ns = int(timestamps_ns[source_index])
+        end_ns = int(timestamps_ns[source_index + 1])
+        start_value = values[source_index]
+        end_value = values[source_index + 1]
+        for step in range(1, span + 1):
+            if step == span:
+                output_timestamps[output_index] = end_ns
+                output_values[output_index] = end_value
+                output_interpolated_mask[output_index] = source_interpolated_mask[source_index + 1]
+            else:
+                fraction = step / span
+                output_timestamps[output_index] = round(start_ns + (end_ns - start_ns) * fraction)
+                output_values[output_index] = start_value + (end_value - start_value) * fraction
+                output_interpolated_mask[output_index] = True
+            output_index += 1
+    return InterpolatedSamples(
+        timestamps_ns=output_timestamps,
+        values=output_values,
+        interpolated_mask=output_interpolated_mask,
+        inserted_frames=inserted_frames,
+        skipped_discontinuities=skipped_discontinuities,
+    )
+
+
+def interpolate_dropped_samples(
+    timestamps_ns: np.ndarray,
+    values: np.ndarray,
+    expected_fps: float = NOKOV_FRAME_RATE_HZ,
+    max_gap_frames: int = MAX_INTERPOLATION_GAP_FRAMES,
+) -> tuple[np.ndarray, np.ndarray, int, int]:
+    """Backward-compatible interpolation result without the frame mask."""
+    result = interpolate_dropped_samples_with_mask(
+        timestamps_ns,
+        values,
+        expected_fps,
+        max_gap_frames,
+    )
+    return (
+        result.timestamps_ns,
+        result.values,
+        result.inserted_frames,
+        result.skipped_discontinuities,
+    )
+
+
+def interpolate_gt_dropped_frames(
+    gt_config: GTConfig | None,
+    expected_fps: float = NOKOV_FRAME_RATE_HZ,
+    max_gap_frames: int = MAX_INTERPOLATION_GAP_FRAMES,
+) -> GTConfig | None:
+    if gt_config is None:
+        return None
+
+    details: list[str] = []
+    marker_tracks: list[GTMarkerTrack] = []
+    for track in gt_config.marker_tracks:
+        result = interpolate_dropped_samples_with_mask(
+            track.timestamps_ns,
+            track.positions,
+            expected_fps,
+            max_gap_frames,
+            track.interpolated_mask,
+        )
+        marker_tracks.append(
+            replace(
+                track,
+                timestamps_ns=result.timestamps_ns,
+                positions=result.values,
+                interpolated_mask=result.interpolated_mask,
+            )
+        )
+        if result.inserted_frames or result.skipped_discontinuities:
+            details.append(
+                f"{track.source}:{track.label} +{result.inserted_frames}"
+                + (
+                    f" ({result.skipped_discontinuities} long discontinuities skipped)"
+                    if result.skipped_discontinuities
+                    else ""
+                )
+            )
+
+    mano_mesh_tracks: list[GTManoMeshTrack] = []
+    for track in gt_config.mano_mesh_tracks:
+        result = interpolate_dropped_samples_with_mask(
+            track.timestamps_ns,
+            track.vertices,
+            expected_fps,
+            max_gap_frames,
+            track.interpolated_mask,
+        )
+        mano_mesh_tracks.append(
+            replace(
+                track,
+                timestamps_ns=result.timestamps_ns,
+                vertices=result.values,
+                interpolated_mask=result.interpolated_mask,
+            )
+        )
+        if result.inserted_frames or result.skipped_discontinuities:
+            details.append(
+                f"mesh/{track.source}:{track.label} +{result.inserted_frames}"
+                + (
+                    f" ({result.skipped_discontinuities} long discontinuities skipped)"
+                    if result.skipped_discontinuities
+                    else ""
+                )
+            )
+
+    summary = (
+        f"NOKOV/GT dropped-frame interpolation enabled at {expected_fps:g} FPS; "
+        f"maximum bridged gap={max_gap_frames} missing frames; "
+        + ("; ".join(details) if details else "no missing-frame gaps detected")
+    )
+    note = gt_config.note or ""
+    note = (note + "\n" if note else "") + summary
+    return replace(
+        gt_config,
+        marker_tracks=tuple(marker_tracks),
+        mano_mesh_tracks=tuple(mano_mesh_tracks),
+        note=note,
+    )
 
 
 def reference_timestamp_at_video_frame(
@@ -1741,6 +1995,9 @@ def downsample_gt_marker_track(track: GTMarkerTrack, max_frames: int | None) -> 
         track,
         timestamps_ns=track.timestamps_ns[indexes],
         positions=track.positions[indexes],
+        interpolated_mask=(
+            track.interpolated_mask[indexes] if track.interpolated_mask is not None else None
+        ),
     )
 
 
@@ -2551,6 +2808,7 @@ def mano_mesh_from_marker_track(
         vertices=np.asarray(frames, dtype=np.float32),
         faces=template.faces,
         color=color,
+        interpolated_mask=track.interpolated_mask,
     )
 
 
@@ -2601,6 +2859,30 @@ def timestamps_from_trc(path: Path) -> np.ndarray | None:
         return None
     timestamps_ns, _, _ = parse_trc(path, 1.0, None, marker_limit=1)
     return timestamps_ns
+
+
+def optional_timestamps_from_trc(path: Path | None) -> np.ndarray | None:
+    if path is None:
+        return None
+    try:
+        return timestamps_from_trc(path)
+    except (OSError, UnicodeError, ValueError, IndexError):
+        return None
+
+
+def synchronize_marker_track_timestamps(
+    track: GTMarkerTrack,
+    reference_timestamps_ns: np.ndarray | None,
+    max_frames: int | None,
+) -> GTMarkerTrack:
+    """Use a sibling TRC clock when the two exports contain the same source frames."""
+    if reference_timestamps_ns is None:
+        return track
+    indexes = downsample_indexes(len(reference_timestamps_ns), max_frames)
+    synchronized_timestamps_ns = reference_timestamps_ns[indexes]
+    if len(synchronized_timestamps_ns) != len(track.timestamps_ns):
+        return track
+    return replace(track, timestamps_ns=synchronized_timestamps_ns.copy())
 
 
 def first_existing(paths: Iterable[Path]) -> Path | None:
@@ -2712,6 +2994,27 @@ def gt_file_sets_from_paths(gt_dir: Path, paths: Sequence[Path]) -> list[GTFileS
     return file_sets
 
 
+def gt_file_set_trc_clock_path(file_set: GTFileSet) -> Path | None:
+    if file_set.trc is not None:
+        return file_set.trc
+    source_path = next(
+        (path for path in (file_set.bvh, file_set.csv, file_set.xrs) if path is not None), None
+    )
+    if source_path is None:
+        return None
+    matching_stem = source_path.stem.casefold()
+    return next(
+        (
+            path
+            for path in sorted(source_path.parent.iterdir())
+            if path.is_file()
+            and path.suffix.casefold() == ".trc"
+            and path.stem.casefold() == matching_stem
+        ),
+        None,
+    )
+
+
 def append_note(note_parts: list[str], message: str) -> None:
     if message not in note_parts:
         note_parts.append(message)
@@ -2757,6 +3060,9 @@ def load_test_gt_dir(
     )
 
     for file_set in file_sets:
+        sibling_trc_timestamps_ns = optional_timestamps_from_trc(
+            gt_file_set_trc_clock_path(file_set)
+        )
         if file_set.bvh is not None:
             try:
                 bvh_track = load_bvh_track(
@@ -2766,9 +3072,7 @@ def load_test_gt_dir(
                     "bvh",
                     bvh_scale,
                     max_frames,
-                    timestamps_ns=timestamps_from_trc(file_set.trc)
-                    if file_set.trc is not None
-                    else None,
+                    timestamps_ns=sibling_trc_timestamps_ns,
                     point_color=file_set.point_color,
                     line_color=file_set.line_color,
                     radius=file_set.radius,
@@ -2825,6 +3129,9 @@ def load_test_gt_dir(
                     line_color=file_set.line_color,
                     radius=file_set.radius,
                 )
+                csv_track = synchronize_marker_track_timestamps(
+                    csv_track, sibling_trc_timestamps_ns, max_frames
+                )
             except Exception as exc:
                 append_note(note_parts, f"failed to load CSV {file_set.csv.name}: {exc}")
             else:
@@ -2849,6 +3156,9 @@ def load_test_gt_dir(
                     point_color=file_set.point_color,
                     line_color=file_set.line_color,
                     radius=file_set.radius,
+                )
+                xrs_track = synchronize_marker_track_timestamps(
+                    xrs_track, sibling_trc_timestamps_ns, max_frames
                 )
             except Exception as exc:
                 append_note(note_parts, f"failed to load XRS {file_set.xrs.name}: {exc}")
@@ -3116,9 +3426,54 @@ def log_gt_mesh(
         )
 
 
+def interpolation_mask_for_frames(
+    interpolated_mask: np.ndarray | None, frame_count: int
+) -> np.ndarray:
+    if interpolated_mask is None:
+        return np.zeros(frame_count, dtype=bool)
+    mask = np.asarray(interpolated_mask, dtype=bool)
+    if len(mask) != frame_count:
+        raise ValueError(
+            "Interpolation mask must have the same length as the track: "
+            f"frames={frame_count}, mask={len(mask)}"
+        )
+    return mask
+
+
+def interpolation_frame_label(source: str, source_frame: int, frame_index: int | None) -> str:
+    label = f"INTERPOLATED {source.upper()} source frame {source_frame} (0-based)"
+    if frame_index is not None:
+        label += f" / timeline frame {frame_index}"
+    return label
+
+
+def log_interpolation_badge(entity: str, points: np.ndarray, label: str, radius: float) -> None:
+    finite_points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    finite_points = finite_points[np.isfinite(finite_points).all(axis=1)]
+    position = finite_points.mean(axis=0) if len(finite_points) else np.zeros(3, dtype=np.float32)
+    rr.log(
+        f"{entity}/interpolated_frame",
+        rr.Points3D(
+            [position],
+            radii=radius,
+            colors=list(GT_INTERPOLATED_COLOR),
+            labels=[label],
+            show_labels=True,
+        ),
+    )
+
+
+def clear_interpolation_badge(entity: str) -> None:
+    rr.log(f"{entity}/interpolated_frame", rr.Clear(recursive=True))
+
+
 def log_gt_mano_mesh(
     track: GTManoMeshTrack, capture_window: TimeWindow | None, timeline: TimelineContext
 ) -> None:
+    interpolated_mask = interpolation_mask_for_frames(
+        track.interpolated_mask, len(track.timestamps_ns)
+    )
+    interpolation_badge_active = False
     for source_frame, (timestamp_ns, vertices) in enumerate(
         zip(track.timestamps_ns, track.vertices)
     ):
@@ -3130,14 +3485,26 @@ def log_gt_mano_mesh(
             timeline.gt_frame(source_frame) if timeline.alignment_mode == "frame" else None
         )
         timeline.set_time(int(timestamp_ns), frame_index)
+        is_interpolated = bool(interpolated_mask[source_frame])
         rr.log(
             track.entity,
             rr.Mesh3D(
                 vertex_positions=vertices,
                 triangle_indices=track.faces,
-                albedo_factor=list(track.color),
+                albedo_factor=list(GT_INTERPOLATED_MESH_COLOR if is_interpolated else track.color),
             ),
         )
+        if is_interpolated:
+            log_interpolation_badge(
+                track.entity,
+                vertices,
+                interpolation_frame_label(track.source, source_frame, frame_index),
+                0.03,
+            )
+            interpolation_badge_active = True
+        elif interpolation_badge_active:
+            clear_interpolation_badge(track.entity)
+            interpolation_badge_active = False
 
 
 def marker_connection_strips(
@@ -3154,6 +3521,10 @@ def log_gt_marker_track(
     track: GTMarkerTrack, capture_window: TimeWindow | None, timeline: TimelineContext
 ) -> None:
     rr.log(f"{track.entity}/labels", rr.TextDocument(", ".join(track.marker_names)), static=True)
+    interpolated_mask = interpolation_mask_for_frames(
+        track.interpolated_mask, len(track.timestamps_ns)
+    )
+    interpolation_badge_active = False
     for source_frame, (timestamp_ns, positions) in enumerate(
         zip(track.timestamps_ns, track.positions)
     ):
@@ -3165,9 +3536,12 @@ def log_gt_marker_track(
             timeline.gt_frame(source_frame) if timeline.alignment_mode == "frame" else None
         )
         timeline.set_time(int(timestamp_ns), frame_index)
+        is_interpolated = bool(interpolated_mask[source_frame])
+        point_color = GT_INTERPOLATED_COLOR if is_interpolated else track.point_color
+        line_color = GT_INTERPOLATED_COLOR if is_interpolated else track.line_color
         rr.log(
             f"{track.entity}/points",
-            rr.Points3D(positions, radii=track.radius, colors=list(track.point_color)),
+            rr.Points3D(positions, radii=track.radius, colors=list(point_color)),
         )
         if track.connections:
             rr.log(
@@ -3175,9 +3549,20 @@ def log_gt_marker_track(
                 rr.LineStrips3D(
                     marker_connection_strips(positions, track.connections),
                     radii=track.radius * 0.45,
-                    colors=list(track.line_color),
+                    colors=list(line_color),
                 ),
             )
+        if is_interpolated:
+            log_interpolation_badge(
+                track.entity,
+                positions,
+                interpolation_frame_label(track.source, source_frame, frame_index),
+                track.radius * 2.5,
+            )
+            interpolation_badge_active = True
+        elif interpolation_badge_active:
+            clear_interpolation_badge(track.entity)
+            interpolation_badge_active = False
 
 
 def log_gt_third_person_video(
@@ -3311,13 +3696,13 @@ def gt_mesh_source_view(source: str) -> rrb.View:
     return rrb.Spatial3DView(name=source.upper(), origin=f"{GT_MESH_ENTITY}/{source}")
 
 
-def gt_skeleton_tabs(gt_config: GTConfig | None) -> rrb.Tabs | None:
+def gt_skeleton_row(gt_config: GTConfig | None) -> rrb.Horizontal | None:
     sources = gt_marker_sources(gt_config)
     if not sources:
         return None
-    return rrb.Tabs(
+    return rrb.Horizontal(
         *(gt_skeleton_source_view(source) for source in sources),
-        active_tab=sources[0].upper(),
+        column_shares=[1.0 for _ in sources],
         name="GT skeleton",
     )
 
@@ -3365,9 +3750,8 @@ def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None
     return rrb.Horizontal(*columns, column_shares=column_shares, name="Robocap sensors only")
 
 
-def wrist_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
+def wrist_sensor_rows(config: SessionConfig) -> list[rrb.ContainerLike]:
     rows: list[rrb.ContainerLike] = []
-    row_shares: list[float] = []
     for name, labels in (
         ("Left wrist sensors", ("left_wrist_mag", "left_wrist_acc", "left_wrist_gyro")),
         ("Right wrist sensors", ("right_wrist_mag", "right_wrist_acc", "right_wrist_gyro")),
@@ -3376,29 +3760,28 @@ def wrist_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
             view for label in labels if (view := available_signal_view(config, label)) is not None
         ]
         if views:
-            rows.append(
-                rrb.Horizontal(*views, column_shares=[1.0 for _ in views], name=name)
-            )
-            row_shares.append(1.0)
-    if not rows:
-        return None
-    return rrb.Vertical(*rows, row_shares=row_shares, name="Robowrist sensors")
+            rows.append(rrb.Horizontal(*views, column_shares=[1.0 for _ in views], name=name))
+    return rows
 
 
 def display_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
     robocap_overview = robocap_sensors_container(config)
-    wrist_overview = wrist_sensors_container(config)
-    if robocap_overview is None and wrist_overview is None:
-        return None
     rows: list[rrb.ContainerLike] = []
     row_shares: list[float] = []
     if robocap_overview is not None:
         rows.append(robocap_overview)
         row_shares.append(1.6)
-    if wrist_overview is not None:
-        rows.append(wrist_overview)
-        row_shares.append(1.0)
-    return rrb.Vertical(*rows, row_shares=row_shares, name="Display sensors")
+    wrist_rows = wrist_sensor_rows(config)
+    rows.extend(wrist_rows)
+    row_shares.extend(1.0 for _ in wrist_rows)
+    if not rows:
+        return None
+    return rrb.Grid(
+        *rows,
+        grid_columns=1,
+        row_shares=row_shares,
+        name="Display sensors",
+    )
 
 
 def all_signals_container(config: SessionConfig) -> rrb.ContainerLike | None:
@@ -3431,8 +3814,9 @@ def display_videos_container(config: SessionConfig) -> rrb.ContainerLike:
 
 
 def gt_overview_container(gt_config: GTConfig | None) -> rrb.ContainerLike | None:
+    skeleton_sources = gt_marker_sources(gt_config)
     candidates = (
-        (gt_skeleton_tabs(gt_config), 1.0),
+        (gt_skeleton_row(gt_config), float(len(skeleton_sources))),
         (gt_mesh_tabs(gt_config), 1.0),
         (gt_third_person_video_view(gt_config), 1.25),
     )
@@ -3772,6 +4156,16 @@ def parse_args() -> argparse.Namespace:
         help="Optional maximum GT frames after uniform downsampling. Default 0 keeps all GT frames.",
     )
     parser.add_argument(
+        "--interpolate-dropped-frames",
+        action="store_true",
+        help=(
+            "Linearly fill NOKOV/GT marker and retargeted-mesh timestamp gaps at 240 FPS "
+            "before time/frame alignment. Gaps longer than one second are treated as "
+            "discontinuities and are not bridged. Interpolated 3D frames are red and "
+            "labeled with source/timeline frame indexes."
+        ),
+    )
+    parser.add_argument(
         "--no-robowrist",
         action="store_true",
         help="Do not discover or log robowrist video/sensor streams.",
@@ -3803,6 +4197,8 @@ def main() -> None:
         include_imu=not args.no_imu,
     )
     gt_config = load_gt_config(args, session_dir)
+    if args.interpolate_dropped_frames:
+        gt_config = interpolate_gt_dropped_frames(gt_config)
     gt_config = maybe_align_gt_to_robocap(
         session_dir, config, gt_config, not args.no_gt_align_to_robocap
     )
@@ -3971,6 +4367,7 @@ def main() -> None:
         bvh_coordinate_scale=args.bvh_coordinate_scale,
         gt_time_offset_ns=args.gt_time_offset_ns,
         gt_max_frames=args.gt_max_frames,
+        interpolate_dropped_frames=args.interpolate_dropped_frames,
         include_robowrist=bool(robowrist_stream_labels(config)),
         include_mag=not args.no_mag,
         include_imu=not args.no_imu,

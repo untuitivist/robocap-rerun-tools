@@ -4,6 +4,10 @@ import subprocess
 from robocap_rerun_tools import web_app
 
 
+def test_web_app_builds_with_report_viewer() -> None:
+    assert web_app.build_app() is not None
+
+
 def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
     invocation = {}
 
@@ -18,35 +22,35 @@ def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
     assert "timeout" not in invocation["kwargs"]
 
 
-def test_web_inspect_prints_generated_markdown_report(tmp_path, monkeypatch) -> None:
-    report_path = tmp_path / "_artifacts" / "segment1" / "inspection" / "frame_rate_report.md"
-    report_path.parent.mkdir(parents=True)
-    report_path.write_text(
-        "# Robocap/NOKOV inspection\n\n| file | kind |\n|---|---|\n| `third.mp4` | video |\n",
-        encoding="utf-8",
+def test_web_inspect_prints_generated_html_report_path(tmp_path, monkeypatch) -> None:
+    report_path = (
+        tmp_path / "_artifacts" / "segment1" / "inspection" / "timestamp_anomaly_detail_table.html"
     )
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("<!doctype html><title>report</title>", encoding="utf-8")
     captured = []
     monkeypatch.setattr(
         web_app,
         "run_cli_result",
         lambda args: (
-            captured.extend(args) or (0, f"Wrote inspection reports to {report_path.parent}")
+            captured.extend(args) or (0, f"Wrote timestamp anomaly inspection to {report_path}")
         ),
     )
 
     output = web_app.inspect_session(str(tmp_path), "segment1")
 
     assert captured == ["inspect", str(tmp_path), "--segment", "segment1"]
-    assert "Wrote inspection reports" in output
-    assert f"Report: `{report_path}`" in output
-    assert "# Robocap/NOKOV inspection" in output
-    assert "| `third.mp4` | video |" in output
+    assert "Wrote timestamp anomaly inspection" in output
+    assert f"Timestamp anomaly HTML: `{report_path}`" in output
+    assert "<!doctype html>" not in output
 
 
 def test_web_inspect_does_not_print_stale_report_after_failure(tmp_path, monkeypatch) -> None:
-    report_path = tmp_path / "_artifacts" / "segment1" / "inspection" / "frame_rate_report.md"
+    report_path = (
+        tmp_path / "_artifacts" / "segment1" / "inspection" / "timestamp_anomaly_detail_table.html"
+    )
     report_path.parent.mkdir(parents=True)
-    report_path.write_text("# stale report\n", encoding="utf-8")
+    report_path.write_text("<title>stale report</title>\n", encoding="utf-8")
     monkeypatch.setattr(web_app, "run_cli_result", lambda _args: (2, "inspection failed"))
 
     output = web_app.inspect_session(str(tmp_path), "segment1")
@@ -56,7 +60,7 @@ def test_web_inspect_does_not_print_stale_report_after_failure(tmp_path, monkeyp
     assert "stale report" not in output
 
 
-def test_check_environment_omits_repository_details(monkeypatch) -> None:
+def test_check_environment_includes_repository_details(monkeypatch) -> None:
     queried_tools: list[str] = []
 
     def fake_which(name: str) -> str:
@@ -66,17 +70,103 @@ def test_check_environment_omits_repository_details(monkeypatch) -> None:
     monkeypatch.setattr(web_app.shutil, "which", fake_which)
     monkeypatch.setattr(web_app, "first_line", lambda command: f"{command[0]} version")
     monkeypatch.setattr(web_app, "package_version", lambda _name: "1.0")
+    monkeypatch.setattr(
+        web_app,
+        "git_repository_report",
+        lambda **_kwargs: (
+            "## Git repository\n\n- branch: `master`\n- remote_origin: `https://example`"
+        ),
+    )
 
     report = web_app.check_environment()
 
-    assert "git" not in queried_tools
-    assert "project_root" not in report
-    assert "## Git" not in report
-    assert "- branch:" not in report
-    assert "- commit:" not in report
-    assert "- remote:" not in report
+    assert "git" in queried_tools
+    assert "## Git repository" in report
+    assert "- branch: `master`" in report
+    assert "- remote_origin: `https://example`" in report
     assert "- ffmpeg:" in report
     assert "- ffprobe:" in report
+
+
+def test_git_repository_report_fetches_and_reports_behind_state(tmp_path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(web_app, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(web_app.shutil, "which", lambda name: "git.exe" if name == "git" else None)
+    calls: list[list[str]] = []
+
+    def fake_run_process(command, cwd=None):
+        calls.append(command)
+        arguments = command[1:]
+        responses = {
+            ("fetch", "--prune", "origin"): (0, ""),
+            ("branch", "--show-current"): (0, "master"),
+            ("rev-parse", "--short=12", "HEAD"): (0, "abc123"),
+            ("remote", "get-url", "origin"): (0, "https://github.com/example/repo.git"),
+            (
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ): (0, "origin/master"),
+            ("status", "--porcelain"): (0, ""),
+            ("rev-list", "--left-right", "--count", "HEAD...origin/master"): (0, "0\t3"),
+        }
+        return responses[tuple(arguments)]
+
+    monkeypatch.setattr(web_app, "run_process", fake_run_process)
+
+    report = web_app.git_repository_report(fetch=True)
+
+    assert ["git.exe", "fetch", "--prune", "origin"] in calls
+    assert "- behind: `3`" in report
+    assert "update available (3 commits behind)" in report
+    assert "- working_tree: `clean`" in report
+
+
+def test_code_update_refuses_dirty_worktree_without_stopping_web(tmp_path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(web_app, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(web_app.shutil, "which", lambda name: "git.exe" if name == "git" else None)
+    monkeypatch.setattr(web_app, "run_process", lambda *_args, **_kwargs: (0, " M local.py"))
+    launched: list[str] = []
+    monkeypatch.setattr(
+        web_app, "launch_update_window", lambda mode: launched.append(mode) or "launched"
+    )
+
+    message = web_app.update_code_and_restart()
+
+    assert not launched
+    assert "Working tree is not clean" in message
+    assert "No process was stopped" in message
+
+
+def test_code_update_launches_clean_fast_forward_flow(tmp_path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(web_app, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(web_app.shutil, "which", lambda name: "git.exe" if name == "git" else None)
+    monkeypatch.setattr(web_app, "run_process", lambda *_args, **_kwargs: (0, ""))
+    launched: list[str] = []
+    monkeypatch.setattr(
+        web_app, "launch_update_window", lambda mode: launched.append(mode) or "launched"
+    )
+
+    assert web_app.update_code_and_restart() == "launched"
+    assert launched == ["code"]
+
+
+def test_windows_update_script_preflights_before_stopping_and_fast_forward_pull() -> None:
+    script = (web_app.PROJECT_ROOT / "scripts" / "web_update_and_restart.bat").read_text(
+        encoding="utf-8"
+    )
+
+    preflight = script.index("git status --porcelain")
+    stop_web = script.index("taskkill /PID")
+    pull = script.index("git pull --ff-only")
+    install = script.index('uv pip install -e ".[web]"')
+
+    assert preflight < stop_web < pull < install
+    assert "No process was stopped and no files were changed." in script
+    assert 'call "%REPO_DIR%\\start_web.bat"' in script
 
 
 def test_scan_files_reflects_detected_robowrist_streams(tmp_path) -> None:
@@ -115,3 +205,36 @@ def test_scan_rrd_files_selects_newest_recording(tmp_path) -> None:
 
     assert update["value"] == str(new_rrd)
     assert update["choices"] == [str(new_rrd), str(old_rrd)]
+
+
+def test_scan_timestamp_reports_selects_newest_report(tmp_path) -> None:
+    old_report = tmp_path / "a" / "timestamp_anomaly_detail_table.html"
+    new_report = tmp_path / "b" / "timestamp_anomaly_detail_table.html"
+    old_report.parent.mkdir()
+    new_report.parent.mkdir()
+    old_report.write_text("old", encoding="utf-8")
+    new_report.write_text("new", encoding="utf-8")
+    os.utime(old_report, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+    os.utime(new_report, ns=(1_800_000_000_000_000_000, 1_800_000_000_000_000_000))
+
+    summary, update = web_app.scan_timestamp_reports(str(tmp_path))
+
+    assert "Timestamp anomaly reports: 2" in summary
+    assert update["value"] == str(new_report)
+    assert update["choices"] == [str(new_report), str(old_report)]
+
+
+def test_open_timestamp_report_uses_default_browser(tmp_path, monkeypatch) -> None:
+    report = tmp_path / "timestamp_anomaly_detail_table.html"
+    report.write_text("<!doctype html>", encoding="utf-8")
+    opened: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        web_app.webbrowser,
+        "open",
+        lambda uri, new=0: opened.append((uri, new)) or True,
+    )
+
+    message = web_app.open_timestamp_report(str(report))
+
+    assert opened == [(report.resolve().as_uri(), 2)]
+    assert str(report.resolve()) in message

@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from robocap_rerun_tools import cli, web_app
+from robocap_rerun_tools.alignment import round_positive_ratio
 from robocap_rerun_tools.cli import (
     FpsRecord,
     build_parser,
@@ -13,7 +14,6 @@ from robocap_rerun_tools.cli import (
     estimate_frame_ratio,
     find_nokov_source,
     inspection_files,
-    load_frame_ratio_estimate,
     nearest_multiple_of_ten,
     resolve_ffprobe,
     sqlite_sensor_summaries,
@@ -22,7 +22,6 @@ from robocap_rerun_tools.cli import (
     video_stream_name,
     video_to_gt_frame,
 )
-from robocap_rerun_tools.alignment import round_positive_ratio
 from robocap_rerun_tools.data_packager import discover_package_files
 
 
@@ -105,47 +104,6 @@ def test_frame_alignment_ratio_defaults_to_auto() -> None:
     )
 
 
-def write_test_fps_report(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "\n".join(
-            [
-                "# Robocap/NOKOV inspection",
-                "",
-                "| file | kind | frames | fps | start_s | end_s | median_dt_ms | abnormal |",
-                "|---|---:|---:|---:|---:|---:|---:|---:|",
-                "| `nokov\\left.bvh` | bvh | 100 | 59.999880 | 0 | 1 | 16.667 | 0 |",
-                "| `nokov\\left.trc` | trc | 100 | 58.823529 | 0 | 1 | 17.000 | 0 |",
-                "| `nokov\\left.csv` | csv | 100 | 58.823668 | 0 | 1 | 17.000 | 0 |",
-                "| `robocap_segment1_video_left.mp4` | video | 50 | 30.017021 | 0 | 1 | 33.314 | 0 |",
-                "| `robocap_segment1_video_left_eye.mp4` | video | 40 | 21.923118 | 0 | 1 | 45.614 | 0 |",
-                "| `robocap_segment1_video_right.mp4` | video | 50 | 30.017004 | 0 | 1 | 33.314 | 0 |",
-                "",
-                "## Abnormal intervals",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-
-def test_auto_ratio_reads_markdown_means_and_rounds_final_ratio(tmp_path: Path) -> None:
-    report_path = tmp_path / "frame_rate_report.md"
-    write_test_fps_report(report_path)
-
-    estimate = load_frame_ratio_estimate(report_path)
-
-    assert estimate is not None
-    assert estimate.gt_sample_count == 3
-    assert estimate.robocap_sample_count == 3
-    assert abs(estimate.gt_fps_mean - 59.21569233333333) < 1e-9
-    assert abs(estimate.robocap_fps_mean - 27.319047666666665) < 1e-9
-    assert estimate.gt_fps_rounded_10 == 60
-    assert estimate.robocap_fps_rounded_10 == 30
-    assert estimate.ratio_before_rounding == 2.0
-    assert estimate.ratio == 2
-
-
 def test_nearest_multiple_of_ten_uses_half_up_rounding() -> None:
     assert nearest_multiple_of_ten(234.9) == 230
     assert nearest_multiple_of_ten(235.0) == 240
@@ -177,9 +135,16 @@ def test_offset_mapping_uses_source_script_rounding_order() -> None:
     assert video_to_gt_frame(video_frame=1, ratio=2.4, video_frame_offset=1) == 4
 
 
-def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch) -> None:
-    report_path = tmp_path / "_artifacts" / "segment1" / "inspection" / "frame_rate_report.md"
-    write_test_fps_report(report_path)
+def test_export_auto_passes_live_ratio_to_exporter(tmp_path: Path, monkeypatch) -> None:
+    estimate = estimate_frame_ratio(
+        [
+            FpsRecord("motion.trc", "trc", "gt", 60.0),
+            FpsRecord("robocap_video.mp4", "video", "robocap", 30.0),
+        ],
+        "test live scan",
+    )
+    assert estimate is not None
+    monkeypatch.setattr(cli, "resolve_session_auto_ratio", lambda *_args: estimate)
     parser = build_parser()
     args = parser.parse_args(
         [
@@ -195,6 +160,7 @@ def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch
             "10",
             "--robocap-end-frame",
             "20",
+            "--interpolate-dropped-frames",
         ]
     )
     captured: list[str] = []
@@ -216,6 +182,7 @@ def test_export_auto_passes_report_ratio_to_exporter(tmp_path: Path, monkeypatch
     end_index = captured.index("--robocap-end-frame")
     assert captured[start_index + 1] == "10"
     assert captured[end_index + 1] == "20"
+    assert "--interpolate-dropped-frames" in captured
 
 
 def test_export_parser_accepts_sensor_filters() -> None:
@@ -225,6 +192,19 @@ def test_export_parser_accepts_sensor_filters() -> None:
     )
     assert args.no_mag is True
     assert args.no_imu is True
+
+
+def test_export_parser_accepts_dropped_frame_interpolation() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "export",
+            "Z:/DATASETS/Frodobots/nokov/session",
+            "--interpolate-dropped-frames",
+        ]
+    )
+
+    assert args.interpolate_dropped_frames is True
 
 
 def test_find_nokov_source_prefers_hand_bvh(tmp_path: Path) -> None:
@@ -264,7 +244,7 @@ def test_inspection_discovery_ignores_package_manifest(tmp_path: Path) -> None:
     (tmp_path / "manifest.tsv").write_text("source\tpackaged_as\n", encoding="utf-8")
     artifact_dir = tmp_path / "_artifacts" / "segment1" / "inspection"
     artifact_dir.mkdir(parents=True)
-    (artifact_dir / "frame_rate_report.tsv").write_text("", encoding="utf-8")
+    (artifact_dir / "timestamp_anomaly_detail_table.html").write_text("", encoding="utf-8")
     (tmp_path / "data.trc").write_text("", encoding="utf-8")
     assert [path.name for path in discover_files(tmp_path)] == ["data.trc"]
 
@@ -556,6 +536,7 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
         "save_path": "",
         "use_proxy": False,
         "display": True,
+        "interpolate_dropped_frames": True,
         "gt_dir": "",
         "selected_gt_files": [],
         "include_third_person": False,
@@ -571,6 +552,7 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     assert "--no-mag" in captured
     assert "--no-imu" in captured
     assert "--no-robowrist" not in captured
+    assert "--interpolate-dropped-frames" in captured
     assert captured[captured.index("--retarget-model") + 1] == "none"
     assert "--mano-model-dir" not in captured
     assert captured[captured.index("--offset") + 1] == "-5"
@@ -672,92 +654,6 @@ def test_expected_frame_counts_use_reference_robocap_n(tmp_path: Path) -> None:
     assert cli.expected_frame_count("robocap", "video", "robocap_video", n) == 50
     assert cli.expected_frame_count("gt", "trc", "", n) == 408
     assert cli.expected_frame_count("gt", "video", "third_person_video", n) == 51
-
-
-def test_write_inspection_includes_expected_frame_counts(tmp_path: Path) -> None:
-    session = tmp_path / "session"
-    (session / "nokov").mkdir(parents=True)
-    summaries = [
-        make_inspection_summary(
-            session / "robocap_segment1_video_left.mp4", "video", 50, "robocap_video", 30.0
-        ),
-        make_inspection_summary(session / "nokov" / "motion.trc", "trc", 400, "", 240.0),
-        make_inspection_summary(
-            session / "nokov" / "capture-1.mp4", "video", 52, "third_person_video", 30.0
-        ),
-    ]
-    out = tmp_path / "inspection"
-
-    cli.write_inspection(session, "segment1", summaries, out)
-    md = (out / "frame_rate_report.md").read_text(encoding="utf-8")
-
-    assert "- reference_robocap_frames: 50" in md
-    assert "- expected_mocap_frames: 408" in md
-    assert "- expected_third_person_video_frames: 51" in md
-    assert "| 50 | 50 | 0 |" in md
-    assert "| 400 | 408 | -8 |" in md
-    assert "| 52 | 51 | 1 |" in md
-    assert "## Dropped-frame detection unavailable" in md
-    assert "- None" in md
-
-
-def test_write_inspection_writes_exact_missing_frames(tmp_path: Path) -> None:
-    session = tmp_path / "session"
-    (session / "nokov").mkdir(parents=True)
-    trc_path = session / "nokov" / "motion.trc"
-    trc_lines = [
-        "PathFileType\t4\t(X/Y/Z)\tfile.trc",
-        "DataRate\tCameraRate\tNumFrames\tNumMarkers",
-        "Frame#\tTime\tTimestamp",
-        "\t\t",
-    ]
-    trc_lines.extend(f"{i}\t{(i - 1) * 0.004}\t{i}" for i in range(1, 401))
-    trc_path.write_text("\n".join(trc_lines), encoding="utf-8", newline="")
-    csv_path = session / "nokov" / "motion.csv"
-    csv_path.write_text(
-        "\n".join(
-            [
-                "#Hierarchical Translation and Rotation (.csv) file",
-                "[Head]",
-                "NumFrames,NumSegments,DataFrameRate",
-                "6,1,250",
-                "[SegmentData]",
-                " Frame# ,,Segment1",
-                ",Timestamp,XToGlobal1",
-                "1,100,1.0",
-                "2,104,2.0",
-                "3,0,0.0",
-                "4,0,0.0",
-                "5,116,3.0",
-                "6,120,4.0",
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    summaries = [
-        make_inspection_summary(
-            session / "robocap_segment1_video_left.mp4",
-            "video",
-            50,
-            "robocap_video",
-            30.0,
-        ),
-        make_inspection_summary(trc_path, "trc", 400, fps=250.0),
-        make_inspection_summary(csv_path, "csv", 6, fps=250.0),
-    ]
-    out = tmp_path / "inspection"
-    cli.write_inspection(session, "segment1", summaries, out)
-    missing = (out / "missing_frames.tsv").read_text(encoding="utf-8")
-    assert "motion.trc\ttrc\t401\tmissing from expected 8*(n+1)" in missing
-    assert "motion.trc\ttrc\t408\tmissing from expected 8*(n+1)" in missing
-    assert "motion.csv\tcsv\t408\tmissing from expected 8*(n+1)" in missing
-    timestamps = (out / "missing_timestamp_frames.tsv").read_text(encoding="utf-8")
-    assert "motion.csv\tcsv\t3\tTimestamp missing/zero" in timestamps
-    assert "motion.csv\tcsv\t4\tTimestamp missing/zero" in timestamps
-    md = (out / "frame_rate_report.md").read_text(encoding="utf-8")
-    assert "## Missing frame IDs (expected 8*(n+1))" in md
-    assert "## Missing timestamps" in md
 
 
 def test_bvh_summary_marks_dropped_detection_unavailable(tmp_path: Path) -> None:

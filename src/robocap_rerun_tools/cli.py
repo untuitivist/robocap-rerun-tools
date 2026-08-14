@@ -9,12 +9,12 @@ import sqlite3
 import statistics
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from pathlib import Path
-from typing import Iterable
 
 from .alignment import FrameAlignment, round_positive_ratio
-
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 TEXT_SUFFIXES = {".csv", ".tsv", ".trc", ".bvh", ".xrs"}
@@ -202,7 +202,7 @@ def ffprobe_video_summary(path: Path, data: dict, capture_start_s: float | None)
     duration = float(stream.get("duration") or fmt.get("duration") or 0.0) or None
     frame_count = int(stream["nb_frames"]) if str(stream.get("nb_frames", "")).isdigit() else None
     if frame_count is None and duration and fps:
-        frame_count = int(round(duration * fps))
+        frame_count = round(duration * fps)
     median_dt = 1000.0 / fps if fps else None
     start_s = capture_start_s if capture_start_s is not None else 0.0
     end_s = (
@@ -236,7 +236,7 @@ def video_summary(path: Path, ffprobe: str) -> StreamSummary:
         import rerun as rr
 
         frame_timestamps_ns = list(rr.AssetVideo(path=path).read_frame_timestamps_nanos())
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - Rerun codec backends raise multiple exception types
         if not data:
             return StreamSummary(
                 path,
@@ -324,7 +324,7 @@ def summarize_times(path: Path, kind: str, times_s: list[float]) -> StreamSummar
             1,
             reason,
         )
-    all_diffs_ms = [(b - a) * 1000.0 for a, b in zip(times_s, times_s[1:])]
+    all_diffs_ms = [(b - a) * 1000.0 for a, b in pairwise(times_s)]
     non_positive = [diff for diff in all_diffs_ms if diff <= 0]
     diffs_ms = [diff for diff in all_diffs_ms if diff > 0]
     if not diffs_ms:
@@ -510,7 +510,7 @@ def normalize_time_values(vals: list[float], column_name: str) -> list[float]:
     lowered = column_name.lower()
     if lowered.endswith("_ns") or "nanosecond" in lowered:
         return [v / 1e9 for v in vals]
-    diffs = [b - a for a, b in zip(vals, vals[1:]) if b > a]
+    diffs = [b - a for a, b in pairwise(vals) if b > a]
     median_diff = statistics.median(diffs) if diffs else 0.0
     max_abs = max(abs(v) for v in vals)
     if median_diff >= 1_000_000:
@@ -1110,7 +1110,7 @@ def summarize_path(path: Path, ffprobe: str) -> list[StreamSummary]:
     return [summarize_file(path, ffprobe)]
 
 
-def fmt(value: float | int | None, digits: int = 6) -> str:
+def fmt(value: float | None, digits: int = 6) -> str:
     if value is None:
         return ""
     if isinstance(value, int):
@@ -1197,51 +1197,6 @@ def fps_record_from_summary(item: StreamSummary, session_dir: Path) -> FpsRecord
     )
 
 
-def parse_inspection_markdown_fps(report_path: Path) -> list[FpsRecord]:
-    records: list[FpsRecord] = []
-    headers: list[str] | None = None
-    for line in report_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-        if not line.lstrip().startswith("|"):
-            if headers is not None:
-                break
-            continue
-        cells = next(csv.reader([line], delimiter="|"))
-        if cells and not cells[0].strip():
-            cells = cells[1:]
-        if cells and not cells[-1].strip():
-            cells = cells[:-1]
-        cells = [cell.strip() for cell in cells]
-        lowered = [cell.lower() for cell in cells]
-        if headers is None:
-            if {"file", "kind", "fps"}.issubset(lowered):
-                headers = lowered
-            continue
-        if all(cell.replace(":", "").replace("-", "") == "" for cell in cells):
-            continue
-        row = dict(zip(headers, cells))
-        path = row.get("file", "").strip().strip("`")
-        kind = row.get("kind", "").strip().lower()
-        try:
-            fps = float(row.get("fps", ""))
-        except ValueError:
-            continue
-        if not path or not kind or not math.isfinite(fps) or fps <= 0:
-            continue
-        source = row.get("source", "").strip().lower()
-        if source not in {"gt", "robocap", "other"}:
-            source = infer_fps_source(path, kind)
-        records.append(FpsRecord(path=path, kind=kind, source=source, fps=fps))
-    return records
-
-
-def load_frame_ratio_estimate(report_path: Path) -> FrameRatioEstimate | None:
-    try:
-        records = parse_inspection_markdown_fps(report_path)
-    except OSError:
-        return None
-    return estimate_frame_ratio(records, "frame_rate_report.md", report_path)
-
-
 def inspection_output_dir(session_dir: Path, segment: str | None) -> Path:
     return session_dir / "_artifacts" / (segment or "all") / "inspection"
 
@@ -1306,178 +1261,17 @@ def expected_frame_count(
     return None
 
 
-def write_inspection(
-    session_dir: Path, segment: str | None, summaries: list[StreamSummary], out_dir: Path
+def resolve_session_auto_ratio(
+    session_dir: Path, segment: str | None, ffprobe: str
 ) -> FrameRatioEstimate | None:
-    report_path = out_dir / "frame_rate_report.md"
+    files = inspection_files(session_dir, segment)
+    summaries = [summary for path in files for summary in summarize_path(path, ffprobe)]
     fps_records = [
         record
         for item in summaries
         if (record := fps_record_from_summary(item, session_dir)) is not None
     ]
-    ratio_estimate = estimate_frame_ratio(
-        fps_records, "frame_rate_report.md", report_path=report_path
-    )
-    reference_n = reference_robocap_frame_count(session_dir, summaries)
-    ratio = ratio_estimate.ratio if ratio_estimate is not None else 8
-    expected_mocap = ratio * (reference_n + 1) if reference_n is not None else None
-    expected_third = reference_n + 1 if reference_n is not None else None
-    missing_details = frame_missing_details(session_dir, summaries, reference_n, ratio)
-    rows = [
-        [
-            "path",
-            "kind",
-            "stream",
-            "time_basis",
-            "source",
-            "frames",
-            "expected_frames",
-            "delta_frames",
-            "fps",
-            "start_s",
-            "end_s",
-            "duration_s",
-            "median_dt_ms",
-            "min_dt_ms",
-            "max_dt_ms",
-            "abnormal_intervals",
-            "dropped_frames",
-            "abnormal_reason",
-        ]
-    ]
-    known_dropped = [item.dropped_frames for item in summaries if item.dropped_frames is not None]
-    unknown_dropped = sum(1 for item in summaries if item.dropped_frames is None)
-    dropped_total_text = str(sum(known_dropped)) if known_dropped else "n/a"
-    if unknown_dropped:
-        dropped_total_text += f" (n/a for {unknown_dropped} streams)"
-    md = [
-        f"# Robocap/NOKOV inspection",
-        "",
-        f"- session: `{session_dir}`",
-        f"- segment: `{segment or 'auto/all'}`",
-        f"- third_person_videos: {sum(item.stream == 'third_person_video' for item in summaries)}",
-        f"- imu_streams: {sum(item.kind.startswith('imu_') for item in summaries)}",
-        f"- mag_streams: {sum(item.kind == 'mag' for item in summaries)}",
-        f"- dropped_frames_total: {dropped_total_text}",
-        f"- reference_robocap_frames: {fmt(reference_n)}",
-        f"- expected_frames_formula: robocap=n, mocap={ratio}*(n+1), third_person_video=n+1",
-        f"- expected_mocap_frames: {fmt(expected_mocap)}",
-        f"- expected_third_person_video_frames: {fmt(expected_third)}",
-        "",
-        "| file | kind | stream | time_basis | source | frames | expected | delta | fps | start_s | end_s | median_dt_ms | abnormal | dropped |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    for item in summaries:
-        rel = (
-            item.path.relative_to(session_dir)
-            if item.path.is_relative_to(session_dir)
-            else item.path
-        )
-        duration = (
-            item.end_s - item.start_s
-            if item.start_s is not None and item.end_s is not None
-            else None
-        )
-        source = infer_fps_source(rel, item.kind)
-        expected = expected_frame_count(source, item.kind, item.stream, reference_n, ratio)
-        delta = (
-            item.frame_count - expected
-            if item.frame_count is not None and expected is not None
-            else None
-        )
-        rows.append(
-            [
-                str(rel),
-                item.kind,
-                item.stream,
-                item.time_basis,
-                source,
-                fmt(item.frame_count),
-                fmt(expected),
-                fmt(delta),
-                fmt(item.fps, 9),
-                fmt(item.start_s, 6),
-                fmt(item.end_s, 6),
-                fmt(duration, 6),
-                fmt(item.median_dt_ms, 6),
-                fmt(item.min_dt_ms, 6),
-                fmt(item.max_dt_ms, 6),
-                str(item.abnormal_count),
-                ("n/a" if item.dropped_frames is None else str(item.dropped_frames)),
-                item.abnormal_reason,
-            ]
-        )
-        md.append(
-            f"| `{rel}` | {item.kind} | {item.stream} | {item.time_basis} | {source} | "
-            f"{fmt(item.frame_count)} | {fmt(expected)} | {fmt(delta)} | "
-            f"{fmt(item.fps, 9)} | "
-            f"{fmt(item.start_s, 3)} | {fmt(item.end_s, 3)} | {fmt(item.median_dt_ms, 3)} | "
-            f"{item.abnormal_count} | {('n/a' if item.dropped_frames is None else str(item.dropped_frames))} |"
-        )
-    md.extend(["", "## Auto frame ratio", ""])
-    if ratio_estimate is None:
-        md.append("- unavailable: need at least one GT FPS and one Robocap video FPS")
-    else:
-        md.extend(
-            [
-                f"- gt_fps_samples: {ratio_estimate.gt_sample_count}",
-                f"- gt_fps_mean: {ratio_estimate.gt_fps_mean:.9f}",
-                f"- gt_fps_rounded_10: {ratio_estimate.gt_fps_rounded_10}",
-                f"- robocap_fps_samples: {ratio_estimate.robocap_sample_count}",
-                f"- robocap_fps_mean: {ratio_estimate.robocap_fps_mean:.9f}",
-                f"- robocap_fps_rounded_10: {ratio_estimate.robocap_fps_rounded_10}",
-                f"- auto_ratio_before_rounding: {ratio_estimate.ratio_before_rounding:.9f}",
-                f"- auto_ratio_rounded_integer: {ratio_estimate.ratio}",
-                "- formula: `round(rounded GT FPS / rounded Robocap FPS)`",
-            ]
-        )
-    abnormal = [s for s in summaries if s.abnormal_count or s.abnormal_reason]
-    md.extend(["", "## Abnormal intervals", ""])
-    if abnormal:
-        for item in abnormal:
-            rel = (
-                item.path.relative_to(session_dir)
-                if item.path.is_relative_to(session_dir)
-                else item.path
-            )
-            stream = item.stream or item.kind
-            md.append(f"- `{rel}` [{stream}]: {item.abnormal_reason or 'summary unavailable'}")
-    else:
-        md.append("- No abnormal stream intervals detected by the median-delta rule.")
-    unavailable = [s for s in summaries if s.dropped_frames is None]
-    md.extend(["", "## Dropped-frame detection unavailable", ""])
-    if unavailable:
-        for item in unavailable:
-            rel = (
-                item.path.relative_to(session_dir)
-                if item.path.is_relative_to(session_dir)
-                else item.path
-            )
-            stream = item.stream or item.kind
-            md.append(
-                f"- `{rel}` [{stream}]: interval timestamps unavailable, dropped-frame estimate not computed"
-            )
-    else:
-        md.append("- None")
-    md.extend(write_missing_frame_reports(session_dir, missing_details, out_dir, ratio))
-    write_text(report_path, "\n".join(md) + "\n")
-    with (out_dir / "frame_rate_report.tsv").open("w", encoding="utf-8", newline="") as f:
-        csv.writer(f, delimiter="\t").writerows(rows)
-    return ratio_estimate
-
-
-def resolve_session_auto_ratio(
-    session_dir: Path, segment: str | None, ffprobe: str
-) -> FrameRatioEstimate | None:
-    out_dir = inspection_output_dir(session_dir, segment)
-    report_path = out_dir / "frame_rate_report.md"
-    if report_path.exists():
-        estimate = load_frame_ratio_estimate(report_path)
-        if estimate is not None:
-            return estimate
-    files = inspection_files(session_dir, segment)
-    summaries = [summary for path in files for summary in summarize_path(path, ffprobe)]
-    return write_inspection(session_dir, segment, summaries, out_dir)
+    return estimate_frame_ratio(fps_records, "live session scan")
 
 
 def find_first(session_dir: Path, patterns: list[str]) -> Path | None:
@@ -1633,7 +1427,7 @@ def write_offset_report(
     )
     for video_frame in range(max_rows):
         expected_float = video_frame * ratio
-        expected = int(round(expected_float))
+        expected = round(expected_float)
         offset_video_frame = video_frame + offset
         offset_float = alignment.video_to_gt_frame_float(video_frame)
         offset_frame = alignment.video_to_gt_frame(video_frame)
@@ -1767,9 +1561,9 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
         "--ratio",
         default="auto",
         help=(
-            "Frame mode NOKOV/video ratio. Default auto reads frame_rate_report.md, averages GT "
-            "and Robocap FPS separately, rounds both means to the nearest 10, divides them, "
-            "then rounds the ratio to the nearest positive integer."
+            "Frame mode NOKOV/video ratio. Default auto scans the current session, averages GT "
+            "and Robocap FPS separately, rounds both means to the nearest 10, divides them, then "
+            "rounds the ratio to the nearest positive integer."
         ),
     )
     parser.add_argument(
@@ -1823,6 +1617,14 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-robowrist", action="store_true")
     parser.add_argument("--no-mag", action="store_true")
     parser.add_argument("--no-imu", action="store_true")
+    parser.add_argument(
+        "--interpolate-dropped-frames",
+        action="store_true",
+        help=(
+            "Linearly fill NOKOV/GT dropped-frame gaps at the fixed 240 FPS source rate "
+            "before alignment; interpolated 3D frames are red and labeled with frame indexes."
+        ),
+    )
     parser.add_argument("--spawn", action="store_true")
     parser.add_argument("--inspect", action="store_true")
 
@@ -1885,6 +1687,8 @@ def command_export(args: argparse.Namespace) -> int:
         argv.append("--no-mag")
     if args.no_imu:
         argv.append("--no-imu")
+    if args.interpolate_dropped_frames:
+        argv.append("--interpolate-dropped-frames")
     if args.spawn:
         argv.append("--spawn")
     if args.inspect:
@@ -1905,8 +1709,22 @@ def command_inspect(args: argparse.Namespace) -> int:
     ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
     summaries = [summary for path in files for summary in summarize_path(path, ffprobe)]
     out_dir = args.output or inspection_output_dir(args.session_dir, args.segment)
-    write_inspection(args.session_dir, args.segment, summaries, out_dir)
-    print(f"Wrote inspection reports to {out_dir}")
+    fps_records = [
+        record
+        for item in summaries
+        if (record := fps_record_from_summary(item, args.session_dir)) is not None
+    ]
+    ratio_estimate = estimate_frame_ratio(fps_records, "timestamp anomaly inspection")
+    from .timestamp_anomaly import write_timestamp_anomaly_report
+
+    anomaly_report = write_timestamp_anomaly_report(
+        args.session_dir,
+        args.segment,
+        summaries,
+        out_dir,
+        ratio_estimate,
+    )
+    print(f"Wrote timestamp anomaly inspection to {anomaly_report}")
     return 0
 
 
@@ -1972,7 +1790,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.set_defaults(func=command_export)
 
     inspect_parser = sub.add_parser(
-        "inspect", help="Write frame/FPS and abnormal interval reports."
+        "inspect", help="Write one standalone timestamp anomaly HTML report."
     )
     inspect_parser.add_argument("session_dir", type=Path)
     inspect_parser.add_argument("--segment", default=None)

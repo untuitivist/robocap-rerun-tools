@@ -1,3 +1,4 @@
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
@@ -9,12 +10,12 @@ from robocap_rerun_tools.exporter import (
     discover_gt_dir,
     discover_gt_file_sets,
     discover_session,
+    display_sensors_container,
+    display_videos_container,
     make_proxy_video,
     parse_nokov_csv,
     parse_trc,
     parse_xrs,
-    display_sensors_container,
-    display_videos_container,
     robocap_sensors_container,
     robowrist_stream_labels,
     synthesize_frame_aligned_timestamps,
@@ -209,6 +210,7 @@ def sample_export_name_parameters() -> exporter.ExportNameParameters:
         bvh_coordinate_scale=0.01,
         gt_time_offset_ns=0,
         gt_max_frames=None,
+        interpolate_dropped_frames=True,
         include_robowrist=True,
         include_mag=False,
         include_imu=True,
@@ -229,7 +231,7 @@ def test_rrd_name_contains_readable_parameters_and_stable_fingerprint() -> None:
 
     named = exporter.with_export_parameter_suffix(path, parameters)
 
-    assert "_r8_o5_ref-left_f100-200_rt-none_p540_bp-display_" in named.name
+    assert "_r8_o5_ref-left_f100-200_interp1_rt-none_p540_bp-display_" in named.name
     assert "_data-rw1-mag0-imu1-tp1_cfg-" in named.name
     assert exporter.with_export_parameter_suffix(named, parameters) == named
 
@@ -314,6 +316,81 @@ def test_gt_logging_writes_blue_points_and_red_lines(monkeypatch) -> None:
 
     assert point_calls == [{"radii": track.radius, "colors": list(exporter.GT_POINT_COLOR)}]
     assert line_calls == [{"radii": track.radius * 0.45, "colors": list(exporter.GT_LINE_COLOR)}]
+
+
+def test_interpolated_marker_frame_turns_red_adds_label_then_clears(monkeypatch) -> None:
+    point_calls = []
+    line_calls = []
+    clear_calls = []
+    logged_entities = []
+
+    class FakeTimeline:
+        alignment_mode = "frame"
+
+        def gt_frame(self, source_frame):
+            return source_frame + 100
+
+        def set_time(self, timestamp_ns, frame_index=None):
+            return None
+
+    monkeypatch.setattr(
+        exporter.rr,
+        "Points3D",
+        lambda *args, **kwargs: point_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        exporter.rr,
+        "LineStrips3D",
+        lambda *args, **kwargs: line_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        exporter.rr,
+        "Clear",
+        lambda *args, **kwargs: clear_calls.append(kwargs) or object(),
+    )
+    monkeypatch.setattr(
+        exporter.rr,
+        "log",
+        lambda entity, *args, **kwargs: logged_entities.append(entity),
+    )
+
+    track = exporter.GTMarkerTrack(
+        label="body",
+        entity="gt/tracks/trc/body",
+        source="trc",
+        timestamps_ns=np.asarray([0, 4_000_000, 8_000_000], dtype=np.int64),
+        positions=np.asarray(
+            [
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+                [[0.0, 2.0, 0.0], [1.0, 2.0, 0.0]],
+            ],
+            dtype=np.float32,
+        ),
+        marker_names=("root", "tip"),
+        connections=((0, 1),),
+        interpolated_mask=np.asarray([False, True, False]),
+    )
+
+    exporter.log_gt_marker_track(track, None, FakeTimeline())
+
+    assert [call["colors"] for call in point_calls] == [
+        list(exporter.GT_POINT_COLOR),
+        list(exporter.GT_INTERPOLATED_COLOR),
+        list(exporter.GT_INTERPOLATED_COLOR),
+        list(exporter.GT_POINT_COLOR),
+    ]
+    assert [call["colors"] for call in line_calls] == [
+        list(exporter.GT_LINE_COLOR),
+        list(exporter.GT_INTERPOLATED_COLOR),
+        list(exporter.GT_LINE_COLOR),
+    ]
+    assert point_calls[2]["show_labels"] is True
+    assert point_calls[2]["labels"] == [
+        "INTERPOLATED TRC source frame 1 (0-based) / timeline frame 101"
+    ]
+    assert clear_calls == [{"recursive": True}]
+    assert logged_entities.count("gt/tracks/trc/body/interpolated_frame") == 2
 
 
 def test_parse_trc_reads_multiple_markers(tmp_path: Path) -> None:
@@ -633,6 +710,151 @@ def test_gt_overview_omits_absent_mesh_and_video_views() -> None:
     assert exporter.gt_overview_container(None) is None
 
 
+def test_gt_skeleton_formats_are_arranged_left_to_right() -> None:
+    tracks = tuple(
+        exporter.GTMarkerTrack(
+            label=f"hand_{source}",
+            entity=f"gt/tracks/{source}/hand",
+            source=source,
+            timestamps_ns=np.asarray([0], dtype=np.int64),
+            positions=np.zeros((1, 1, 3), dtype=np.float32),
+            marker_names=("root",),
+        )
+        for source in ("bvh", "trc", "csv", "xrs")
+    )
+    gt_config = exporter.GTConfig(
+        skeleton=None,
+        mesh=None,
+        marker_tracks=tracks,
+        mano_mesh_tracks=(),
+        third_person_video=None,
+    )
+
+    container = exporter.gt_skeleton_row(gt_config)
+
+    assert container is not None
+    assert container.name == "GT skeleton"
+    assert [view.name for view in container.contents] == ["BVH", "TRC", "CSV", "XRS"]
+    assert container.column_shares == [1.0, 1.0, 1.0, 1.0]
+
+
+def test_interpolate_dropped_samples_preserves_4_5ms_jitter_and_fills_8ms_gap() -> None:
+    timestamps_ns = np.asarray([0, 4_000_000, 12_000_000, 17_000_000], dtype=np.int64)
+    positions = np.asarray([0.0, 4.0, 12.0, 17.0], dtype=np.float32)[:, None, None]
+
+    timestamps, values, inserted, skipped = exporter.interpolate_dropped_samples(
+        timestamps_ns, positions
+    )
+
+    assert timestamps.tolist() == [0, 4_000_000, 8_000_000, 12_000_000, 17_000_000]
+    assert values[:, 0, 0].tolist() == [0.0, 4.0, 8.0, 12.0, 17.0]
+    assert inserted == 1
+    assert skipped == 0
+    masked_result = exporter.interpolate_dropped_samples_with_mask(timestamps_ns, positions)
+    assert masked_result.interpolated_mask.tolist() == [False, False, True, False, False]
+
+
+def test_interpolation_does_not_bridge_long_capture_discontinuity() -> None:
+    timestamps_ns = np.asarray([0, 2_000_000_000], dtype=np.int64)
+    positions = np.asarray([0.0, 1.0], dtype=np.float32)[:, None, None]
+
+    timestamps, values, inserted, skipped = exporter.interpolate_dropped_samples(
+        timestamps_ns, positions
+    )
+
+    assert timestamps.tolist() == timestamps_ns.tolist()
+    assert values.tolist() == positions.tolist()
+    assert inserted == 0
+    assert skipped == 1
+
+
+def test_gt_interpolation_updates_marker_and_mano_tracks_before_alignment() -> None:
+    timestamps_ns = np.asarray([0, 8_000_000], dtype=np.int64)
+    marker_track = exporter.GTMarkerTrack(
+        label="left_hand",
+        entity="gt/tracks/trc/left_hand",
+        source="trc",
+        timestamps_ns=timestamps_ns,
+        positions=np.asarray([[[0.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]]], dtype=np.float32),
+        marker_names=("root",),
+    )
+    mano_track = exporter.GTManoMeshTrack(
+        label="left_hand",
+        entity="gt/mesh/trc/left_hand",
+        source="trc",
+        timestamps_ns=timestamps_ns,
+        vertices=np.asarray([[[0.0, 0.0, 0.0]], [[2.0, 0.0, 0.0]]], dtype=np.float32),
+        faces=np.empty((0, 3), dtype=np.uint32),
+    )
+    config = exporter.GTConfig(
+        skeleton=None,
+        mesh=None,
+        marker_tracks=(marker_track,),
+        mano_mesh_tracks=(mano_track,),
+        third_person_video=None,
+    )
+
+    interpolated = exporter.interpolate_gt_dropped_frames(config)
+
+    assert interpolated is not None
+    assert interpolated.marker_tracks[0].timestamps_ns.tolist() == [0, 4_000_000, 8_000_000]
+    assert interpolated.mano_mesh_tracks[0].timestamps_ns.tolist() == [0, 4_000_000, 8_000_000]
+    assert interpolated.marker_tracks[0].interpolated_mask.tolist() == [False, True, False]
+    assert interpolated.mano_mesh_tracks[0].interpolated_mask.tolist() == [False, True, False]
+    assert "trc:left_hand +1" in (interpolated.note or "")
+
+
+def test_sibling_trc_clock_replaces_invalid_csv_timestamps_before_interpolation() -> None:
+    reference_timestamps_ns = np.asarray([0, 4_000_000, 12_000_000, 17_000_000], dtype=np.int64)
+    csv_track = exporter.GTMarkerTrack(
+        label="hand",
+        entity="gt/tracks/csv/hand",
+        source="csv",
+        timestamps_ns=np.zeros(4, dtype=np.int64),
+        positions=np.asarray([0.0, 4.0, 12.0, 17.0], dtype=np.float32)[:, None, None],
+        marker_names=("root",),
+    )
+
+    synchronized = exporter.synchronize_marker_track_timestamps(
+        csv_track, reference_timestamps_ns, None
+    )
+    timestamps, positions, inserted, skipped = exporter.interpolate_dropped_samples(
+        synchronized.timestamps_ns, synchronized.positions
+    )
+
+    assert timestamps.tolist() == [0, 4_000_000, 8_000_000, 12_000_000, 17_000_000]
+    assert positions[:, 0, 0].tolist() == [0.0, 4.0, 8.0, 12.0, 17.0]
+    assert inserted == 1
+    assert skipped == 0
+
+
+def test_sibling_trc_clock_uses_matching_downsample_indexes() -> None:
+    reference_timestamps_ns = np.asarray([0, 4, 8, 12], dtype=np.int64)
+    track = exporter.GTMarkerTrack(
+        label="hand",
+        entity="gt/tracks/csv/hand",
+        source="csv",
+        timestamps_ns=np.asarray([0, 0], dtype=np.int64),
+        positions=np.zeros((2, 1, 3), dtype=np.float32),
+        marker_names=("root",),
+    )
+
+    synchronized = exporter.synchronize_marker_track_timestamps(track, reference_timestamps_ns, 2)
+
+    assert synchronized.timestamps_ns.tolist() == [0, 12]
+
+
+def test_unselected_sibling_trc_remains_available_as_csv_clock(tmp_path: Path) -> None:
+    csv_path = tmp_path / "Hand.csv"
+    trc_path = tmp_path / "Hand.TRC"
+    csv_path.write_text("", encoding="utf-8")
+    trc_path.write_text("", encoding="utf-8")
+    file_set = exporter.gt_file_sets_from_paths(tmp_path, [csv_path])[0]
+
+    assert file_set.trc is None
+    assert exporter.gt_file_set_trc_clock_path(file_set) == trc_path
+
+
 def test_discover_gt_file_sets_uses_all_supported_files(tmp_path: Path) -> None:
     for name in ("Tracker0.xrs", "Tracker1.xrs", "LeftHand.bvh", "LeftHand.trc", "extra.csv"):
         (tmp_path / name).write_text("", encoding="utf-8")
@@ -709,6 +931,30 @@ def test_discover_session_can_exclude_mag_and_imu_streams(tmp_path: Path) -> Non
     without_imu = discover_session(tmp_path, "segment1", include_imu=False)
     assert "middle_mag" in without_imu.signals
     assert not any(label.endswith(("_acc", "_gyro")) for label in without_imu.signals)
+
+
+def test_discover_session_finds_nested_wrist_mag_and_reads_expected_axes(tmp_path: Path) -> None:
+    (tmp_path / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    nested = tmp_path / "capture" / "devices" / "left-unit"
+    nested.mkdir(parents=True)
+    db_path = nested / "robowrist_segment1_mag_left.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE mag_data (timestamp INTEGER, mag_x REAL, mag_y REAL, mag_z REAL)"
+        )
+        connection.execute("INSERT INTO mag_data VALUES (100, 1.0, 2.0, 3.0)")
+
+    config = discover_session(tmp_path, "segment1")
+    spec = config.signals["left_wrist_mag"]
+    timestamps_ns, axes = exporter.fetch_signal_rows(db_path, spec.table, spec.columns, 10)
+
+    assert spec.relative_path == "capture/devices/left-unit/robowrist_segment1_mag_left.db"
+    assert timestamps_ns.tolist() == [100]
+    assert {axis: values.tolist() for axis, values in axes.items()} == {
+        "mag_x": [1.0],
+        "mag_y": [2.0],
+        "mag_z": [3.0],
+    }
 
 
 def test_discover_session_can_exclude_all_robowrist_streams(tmp_path: Path) -> None:
@@ -802,8 +1048,11 @@ def test_display_layout_renders_robowrist_only_when_enabled(tmp_path: Path) -> N
     ]
     assert [row.name for row in sensors.contents] == [
         "Robocap sensors only",
-        "Robowrist sensors",
+        "Left wrist sensors",
+        "Right wrist sensors",
     ]
+    assert sensors.grid_columns == 1
+    assert sensors.row_shares == [1.6, 1.0, 1.0]
     exporter.build_display_blueprint(included)
 
     excluded = discover_session(tmp_path, "segment1", include_robowrist=False)
@@ -815,4 +1064,6 @@ def test_display_layout_renders_robowrist_only_when_enabled(tmp_path: Path) -> N
         "left front / right front",
     ]
     assert [row.name for row in sensors.contents] == ["Robocap sensors only"]
+    assert sensors.grid_columns == 1
+    assert sensors.row_shares == [1.6]
     exporter.build_display_blueprint(excluded)

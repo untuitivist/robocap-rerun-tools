@@ -64,8 +64,9 @@ start_web.bat
 
 Then use `http://127.0.0.1:7860` for inspect, package, offset inspection, and RRD export.
 The web UI has a Chinese/English language switch and a built-in Docs tab.
-After a successful Web inspection, the output box prints the complete generated
-`frame_rate_report.md`, not only the report path.
+Inspection writes only `timestamp_anomaly_detail_table.html`, with all data, styles, and JavaScript
+embedded for offline sharing. The `Reports` tab scans these files and opens the selected report in
+the default browser; the output box prints the generated path instead of duplicating the report.
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
 synchronizes it across the Export and Offset tabs, and restores it after Web UI restarts. On Windows,
 the setting is stored in `%LOCALAPPDATA%\robocap-rerun-tools\web_settings.json`.
@@ -75,10 +76,11 @@ video, and choose whether robowrist, MAG, and IMU streams are included. The Web 
 skeletons and rigid bodies without model retargeting; advanced retargeting remains available from
 the CLI. Scanning also detects standard robowrist video and sensor streams. If none exist, the
 robowrist checkbox is cleared and disabled, and the export is named with `rw0`. The `Environment`
-tab checks Python/package/tool versions and ffmpeg/ffprobe without
-showing or querying Git repository, branch, remote, or version information. It can also run
-`uv pip install -e ".[web]"` in a separate `cmd` window, close the current web process, print
-update logs there, and restart through `start_web.bat`.
+tab checks Python/package/tool versions, ffmpeg/ffprobe, and Git repository state. It shows branch,
+commit, HTTPS origin, upstream, local changes, and ahead/behind counts. `Check code updates` fetches
+`origin`. `Update code and restart` requires a clean working tree and runs `git pull --ff-only`.
+Code and dependency updates use a separate `cmd` window, stop Web only after preflight, print logs,
+sync `.[web]`, and restart through `start_web.bat`. Local changes are never stashed or overwritten.
 The `Viewer` tab can scan generated `.rrd` files under the current session and open a selected file
 in Rerun Web Viewer. The newest RRD is selected by default. The viewer runs in a separate `cmd`
 window so its logs stay visible.
@@ -104,6 +106,10 @@ tables in IMU/MAG SQLite databases. ACC, gyro, and MAG tables are reported as se
 Video `fps` is the full-stream average reported by ffprobe, while median/min/max interval and abnormal
 counts come from the actual frame timestamps. When an MP4 has a numeric `comment` capture timestamp,
 its start/end values are placed on that capture-time axis; otherwise the report marks them as media-relative.
+Timestamp anomaly thresholds are fixed at 30 FPS for video and 240 FPS for motion capture. Thus normal
+integer-millisecond diffs are 33/34 ms and 4/5 ms. Diffs are computed only for adjacent rows whose two
+timestamps are valid; missing rows are listed but never bridged. The frame-count baseline is
+`mocap = 8*(n+1)` and `third-person video = n+1` for `n` Robocap frames.
 
 Export a time-aligned RRD:
 
@@ -122,6 +128,23 @@ Export an offset-5 frame-aligned RRD. At ratio 8 this equals the old 40-GT-frame
 ```bat
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --offset 5 --use-proxy
 ```
+
+Optionally reconstruct short dropped-frame gaps in NOKOV/GT trajectories before alignment:
+
+```bat
+robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --interpolate-dropped-frames --use-proxy
+```
+
+This uses the fixed NOKOV source rate of 240 FPS. Normal integer timestamp jitter of 4/5 ms is
+kept unchanged; an approximately 8 ms gap inserts one linearly interpolated pose, 12 ms inserts
+two, and so on. Gaps longer than one second are treated as capture discontinuities. This option
+only reconstructs GT trajectory samples and never synthesizes video frames or sensor readings.
+Equivalent BVH/CSV/XRS exports use a same-stem TRC as their authoritative sampling clock when
+available, even if that TRC is not selected for display, because CSV placeholder rows may contain
+zero timestamps.
+In Rerun, an interpolated skeleton/rigid-body frame is rendered in solid red and receives an
+always-visible label containing its 0-based GT source frame and, in frame mode, its `frame` timeline
+index. The next original frame restores the configured point/line colors and clears the label.
 
 Export only Robocap reference-video frames 100 through 500. Frame indexes are 0-based and both
 endpoints are included:
@@ -146,19 +169,23 @@ The display layout keeps:
 
 - Top video row: `left/right`, `left_eye/right_eye`, `left_front/right_front`; when
   robowrist is enabled and present, `left_wrist_down/right_wrist_down` is added.
-- Sensor row: Robocap sensors plus optional left/right wrist MAG/IMU rows. `middle_mag`
-  spans both Robocap IMU rows; left `acc/gyro` share one row and right `acc/gyro` share the other.
+- Middle sensor section: one multi-row, one-column grid. Its first row is the complete Robocap
+  sensor block; optional second and third rows contain the left and right wrist MAG/IMU streams.
+  Missing rows are omitted. Inside the Robocap block, `middle_mag` spans both IMU rows; left
+  `acc/gyro` share one row and right `acc/gyro` share the other.
 - Bottom row views for the GT formats that are actually present. Multiple rigid bodies from one
-  XRS/CSV file are shown in the same 3D space for that format. Skeleton and mesh sources use
-  separate format tabs, with the third-person video beside them. Missing formats do not create
-  empty placeholder tabs.
+  XRS/CSV file are shown in the same 3D space for that format. Skeleton format views are arranged
+  from left to right; mesh sources and third-person video remain beside them. Missing
+  formats do not create empty placeholder views.
 
 NOKOV coordinates are treated as millimetres by default and converted to Rerun metres with a
 `0.001` scale. The exporter also reads `BoneAxis`: `BoneAxis=Z` selects Y-up and `BoneAxis=Y`
 selects Z-up. All rigid bodies from one CSV/XRS source keep their shared world coordinate frame.
 
 Use `--no-mag` or `--no-imu` to exclude those sensor groups from logging and the Rerun layout. The
-Web export tab exposes the same controls as checkboxes.
+Web export tab exposes the same controls as checkboxes. Wrist stream discovery first checks the
+standard robowrist folders and then recursively finds matching segment files, so an extra packaging
+directory level does not hide left/right wrist MAG databases.
 
 ## Offset Inspection
 
@@ -187,14 +214,11 @@ GT frame offset = round(Robocap frame offset * main_ratio)
 video frame N -> NOKOV frame round(N * main_ratio) + GT frame offset
 ```
 
-Frame alignment defaults to `--ratio auto`. It reads the table in
-`_artifacts/<segment>/inspection/frame_rate_report.md`, averages all valid GT motion-data FPS values
-and all Robocap video FPS values separately, rounds each mean to the nearest multiple of 10, and
-calculates `rounded GT FPS / rounded Robocap FPS`. That quotient is rounded again to the nearest
-positive integer and becomes the actual auto ratio. If the report is missing or invalid, the tool
-generates it before calculating the ratio. The report includes the sample counts, raw means,
-rounded FPS values, quotient before final rounding, and resulting integer ratio. Use a numeric value
-such as `--ratio 8` to override auto.
+Frame alignment defaults to `--ratio auto`. It scans the current session, averages all valid GT
+motion-data FPS values and all Robocap video FPS values separately, rounds each mean to the nearest
+multiple of 10, and calculates `rounded GT FPS / rounded Robocap FPS`. That quotient is rounded again
+to the nearest positive integer and becomes the actual auto ratio. Use a numeric value such as
+`--ratio 8` to override auto. No inspection report is read or generated by this alignment scan.
 
 Offset is measured relative to Robocap video. Positive values advance NOKOV/GT relative to the
 video, so GT appears earlier and the same video frame selects a later GT frame. Negative values
@@ -250,11 +274,10 @@ Default outputs are written under:
 
 Typical files:
 
-- `*_time_aligned_fall_rt-none_raw_bp-default_data-..._cfg-....rrd`
-- `*_frame_aligned_r8_o5_ref-left_f100-500_rt-none_p540_bp-display_data-..._cfg-....rrd`
+- `*_time_aligned_fall_interp0_rt-none_raw_bp-default_data-..._cfg-....rrd`
+- `*_frame_aligned_r8_o5_ref-left_f100-500_interp1_rt-none_p540_bp-display_data-..._cfg-....rrd`
 - `time_alignment_report.tsv`
-- `frame_rate_report.md`
-- `frame_rate_report.tsv`
+- `timestamp_anomaly_detail_table.html`
 - `video_to_nokov_frame_alignment.tsv`
 - `offset_inspection.md`
 
@@ -262,7 +285,7 @@ Generated `.rrd`, videos, raw captures, and MANO model files are ignored by Git.
 
 RRD names are parameterized to prevent accidental overwrites. Readable tags include frame-mode
 ratio (`r`), Robocap-frame offset (`o`), reference video (`ref`), frame range (`f`, or `fall`),
-retarget model (`rt`), raw/proxy video, blueprint (`bp`), and stream switches. The final stable
+interpolation (`interp`), retarget model (`rt`), raw/proxy video, blueprint (`bp`), and stream switches. The final stable
 `cfg-<10 hex>` fingerprint also covers exact proxy settings, sensor limits, trim/alignment options,
 coordinate scales, GT inputs, MANO directory, and other content-affecting export arguments.
 An explicit `--save` path receives the same suffix; supplying the already parameterized result does

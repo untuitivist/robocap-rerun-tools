@@ -24,7 +24,7 @@ Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 如果只是下载代码，建议用 HTTPS，不需要 SSH key：
 
 ```bat
-git clone https://github.com/frodobots-org/robocap-rerun-tools.git
+git clone https://github.com/untuitivist/robocap-rerun-tools.git
 cd robocap-rerun-tools
 ```
 
@@ -118,11 +118,14 @@ http://127.0.0.1:7860
 仍可通过 CLI 使用。扫描时还会检测标准 robowrist 视频与传感器数据；没有检测到时，robowrist 复选框会
 自动取消并禁用，导出文件名使用 `rw0`，不会再用 `rw1` 表示不存在的数据。
 
-“环境 / Environment”页可以检查 Python、Python 包和 ffmpeg/ffprobe，但不会显示或查询 Git 仓库、
-分支、远端与版本信息。它也可以运行 `uv pip install -e ".[web]"` 安装或更新依赖；依赖更新会打开
-一个新的 `cmd` 窗口，先关闭当前 web 进程，再打印更新日志，最后通过 `start_web.bat` 自动重启。
+“环境 / Environment”页会检查 Python、Python 包、ffmpeg/ffprobe 和 Git 仓库状态，并显示分支、
+commit、HTTPS origin、upstream、本地改动及 ahead/behind 数量。“检查代码更新”会 fetch `origin`；
+“更新代码并重启”要求工作区干净，并执行 `git pull --ff-only`。代码更新和依赖更新都会在独立的
+`cmd` 窗口运行，通过预检后才关闭 Web，打印完整日志，同步 `.[web]` 依赖，最后通过
+`start_web.bat` 重启。程序不会自动 stash，也不会覆盖本地改动。
 
-Web“检查”成功后，顶部输出框会直接打印完整的 `frame_rate_report.md`，而不只显示报告保存路径。
+Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式与 JavaScript 全部内嵌，可离线
+打开并直接分享。“检查报告 / Reports”页可以扫描报告并用默认浏览器打开，顶部输出框只打印生成路径。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`
@@ -171,6 +174,9 @@ robocap-rerun inspect Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --se
 带时间戳的数据表。ACC、GYRO、MAG 会作为独立数据流分别报告。视频 `fps` 使用 ffprobe 给出的全程
 平均值；中位/最小/最大帧间隔和异常数量使用真实逐帧时间戳计算。MP4 存在数值型 `comment` 捕获时间时，
 起终时间会落在该 capture-time 轴上；缺少该 metadata 时，报告会明确标记为相对媒体时间。
+异常检测固定以视频 30 FPS、动捕 240 FPS 为基线，因此整数毫秒时间戳的正常 diff 分别为 33/34 ms
+与 4/5 ms。diff 只计算时间戳都有效的相邻数据行；缺失行会列为异常，但绝不跨过缺失行相减。
+帧数基线固定为：Robocap 为 `n`、动捕为 `8*(n+1)`、第三人称视频为 `n+1`。
 
 生成时间对齐版 RRD：
 
@@ -189,6 +195,20 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --seg
 ```bat
 robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --offset 5 --use-proxy
 ```
+
+需要在对齐前补齐 NOKOV/GT 短时丢帧时，增加：
+
+```bat
+robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --interpolate-dropped-frames --use-proxy
+```
+
+插值固定按 NOKOV 240 FPS 处理。整数毫秒时间戳中正常的 4/5 ms 抖动保持不变；约 8 ms 的
+相邻有效时间戳缺口补 1 个线性姿态，约 12 ms 补 2 个，依此类推。超过 1 秒的缺口视为采集中断，
+不会跨越插值。该选项只补 GT 轨迹，不伪造视频帧或传感器样本。同一导出对象的 BVH/CSV/XRS
+在存在同名 TRC 时统一使用 TRC 采样时钟，即使界面中没有勾选展示该 TRC；这是因为 CSV 的
+追踪无效占位行可能写入零时间戳。
+在 Rerun 3D 视图中，插值产生的骨骼/刚体帧会显示为纯红色，并持续显示 0-based GT 源帧号；
+帧对齐模式还会同时显示 `frame` timeline 帧号。进入下一原始帧后恢复配置的点线颜色并清除标签。
 
 只导出 Robocap 参考视频第 100 到第 500 帧。帧号从 0 开始，并且首尾都包含：
 
@@ -214,14 +234,14 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --seg
 展示版布局会保留：
 
 - 第一行：Robocap 三组视频列，分别是 left/right、left_eye/right_eye、left_front/right_front；当勾选并检测到 robowrist 时，额外加入 left_wrist_down/right_wrist_down 视频列。
-- 第二行：Robocap sensors + 可选的左/右 wrist MAG/IMU 行；`middle_mag` 跨两行，左手 `acc/gyro` 同一行，右手 `acc/gyro` 同一行。
-- 第三行：实际存在的 BVH、TRC、CSV、XRS 分别进入骨骼 tabs 和 mesh tabs，旁边显示第三人称视频。不会为空缺格式创建占位 tab。
+- 中间传感器区域：整体是一个单列多行 Grid；内部第 1 行是完整的 Robocap sensors，检测到 wrist 数据时，第 2、3 行分别是左、右 wrist MAG/IMU，不存在的行直接省略。Robocap sensors 内部的 `middle_mag` 跨两行，左手 `acc/gyro` 同一行，右手 `acc/gyro` 同一行。
+- 第三行：实际存在的 BVH、TRC、CSV、XRS 骨骼视图从左到右并列，mesh 与第三人称视频位于旁边。不会为空缺格式创建占位窗口。
 
 NOKOV 导出的坐标默认按毫米读取，并用 `0.001` 转换为 Rerun 中的米。脚本还会读取文件头的
 `BoneAxis`：`BoneAxis=Z` 使用 Y-up，`BoneAxis=Y` 使用 Z-up；无法识别时才使用默认坐标系。
 同一个 CSV/XRS 内的多个刚体会保留在同一个 3D 空间中，不会分别归一化或移动到不同原点。
 
-使用 `--no-mag` 或 `--no-imu` 可以让对应传感器既不写入 RRD，也不出现在布局中。Web 导出页提供相同的勾选项。
+使用 `--no-mag` 或 `--no-imu` 可以让对应传感器既不写入 RRD，也不出现在布局中。Web 导出页提供相同的勾选项。wrist 数据先按标准 robowrist 目录发现，再递归后备匹配对应 segment 文件，因此打包时多套一层目录也不会漏掉左右 wrist MAG 数据库。
 
 ## Offset 检查
 
@@ -253,10 +273,9 @@ video frame N -> NOKOV frame round(N * main_ratio) + GT 帧 offset
 其中：
 
 - 不写 `--ratio`：默认使用 `auto`。
-- `--ratio auto`：读取 `_artifacts/<segment>/inspection/frame_rate_report.md` 表格，分别计算所有
-  有效 GT 运动数据 FPS 与 Robocap 视频 FPS 的均值，各自取最近的 10 倍数，再计算
-  `GT 取整 FPS / Robocap 取整 FPS`，并将这个商再次四舍五入为最接近的正整数，作为实际
-  auto ratio。报告不存在或无法计算时会先自动生成检查报告。
+- `--ratio auto`：实时扫描当前 session，分别计算所有有效 GT 运动数据 FPS 与 Robocap 视频 FPS
+  的均值，各自取最近的 10 倍数，再计算 `GT 取整 FPS / Robocap 取整 FPS`，并将这个商再次
+  四舍五入为最接近的正整数，作为实际 auto ratio。该过程不读取或生成检查报告。
 - `--ratio 8`：需要固定比例时显式覆盖自动值。
 - `--offset 5`：以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap
   视频前移、提前出现，同一视频帧会取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap
@@ -268,8 +287,6 @@ Rerun 中显示的统一帧号为：视频第 `N` 帧位于 `round(N * ratio)`�
 `K - GT 帧 offset`。因此 ratio 8、offset 5 时，视频第 100 帧和 GT 第 840 帧都位于
 统一时间轴的 `frame=800`。
 
-`frame_rate_report.md` 会写出 GT/Robocap 样本数、原始均值、10 倍数取整值、最终取整前的商和
-实际使用的整数 ratio，便于复核。
 这取代了旧版“Offset 直接使用 GT 帧数”的定义。
 
 ## MANO Mesh
@@ -311,16 +328,15 @@ Web 发起的 RRD 导出、检查、打包、Offset 与环境命令都不设置�
 
 常见文件：
 
-- `*_time_aligned_fall_rt-none_raw_bp-default_data-..._cfg-....rrd`
-- `*_frame_aligned_r8_o5_ref-left_f100-500_rt-none_p540_bp-display_data-..._cfg-....rrd`
+- `*_time_aligned_fall_interp0_rt-none_raw_bp-default_data-..._cfg-....rrd`
+- `*_frame_aligned_r8_o5_ref-left_f100-500_interp1_rt-none_p540_bp-display_data-..._cfg-....rrd`
 - `time_alignment_report.tsv`
-- `frame_rate_report.md`
-- `frame_rate_report.tsv`
+- `timestamp_anomaly_detail_table.html`
 - `video_to_nokov_frame_alignment.tsv`
 - `offset_inspection.md`
 
 RRD 文件名会纳入导出参数，避免不同配置互相覆盖。可读部分包含帧对齐 ratio（`r`）、Robocap
-帧 offset（`o`）、参考视频（`ref`）、帧区间（`f`，全量为 `fall`）、重定向模型（`rt`）、
+帧 offset（`o`）、参考视频（`ref`）、帧区间（`f`，全量为 `fall`）、插值开关（`interp`）、重定向模型（`rt`）、
 原始/代理视频、布局（`bp`）和数据流开关。末尾稳定的 `cfg-<10 位十六进制>` 指纹还会覆盖
 精确压缩参数、传感器点数上限、时间裁剪/对齐开关、坐标缩放、GT 输入、MANO 目录等其余会影响
 内容的参数。即使显式指定 `--save`，也会追加同样的参数后缀；如果路径已经包含同一后缀则不会重复。

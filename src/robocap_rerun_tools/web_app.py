@@ -10,8 +10,9 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
+import webbrowser
 from pathlib import Path
-
 
 EN_DOC = """# Robocap Rerun Tools
 
@@ -27,16 +28,28 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 6. Use `Offset` when you need to inspect or sweep a video-to-NOKOV frame offset.
 
 The export controls can independently include or exclude MAG, IMU, robowrist, and third-person video data.
+`Interpolate dropped NOKOV frames` linearly fills GT trajectory gaps at the fixed 240 FPS source
+rate before either time or frame alignment. Video and sensor samples are never synthesized.
+Interpolated 3D frames are rendered in solid red with a visible source/timeline frame label.
+The Environment tab shows Git branch, commit, origin, upstream, dirty state, and ahead/behind counts.
+`Check code updates` fetches `origin`; `Update code and restart` requires a clean working tree and uses
+`git pull --ff-only`. Updates run in a separate cmd window, close the Web process only after preflight,
+sync Web dependencies, print logs, and restart through `start_web.bat`.
 Inspection always discovers third-person videos and checks each timestamped ACC, gyro, and MAG SQLite
 table as a separate stream. Video average FPS comes from ffprobe; interval statistics use real frame timestamps.
-After inspection, the output box prints the complete generated Markdown report.
+Inspection writes one standalone `timestamp_anomaly_detail_table.html`. Its data, styles, and
+JavaScript are embedded, so the file can be shared and opened offline. The report only computes
+diffs between adjacent valid rows and lists every timestamp/frame-index anomaly with neighboring rows.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
 control is turned off and disabled instead of pretending that wrist data can be exported.
-Only GT formats that are present create tabs. BVH/TRC/CSV/XRS each have separate 3D views, while rigid
+Only GT formats that are present create views. BVH/TRC/CSV/XRS skeleton views are arranged from left
+to right, while rigid
 bodies from one CSV/XRS source stay in one shared world. NOKOV millimetres are converted to metres, and
 the file's `BoneAxis` selects the matching up axis. The Web exporter records skeletons and rigid bodies
 without model retargeting. Absent skeleton and third-person sources do not create placeholder views.
-If Robocap MAG and IMU are both absent, the complete sensor row is omitted.
+The middle sensor section is one multi-row, one-column grid: its first row is the complete Robocap
+sensor block, followed by optional left- and right-wrist MAG/IMU rows. Missing rows are omitted. If
+Robocap MAG and IMU are both absent and no wrist streams are selected, the complete section is omitted.
 
 ## Alignment
 
@@ -52,9 +65,9 @@ timeline is expressed at the GT/NOKOV frame rate: Robocap video frame `N` is log
 `frame = round(N * ratio)`, while source GT frame `K` is logged at
 `frame = K - GT frame offset`. `capture_time` remains available only as a secondary timeline.
 
-The default is `ratio=auto`. It reads `frame_rate_report.md`, averages all valid GT FPS values and
-all Robocap video FPS values separately, rounds both means to the nearest multiple of 10, divides
-them, and rounds that ratio to the nearest positive integer. Enter a number such as `8` to override it.
+The default is `ratio=auto`. It scans the current session, averages all valid GT FPS values and all
+Robocap video FPS values separately, rounds both means to the nearest multiple of 10, divides them,
+and rounds that ratio to the nearest positive integer. Enter a number such as `8` to override it.
 Robocap video is the reference for the signed offset. A positive value advances NOKOV/GT relative
 to Robocap video, so GT appears earlier and the same video frame selects a later GT frame. A
 negative value delays NOKOV/GT relative to Robocap video, so GT appears later and the same video
@@ -86,16 +99,25 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 5. 用“导出 RRD”生成时间对齐或帧对齐的 Rerun 文件。
 6. 如果需要检查视频帧和 NOKOV 帧的偏移关系，用“Offset 检查”。
 
-导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。
+导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。“插值补齐 NOKOV 丢帧”
+会在时间或帧对齐之前，按固定 240 FPS 对 GT 轨迹时间缺口做线性插值；视频与传感器不会伪造样本。
+插值产生的 3D 帧会显示为纯红色，并显示源帧号与 Rerun timeline 帧号标签。
+“环境”页会显示 Git 分支、commit、origin、upstream、工作区状态和 ahead/behind 数量。“检查代码更新”
+会 fetch `origin`；“更新代码并重启”仅允许干净工作区，并执行 `git pull --ff-only`。更新在独立 cmd
+窗口中运行，通过预检后才关闭 Web，同步网页依赖、打印日志，再调用 `start_web.bat` 重启。
 检查会始终发现第三人称视频，并把 SQLite 中带时间戳的 ACC、GYRO、MAG 表作为独立数据流检查。
 视频平均 FPS 来自 ffprobe，帧间隔统计使用真实逐帧时间戳。
-检查完成后，输出框会直接打印生成的完整 Markdown 报告。
+检查只生成一个独立的 `timestamp_anomaly_detail_table.html`。数据、样式和 JavaScript 都内嵌在
+文件中，可以离线打开并直接分享。报告只计算时间戳均有效的相邻数据行，并逐点列出时间戳与
+frame_index 异常及其上下行。
 “扫描文件”会检测标准 robowrist 目录和数据流；没有检测到时会自动取消并禁用 robowrist 选项，
 不会继续显示一个实际无数据可导出的开启状态。
-只有实际存在的 GT 格式才会生成 tab。BVH/TRC/CSV/XRS 分别有独立的 3D 视图；同一 CSV/XRS
+只有实际存在的 GT 格式才会生成视图。BVH/TRC/CSV/XRS 骨骼视图在左下角从左到右并列；同一 CSV/XRS
 中的多个刚体保留在同一个 3D 世界坐标系。NOKOV 毫米坐标会转换成米，并根据文件中的 `BoneAxis`
 选择向上轴。Web 导出固定记录骨骼和刚体，不执行模型重定向；不存在的骨骼或第三人称源不会创建占位窗口。
-Robocap MAG 和 IMU 都不存在时，整行传感器窗口也会直接省略。
+中间传感器区域整体是一个单列多行 Grid：内部第 1 行是完整的 Robocap sensors，后续按实际数据添加
+左、右 wrist MAG/IMU 行，不存在的行直接省略。Robocap MAG、IMU 和所选 wrist 数据都不存在时，
+整个中间区域直接省略。
 
 ## 对齐公式
 
@@ -110,8 +132,8 @@ video frame N -> NOKOV frame round(N * ratio) + GT 帧 offset
 `frame = round(N * ratio)`，GT 源数据第 `K` 帧写在 `frame = K - GT 帧 offset`。
 `capture_time` 仍会保留，但只作为辅助时间轴，不再是帧对齐版默认显示的时间轴。
 
-默认使用 `ratio=auto`：读取 `frame_rate_report.md`，分别计算有效 GT FPS 和 Robocap 视频 FPS
-的均值，各自取最近的 10 倍数，计算“GT 取整值 / Robocap 取整值”，最后把 ratio 四舍五入为
+默认使用 `ratio=auto`：实时扫描当前 session，分别计算有效 GT FPS 和 Robocap 视频 FPS 的
+均值，各自取最近的 10 倍数，计算“GT 取整值 / Robocap 取整值”，最后把 ratio 四舍五入为
 最接近的正整数。输入 `8` 等数字可覆盖自动值。
 Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap 视频
 前移、提前出现，同一视频帧会选取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap 视频
@@ -160,6 +182,7 @@ LANGUAGE_PACKS = {
         "save_path": "Save path",
         "use_proxy": "Use compressed proxy video",
         "display": "Display layout",
+        "interpolate_dropped_frames": "Interpolate dropped NOKOV frames (240 FPS)",
         "scan_button": "Scan files",
         "gt_dir": "GT/NOKOV export dir",
         "gt_files": "GT files to include",
@@ -178,8 +201,13 @@ LANGUAGE_PACKS = {
         "offset_max": "Offset max",
         "sweep_button": "Sweep Offset",
         "env_check_button": "Check environment",
+        "env_git_check_button": "Check code updates",
+        "env_code_update_button": "Update code and restart",
         "env_install_button": "Install/update dependencies",
         "env_output": "Environment output",
+        "report_scan_button": "Scan inspection reports",
+        "report_open_button": "Open HTML report",
+        "report_html_file": "Timestamp anomaly HTML",
         "viewer_scan_button": "Scan RRD files",
         "viewer_open_button": "Open web viewer",
         "viewer_rrd_file": "RRD file",
@@ -214,6 +242,7 @@ LANGUAGE_PACKS = {
         "save_path": "RRD 保存路径",
         "use_proxy": "使用压缩视频",
         "display": "展示版布局",
+        "interpolate_dropped_frames": "插值补齐 NOKOV 丢帧（240 FPS）",
         "scan_button": "扫描文件",
         "gt_dir": "GT/NOKOV 导出目录",
         "gt_files": "参与导出的 GT 文件",
@@ -232,8 +261,13 @@ LANGUAGE_PACKS = {
         "offset_max": "Offset 最大值",
         "sweep_button": "扫描 Offset",
         "env_check_button": "检查环境",
+        "env_git_check_button": "检查代码更新",
+        "env_code_update_button": "更新代码并重启",
         "env_install_button": "安装/更新依赖",
         "env_output": "环境输出",
+        "report_scan_button": "扫描检查报告",
+        "report_open_button": "打开 HTML 报告",
+        "report_html_file": "时间戳异常 HTML",
         "viewer_scan_button": "扫描 RRD 文件",
         "viewer_open_button": "打开 Web Viewer",
         "viewer_rrd_file": "RRD 文件",
@@ -244,6 +278,7 @@ LANGUAGE_PACKS = {
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TIMESTAMP_REPORT_NAME = "timestamp_anomaly_detail_table.html"
 DEFAULT_OFFSET = 5
 OFFSET_UNIT = "robocap_video_frames"
 LEGACY_OFFSET_RATIO = 8
@@ -283,7 +318,9 @@ def save_web_settings(settings: dict[str, object], settings_path: Path | None = 
 
 def normalize_offset(value: object) -> int:
     if isinstance(value, bool):
-        raise ValueError("Offset must be an integer frame count.")
+        raise ValueError(  # noqa: TRY004 - callers use one validation exception type
+            "Offset must be an integer frame count."
+        )
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
@@ -385,6 +422,75 @@ def first_line(command: list[str], cwd: Path | None = None) -> str:
     return line if returncode == 0 else f"failed: {line or returncode}"
 
 
+def git_repository_report(*, fetch: bool = False) -> str:
+    git = shutil.which("git")
+    if not git:
+        return "## Git repository\n\n- git: `not found`"
+    if not (PROJECT_ROOT / ".git").exists():
+        return f"## Git repository\n\n- repository: `not found at {PROJECT_ROOT}`"
+
+    lines = ["## Git repository", "", f"- root: `{PROJECT_ROOT}`"]
+    if fetch:
+        fetch_code, fetch_output = run_process(
+            [git, "fetch", "--prune", "origin"], cwd=PROJECT_ROOT
+        )
+        lines.append(f"- fetch_origin: `{'ok' if fetch_code == 0 else 'failed'}`")
+        if fetch_output:
+            lines.append(f"- fetch_output: `{fetch_output.splitlines()[-1]}`")
+
+    def value(arguments: list[str], fallback: str = "unavailable") -> str:
+        returncode, output = run_process([git, *arguments], cwd=PROJECT_ROOT)
+        return output.strip() if returncode == 0 and output.strip() else fallback
+
+    branch = value(["branch", "--show-current"], "detached HEAD")
+    commit = value(["rev-parse", "--short=12", "HEAD"])
+    remote = value(["remote", "get-url", "origin"], "origin not configured")
+    upstream = value(
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+        "not configured",
+    )
+    status_code, status_output = run_process([git, "status", "--porcelain"], cwd=PROJECT_ROOT)
+    status_lines = status_output.splitlines() if status_code == 0 else []
+    lines.extend(
+        [
+            f"- branch: `{branch}`",
+            f"- commit: `{commit}`",
+            f"- remote_origin: `{remote}`",
+            f"- upstream: `{upstream}`",
+            f"- working_tree: `{'clean' if not status_lines else f'dirty ({len(status_lines)} paths)'}`",
+        ]
+    )
+
+    if upstream != "not configured":
+        counts = value(["rev-list", "--left-right", "--count", f"HEAD...{upstream}"], "")
+        try:
+            ahead_text, behind_text = counts.split()
+            ahead, behind = int(ahead_text), int(behind_text)
+        except (TypeError, ValueError):
+            lines.append("- update_status: `unavailable`")
+        else:
+            if ahead and behind:
+                update_status = "diverged; manual Git resolution required"
+            elif behind:
+                update_status = f"update available ({behind} commits behind)"
+            elif ahead:
+                update_status = f"local branch ahead by {ahead} commits"
+            else:
+                update_status = "up to date"
+            lines.extend(
+                [
+                    f"- ahead: `{ahead}`",
+                    f"- behind: `{behind}`",
+                    f"- update_status: `{update_status}`",
+                ]
+            )
+    if status_lines:
+        lines.extend(["", "### Local changes", "", "```text", *status_lines[:50], "```"])
+        if len(status_lines) > 50:
+            lines.append(f"... {len(status_lines) - 50} more paths")
+    return "\n".join(lines)
+
+
 def check_environment() -> str:
     packages = ("robocap-rerun-tools", "numpy", "rerun-sdk", "scipy", "gradio")
     lines = [
@@ -397,43 +503,77 @@ def check_environment() -> str:
         f"- uv: `{shutil.which('uv') or 'not found'}`",
         f"- ffmpeg: `{shutil.which('ffmpeg') or 'not found'}`",
         f"- ffprobe: `{shutil.which('ffprobe') or 'not found'}`",
+        f"- git: `{shutil.which('git') or 'not found'}`",
         "",
         "## Tool versions",
         "",
         f"- uv: `{first_line(['uv', '--version']) if shutil.which('uv') else 'not found'}`",
         f"- ffmpeg: `{first_line(['ffmpeg', '-version']) if shutil.which('ffmpeg') else 'not found'}`",
         f"- ffprobe: `{first_line(['ffprobe', '-version']) if shutil.which('ffprobe') else 'not found'}`",
+        f"- git: `{first_line(['git', '--version']) if shutil.which('git') else 'not found'}`",
         "",
         "## Python packages",
         "",
     ]
     lines.extend(f"- {name}: `{package_version(name)}`" for name in packages)
+    lines.extend(["", git_repository_report(fetch=False)])
     return "\n".join(lines)
 
 
+def check_code_updates() -> str:
+    return git_repository_report(fetch=True)
+
+
 def install_or_update_dependencies() -> str:
-    return launch_update_window()
+    return launch_update_window("dependencies")
 
 
-def launch_update_window() -> str:
+def update_code_and_restart() -> str:
+    git = shutil.which("git")
+    if not git:
+        return "Git executable was not found. Install Git before updating code."
+    if not (PROJECT_ROOT / ".git").exists():
+        return f"Git repository was not found: {PROJECT_ROOT}"
+    returncode, output = run_process([git, "status", "--porcelain"], cwd=PROJECT_ROOT)
+    if returncode != 0:
+        return f"Failed to inspect Git working tree:\n{output}"
+    if output.strip():
+        return (
+            "Working tree is not clean. Commit or stash local changes before updating code.\n\n"
+            "No process was stopped and no files were changed.\n\n"
+            f"```text\n{output.strip()}\n```"
+        )
+    return launch_update_window("code")
+
+
+def launch_update_window(mode: str) -> str:
+    if mode not in {"dependencies", "code"}:
+        raise ValueError(f"Unsupported update mode: {mode}")
     script = PROJECT_ROOT / "scripts" / "web_update_and_restart.bat"
     if not script.exists():
         return f"Update script not found: {script}"
+    temporary_dir = Path(tempfile.gettempdir()) / "robocap-rerun-tools"
+    temporary_dir.mkdir(parents=True, exist_ok=True)
+    temporary_script = temporary_dir / f"web_update_and_restart_{os.getpid()}.bat"
+    shutil.copy2(script, temporary_script)
     command = [
         "cmd.exe",
         "/c",
         "start",
         "Robocap Rerun Tools Update",
-        str(script),
+        str(temporary_script),
         str(os.getpid()),
+        mode,
+        str(PROJECT_ROOT),
     ]
     try:
         subprocess.Popen(command, cwd=PROJECT_ROOT)
     except OSError as exc:
         return f"Failed to launch update window: {exc}"
+    action = "pull code and update dependencies" if mode == "code" else "update dependencies"
     return (
-        "Opened a separate cmd window to update dependencies.\n\n"
-        "That window will close this running web process, print update logs, and restart with start_web.bat."
+        f"Opened a separate cmd window to {action}.\n\n"
+        "That window will close this running web process, print all logs, and restart with start_web.bat."
     )
 
 
@@ -570,6 +710,56 @@ def scan_rrd_files(session_dir: str) -> tuple[str, object]:
     return summary, gr.update(choices=choices, value=choices[0] if choices else None)
 
 
+def timestamp_report_path(session_dir: Path, segment: str | None) -> Path:
+    return session_dir / "_artifacts" / (segment or "all") / "inspection" / TIMESTAMP_REPORT_NAME
+
+
+def scan_timestamp_reports(session_dir: str) -> tuple[str, object]:
+    path = Path(session_path(session_dir))
+    reports = sorted(
+        (
+            file
+            for file in path.rglob(TIMESTAMP_REPORT_NAME)
+            if file.is_file() and ".venv" not in file.relative_to(path).parts
+        ),
+        key=lambda file: (file.stat().st_mtime_ns, str(file).lower()),
+        reverse=True,
+    )
+    choices = [str(file) for file in reports]
+    summary = "\n".join(
+        [
+            f"Session: {path}",
+            f"Timestamp anomaly reports: {len(choices)}",
+            *(f"- {choice}" for choice in choices[:50]),
+        ]
+    )
+    if len(choices) > 50:
+        summary += f"\n... {len(choices) - 50} more"
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError(
+            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+        ) from exc
+    return summary, gr.update(choices=choices, value=choices[0] if choices else None)
+
+
+def timestamp_report_choices(session_dir: str) -> object:
+    return scan_timestamp_reports(session_dir)[1]
+
+
+def open_timestamp_report(html_file: str) -> str:
+    path = Path((html_file or "").strip().strip('"')).resolve()
+    if not path.is_file():
+        raise ValueError(f"HTML report does not exist: {path}")
+    if path.name != TIMESTAMP_REPORT_NAME:
+        raise ValueError(f"Expected {TIMESTAMP_REPORT_NAME}: {path}")
+    uri = path.as_uri()
+    if not webbrowser.open(uri, new=2):
+        return f"Default browser did not accept the report URL: {uri}"
+    return f"Opened timestamp anomaly report:\n{path}"
+
+
 def tcp_port_is_available(port: int) -> bool:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -654,21 +844,13 @@ def inspect_session(session_dir: str, segment: str) -> str:
     if returncode != 0:
         return output
 
-    report_path = (
-        resolved_session
-        / "_artifacts"
-        / (resolved_segment or "all")
-        / "inspection"
-        / "frame_rate_report.md"
-    )
-    try:
-        report = report_path.read_text(encoding="utf-8-sig", errors="replace").strip()
-    except OSError as exc:
+    report_path = timestamp_report_path(resolved_session, resolved_segment)
+    if not report_path.is_file():
         return (
-            f"{output}\n\nInspection command succeeded, but the Markdown report could not be read:\n"
-            f"`{report_path}`\n\n{exc}"
+            f"{output}\n\nInspection command succeeded, but the HTML report was not found:\n"
+            f"`{report_path}`"
         )
-    return f"{output}\n\nReport: `{report_path}`\n\n{report}"
+    return f"{output}\n\nTimestamp anomaly HTML: `{report_path}`"
 
 
 def package_data(
@@ -736,6 +918,7 @@ def export_rrd(
     save_path: str,
     use_proxy: bool,
     display: bool,
+    interpolate_dropped_frames: bool,
     gt_dir: str,
     selected_gt_files: list[str] | None,
     include_third_person: bool,
@@ -775,6 +958,8 @@ def export_rrd(
         args.append("--use-proxy")
     if display:
         args.append("--display")
+    if interpolate_dropped_frames:
+        args.append("--interpolate-dropped-frames")
     args.extend(["--retarget-model", "none"])
     if not effective_include_robowrist:
         args.append("--no-robowrist")
@@ -833,6 +1018,7 @@ def language_updates(language: str):
         gr.update(label=labels["save_path"]),
         gr.update(label=labels["use_proxy"]),
         gr.update(label=labels["display"]),
+        gr.update(label=labels["interpolate_dropped_frames"]),
         gr.update(value=labels["scan_button"]),
         gr.update(label=labels["gt_dir"]),
         gr.update(label=labels["gt_files"]),
@@ -854,8 +1040,13 @@ def language_updates(language: str):
         gr.update(label=labels["offset_max"]),
         gr.update(value=labels["sweep_button"]),
         gr.update(value=labels["env_check_button"]),
+        gr.update(value=labels["env_git_check_button"]),
+        gr.update(value=labels["env_code_update_button"]),
         gr.update(value=labels["env_install_button"]),
         gr.update(label=labels["env_output"]),
+        gr.update(value=labels["report_scan_button"]),
+        gr.update(value=labels["report_open_button"]),
+        gr.update(label=labels["report_html_file"]),
         gr.update(value=labels["viewer_scan_button"]),
         gr.update(value=labels["viewer_open_button"]),
         gr.update(label=labels["viewer_rrd_file"]),
@@ -890,7 +1081,27 @@ def build_app():
 
         with gr.Tab("检查 / Inspect"):
             inspect_button = gr.Button(labels["inspect_button"], variant="primary")
-            inspect_button.click(inspect_session, inputs=[session_dir, segment], outputs=output)
+            inspect_event = inspect_button.click(
+                inspect_session, inputs=[session_dir, segment], outputs=output
+            )
+
+        with gr.Tab("检查报告 / Reports"):
+            report_scan_button = gr.Button(labels["report_scan_button"])
+            report_html_file = gr.Dropdown(
+                label=labels["report_html_file"], choices=[], allow_custom_value=True
+            )
+            report_open_button = gr.Button(labels["report_open_button"], variant="primary")
+            report_scan_button.click(
+                scan_timestamp_reports,
+                inputs=[session_dir],
+                outputs=[output, report_html_file],
+            )
+            report_open_button.click(
+                open_timestamp_report, inputs=[report_html_file], outputs=output
+            )
+            inspect_event.then(
+                timestamp_report_choices, inputs=[session_dir], outputs=[report_html_file]
+            )
 
         with gr.Tab("打包 / Package"):
             with gr.Row():
@@ -932,6 +1143,9 @@ def build_app():
             with gr.Row():
                 use_proxy = gr.Checkbox(label=labels["use_proxy"], value=True)
                 display = gr.Checkbox(label=labels["display"], value=False)
+                interpolate_dropped_frames = gr.Checkbox(
+                    label=labels["interpolate_dropped_frames"], value=False
+                )
                 export_height = gr.Number(label=labels["export_height"], value=540, precision=0)
             with gr.Row():
                 include_mag = gr.Checkbox(label=labels["include_mag"], value=True)
@@ -962,6 +1176,7 @@ def build_app():
                     save_path,
                     use_proxy,
                     display,
+                    interpolate_dropped_frames,
                     gt_dir,
                     gt_files,
                     include_third_person,
@@ -1030,9 +1245,14 @@ def build_app():
         with gr.Tab("环境 / Environment"):
             with gr.Row():
                 env_check_button = gr.Button(labels["env_check_button"], variant="primary")
+                env_git_check_button = gr.Button(labels["env_git_check_button"])
+            with gr.Row():
+                env_code_update_button = gr.Button(labels["env_code_update_button"])
                 env_install_button = gr.Button(labels["env_install_button"])
             env_output = gr.Textbox(label=labels["env_output"], lines=22)
             env_check_button.click(check_environment, outputs=env_output)
+            env_git_check_button.click(check_code_updates, outputs=env_output)
+            env_code_update_button.click(update_code_and_restart, outputs=env_output)
             env_install_button.click(install_or_update_dependencies, outputs=env_output)
 
         with gr.Tab("文档 / Docs"):
@@ -1062,6 +1282,7 @@ def build_app():
                 save_path,
                 use_proxy,
                 display,
+                interpolate_dropped_frames,
                 scan_button,
                 gt_dir,
                 gt_files,
@@ -1083,8 +1304,13 @@ def build_app():
                 offset_max,
                 sweep_button,
                 env_check_button,
+                env_git_check_button,
+                env_code_update_button,
                 env_install_button,
                 env_output,
+                report_scan_button,
+                report_open_button,
+                report_html_file,
                 viewer_scan_button,
                 viewer_open_button,
                 viewer_rrd_file,
