@@ -1775,6 +1775,106 @@ def command_package_data(args: argparse.Namespace) -> int:
     return 0
 
 
+def refresh_modelscope_inspection(args: argparse.Namespace) -> None:
+    if not args.refresh_inspection or args.dry_run:
+        return
+    command_inspect(
+        argparse.Namespace(
+            session_dir=args.session_dir,
+            segment=args.segment,
+            output=None,
+            ffprobe=args.ffprobe,
+            ffmpeg=args.ffmpeg,
+        )
+    )
+
+
+def command_modelscope_stage(args: argparse.Namespace) -> int:
+    from robocap_rerun_tools.modelscope_publisher import (
+        ModelScopePublisherError,
+        stage_session,
+    )
+
+    try:
+        refresh_modelscope_inspection(args)
+        staged = stage_session(
+            args.session_dir,
+            args.primitive_id,
+            dataset_root=args.dataset_root,
+            session_id=args.session_id,
+            segment=args.segment,
+            raw_video=args.raw_video,
+            ffmpeg=args.ffmpeg,
+            proxy_height=args.proxy_height,
+            proxy_crf=args.proxy_crf,
+            proxy_bitrate=args.proxy_bitrate,
+            include_rrd=args.include_rrd,
+            dry_run=args.dry_run,
+        )
+    except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+        print(f"ModelScope staging failed: {exc}", file=sys.stderr)
+        return 2
+    action = "Would stage" if staged.dry_run else "Staged"
+    print(f"{action} {staged.primitive_id}/{staged.session_id}")
+    print(f"Dataset root: {staged.dataset_root}")
+    print(f"Session path: {staged.session_dir}")
+    print(f"Files: {staged.file_count}; bytes: {staged.total_bytes}")
+    print(f"Inspection HTML: {staged.inspection_html}")
+    if not staged.dry_run:
+        print(f"Metadata: {staged.metadata_path}")
+    return 0
+
+
+def command_modelscope_auth(_args: argparse.Namespace) -> int:
+    from robocap_rerun_tools.modelscope_publisher import (
+        ModelScopePublisherError,
+        load_modelscope_settings,
+        token_status,
+        verify_modelscope_auth,
+    )
+
+    try:
+        settings = load_modelscope_settings()
+        print(token_status(settings))
+        username = verify_modelscope_auth(settings)
+    except (OSError, ValueError, ModelScopePublisherError) as exc:
+        print(f"ModelScope authentication failed: {exc}", file=sys.stderr)
+        return 2
+    print(f"Authenticated as: {username}")
+    return 0
+
+
+def command_modelscope_upload(args: argparse.Namespace) -> int:
+    from robocap_rerun_tools.modelscope_publisher import (
+        ModelScopePublisherError,
+        load_staged_dataset,
+        upload_staged_dataset,
+    )
+
+    try:
+        staged = load_staged_dataset(args.dataset_root)
+        result = upload_staged_dataset(
+            staged,
+            args.repo_id,
+            revision=args.revision,
+            create_if_missing=args.create_if_missing,
+            visibility=args.visibility,
+            license_name=args.license_name,
+            commit_message=args.commit_message,
+            max_workers=args.max_workers,
+            use_cache=args.use_cache,
+        )
+    except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+        print(f"ModelScope upload failed: {exc}", file=sys.stderr)
+        return 2
+    print(f"Uploaded dataset root: {result.uploaded_path}")
+    print(f"Prepared sessions: {result.session_count}")
+    print(f"Repository: {result.repo_url}")
+    print(f"Revision: {result.revision}")
+    print(f"Authenticated as: {result.username}")
+    return 0
+
+
 def command_web(args: argparse.Namespace) -> int:
     from robocap_rerun_tools.web_app import main as web_main
 
@@ -1843,6 +1943,57 @@ def build_parser() -> argparse.ArgumentParser:
     package_parser.add_argument("--include-rrd", action="store_true")
     package_parser.add_argument("--dry-run", action="store_true")
     package_parser.set_defaults(func=command_package_data)
+
+    modelscope_stage_parser = sub.add_parser(
+        "modelscope-stage",
+        help="Prepare one session in a PXX/session_id ModelScope dataset tree.",
+    )
+    modelscope_stage_parser.add_argument("session_dir", type=Path)
+    modelscope_stage_parser.add_argument("--primitive-id", required=True)
+    modelscope_stage_parser.add_argument("--dataset-root", type=Path, default=None)
+    modelscope_stage_parser.add_argument("--session-id", default=None)
+    modelscope_stage_parser.add_argument("--segment", default=None)
+    modelscope_stage_parser.add_argument(
+        "--raw-video",
+        action="store_true",
+        help="Copy original videos instead of compressed proxy MP4.",
+    )
+    modelscope_stage_parser.add_argument("--proxy-height", type=int, default=540)
+    modelscope_stage_parser.add_argument("--proxy-crf", type=int, default=28)
+    modelscope_stage_parser.add_argument("--proxy-bitrate", default="1400k")
+    modelscope_stage_parser.add_argument("--ffmpeg", default="ffmpeg")
+    modelscope_stage_parser.add_argument("--ffprobe", default="ffprobe")
+    modelscope_stage_parser.add_argument("--include-rrd", action="store_true")
+    modelscope_stage_parser.add_argument(
+        "--refresh-inspection",
+        action="store_true",
+        help="Regenerate the timestamp inspection HTML before staging.",
+    )
+    modelscope_stage_parser.add_argument("--dry-run", action="store_true")
+    modelscope_stage_parser.set_defaults(func=command_modelscope_stage)
+
+    modelscope_auth_parser = sub.add_parser(
+        "modelscope-auth", help="Validate the ModelScope token loaded from the local .env file."
+    )
+    modelscope_auth_parser.set_defaults(func=command_modelscope_auth)
+
+    modelscope_upload_parser = sub.add_parser(
+        "modelscope-upload", help="Upload all sessions in one prepared dataset root."
+    )
+    modelscope_upload_parser.add_argument("dataset_root", type=Path)
+    modelscope_upload_parser.add_argument("--repo-id", required=True)
+    modelscope_upload_parser.add_argument("--revision", default="master")
+    modelscope_upload_parser.add_argument("--create-if-missing", action="store_true")
+    modelscope_upload_parser.add_argument(
+        "--visibility", choices=("private", "internal", "public"), default="private"
+    )
+    modelscope_upload_parser.add_argument("--license", dest="license_name", default=None)
+    modelscope_upload_parser.add_argument("--commit-message", default=None)
+    modelscope_upload_parser.add_argument("--max-workers", type=int, default=None)
+    modelscope_upload_parser.add_argument(
+        "--no-cache", dest="use_cache", action="store_false", help="Disable resumable upload cache."
+    )
+    modelscope_upload_parser.set_defaults(func=command_modelscope_upload, use_cache=True)
 
     web_parser = sub.add_parser("web", help="Start a local browser UI.")
     web_parser.add_argument("--host", default="127.0.0.1")

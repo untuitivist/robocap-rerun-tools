@@ -8,9 +8,8 @@ import subprocess
 import tempfile
 import zipfile
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 DEFAULT_EXCLUDED_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache"}
@@ -34,6 +33,8 @@ def is_video(path: Path) -> bool:
 def is_excluded(path: Path, session_dir: Path, include_artifacts: bool, include_rrd: bool) -> bool:
     relative = path.relative_to(session_dir)
     if any(part in DEFAULT_EXCLUDED_DIRS for part in relative.parts):
+        return True
+    if path.name == ".env" or path.name.startswith(".env."):
         return True
     if not include_artifacts and "_artifacts" in relative.parts:
         return True
@@ -75,7 +76,9 @@ def encoder_args(crf: int, bitrate: str) -> list[str]:
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf)]
 
 
-def compress_video(source: Path, target: Path, ffmpeg: str, height: int, crf: int, bitrate: str) -> None:
+def compress_video(
+    source: Path, target: Path, ffmpeg: str, height: int, crf: int, bitrate: str
+) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     command = [
         ffmpeg,
@@ -171,7 +174,7 @@ def write_manifest(
     args: argparse.Namespace,
 ) -> None:
     manifest = {
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "created_at_utc": datetime.now(UTC).isoformat(),
         "source_session": str(session_dir),
         "package_root": session_dir.name,
         "options": {
@@ -192,7 +195,16 @@ def write_manifest(
     )
     with (staging_root / "manifest.tsv").open("w", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, delimiter="\t")
-        writer.writerow(["source", "packaged_as", "kind", "original_bytes", "packaged_bytes", "compressed_video"])
+        writer.writerow(
+            [
+                "source",
+                "packaged_as",
+                "kind",
+                "original_bytes",
+                "packaged_bytes",
+                "compressed_video",
+            ]
+        )
         for item in files:
             writer.writerow(
                 [
@@ -224,7 +236,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("session_dir", type=Path)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--segment", default=None)
-    parser.add_argument("--raw-video", action="store_true", help="Copy original videos instead of compressed proxy MP4.")
+    parser.add_argument(
+        "--raw-video",
+        action="store_true",
+        help="Copy original videos instead of compressed proxy MP4.",
+    )
     parser.add_argument("--proxy-height", type=int, default=540)
     parser.add_argument("--proxy-crf", type=int, default=28)
     parser.add_argument("--proxy-bitrate", default="1400k")
@@ -240,7 +256,9 @@ def package_session(args: argparse.Namespace) -> Path:
     if not session_dir.exists() or not session_dir.is_dir():
         raise FileNotFoundError(session_dir)
     output = args.output or default_output(session_dir, args.segment)
-    files = discover_package_files(session_dir, args.segment, args.include_artifacts, args.include_rrd)
+    files = discover_package_files(
+        session_dir, args.segment, args.include_artifacts, args.include_rrd
+    )
     videos = sum(1 for path in files if is_video(path))
     print(f"Discovered {len(files)} files, including {videos} videos.")
     print(f"Output: {output}")
@@ -254,7 +272,9 @@ def package_session(args: argparse.Namespace) -> Path:
         packaged: list[PackagedFile] = []
         for index, source in enumerate(files, start=1):
             relative = source.relative_to(session_dir)
-            print(f"[{index}/{len(files)}] {'compress' if is_video(source) and not args.raw_video else 'copy'} {relative}")
+            print(
+                f"[{index}/{len(files)}] {'compress' if is_video(source) and not args.raw_video else 'copy'} {relative}"
+            )
             packaged.append(
                 copy_or_compress_file(
                     source,
@@ -282,4 +302,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

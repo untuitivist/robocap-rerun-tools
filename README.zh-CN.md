@@ -164,6 +164,50 @@ robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 D:\share\session48_segment1.zip segment1
 ```
 
+## 上传 ModelScope 数据集
+
+发布时使用可直接访问的文件，不只上传 ZIP。准备后的目录固定为：
+
+```text
+PXX/
+  <session_id>/
+    <session 数据文件>
+    manifest.json
+    timestamp_anomaly_detail_table.html
+metadata.jsonl
+README.md
+```
+
+可以复制 `.env.example` 为 `.env`，也可以在 Web 的“ModelScope”页保存 Token：
+
+```dotenv
+MODELSCOPE_API_TOKEN=
+MODELSCOPE_ENDPOINT=https://modelscope.cn
+```
+
+`.env` 已被 Git 忽略，也会被所有数据打包流程排除。Token 不会进入命令行参数或日志。检查身份：
+
+```bat
+robocap-rerun modelscope-auth
+```
+
+先准备一套 session。下面的命令会重新生成检查 HTML，默认压缩视频，去掉待上传 HTML 中的本机
+绝对路径，并更新数据集根目录的 `metadata.jsonl`：
+
+```bat
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection --dataset-root Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
+```
+
+再上传 `metadata.jsonl` 引用的全部已准备 session。可恢复上传缓存会跳过未变化的文件：
+
+```bat
+robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset --repo-id owner/egomocap
+```
+
+只有确实需要由工具创建仓库时才增加 `--create-if-missing --visibility private`。上传使用官方
+`modelscope-hub`，默认开启可恢复上传缓存。Web 页面提供相同的准备、Token 保存/检查、仓库创建和
+上传选项。
+
 先检查一个 session 的视频帧率、文件帧数和异常帧间隔：
 
 ```bat

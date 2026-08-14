@@ -95,6 +95,52 @@ Package one session for sharing. Videos are compressed by default:
 robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1
 ```
 
+## ModelScope Dataset Publishing
+
+The tool publishes direct dataset files rather than a ZIP-only sample. Each prepared recording uses:
+
+```text
+PXX/
+  <session_id>/
+    <session files>
+    manifest.json
+    timestamp_anomaly_detail_table.html
+metadata.jsonl
+README.md
+```
+
+Copy `.env.example` to `.env`, or save the token from the Web `ModelScope` tab. The local file is
+ignored by Git and excluded from every data package:
+
+```dotenv
+MODELSCOPE_API_TOKEN=
+MODELSCOPE_ENDPOINT=https://modelscope.cn
+```
+
+The saved token is never added to a CLI argument or printed. Verify it with:
+
+```bat
+robocap-rerun modelscope-auth
+```
+
+Prepare one session. This regenerates the inspection HTML, compresses video by default, removes
+local absolute paths from the copied report, and updates the dataset-level metadata:
+
+```bat
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection --dataset-root Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
+```
+
+Upload every session referenced by the prepared `metadata.jsonl`. The resumable cache skips files
+that have not changed:
+
+```bat
+robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset --repo-id owner/egomocap
+```
+
+Add `--create-if-missing --visibility private` only when the tool should create a missing dataset
+repository. Uploads use the official `modelscope-hub` resumable cache by default. The Web tab exposes
+the same prepare, token check/save, repository creation, and upload controls.
+
 Inspect one session before exporting:
 
 ```bat

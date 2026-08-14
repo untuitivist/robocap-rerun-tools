@@ -1,5 +1,6 @@
 import os
 import subprocess
+from types import SimpleNamespace
 
 from robocap_rerun_tools import web_app
 
@@ -20,6 +21,17 @@ def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
 
     assert web_app.run_process(["tool", "arg"]) == (0, "Done.")
     assert "timeout" not in invocation["kwargs"]
+
+
+def test_web_adds_localhost_to_no_proxy(monkeypatch) -> None:
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.setenv("NO_PROXY", "example.com")
+
+    web_app.ensure_localhost_no_proxy()
+
+    assert os.environ["NO_PROXY"] == "example.com,127.0.0.1,localhost"
+    assert os.environ["no_proxy"] == "example.com,127.0.0.1,localhost"
 
 
 def test_web_inspect_prints_generated_html_report_path(tmp_path, monkeypatch) -> None:
@@ -238,3 +250,81 @@ def test_open_timestamp_report_uses_default_browser(tmp_path, monkeypatch) -> No
 
     assert opened == [(report.resolve().as_uri(), 2)]
     assert str(report.resolve()) in message
+
+
+def test_modelscope_status_never_exposes_token() -> None:
+    settings = SimpleNamespace(
+        token="secret-token",
+        token_source=".env",
+        endpoint="https://modelscope.cn",
+        env_path="C:/repo/.env",
+    )
+
+    status = web_app.format_modelscope_status(settings, "中文")
+
+    assert "已配置" in status
+    assert "secret-token" not in status
+
+
+def test_web_modelscope_auth_reports_invalid_endpoint(monkeypatch) -> None:
+    from robocap_rerun_tools import modelscope_publisher
+
+    settings = modelscope_publisher.ModelScopeSettings(
+        None,
+        "https://modelscope.cn",
+        modelscope_publisher.DEFAULT_ENV_PATH,
+        "missing",
+    )
+    monkeypatch.setattr(modelscope_publisher, "load_modelscope_settings", lambda: settings)
+
+    output = web_app.check_modelscope_web_auth("", "not-an-origin", "中文")
+
+    assert "HTTP(S) origin" in output
+
+
+def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatch) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(web_app, "run_cli", lambda args: captured.extend(args) or "Done.")
+
+    output = web_app.stage_modelscope_data(
+        str(tmp_path),
+        "segment1",
+        "P03",
+        str(tmp_path.parent / "dataset"),
+        True,
+        False,
+        True,
+        720,
+        24,
+    )
+
+    assert output == "Done."
+    assert captured[:4] == ["modelscope-stage", str(tmp_path), "--primitive-id", "P03"]
+    assert "--refresh-inspection" in captured
+    assert "--include-rrd" in captured
+    assert "--raw-video" not in captured
+    assert captured[captured.index("--proxy-height") + 1] == "720"
+
+
+def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monkeypatch) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(web_app, "run_cli", lambda args: captured.extend(args) or "Done.")
+
+    output = web_app.upload_modelscope_data(
+        str(tmp_path),
+        str(tmp_path.parent / "dataset"),
+        "owner/egomocap",
+        "master",
+        True,
+        "private",
+        "cc-by-4.0",
+        True,
+        6,
+    )
+
+    assert output == "Done."
+    assert captured[0] == "modelscope-upload"
+    assert captured[captured.index("--repo-id") + 1] == "owner/egomocap"
+    assert "--create-if-missing" in captured
+    assert "--no-cache" not in captured
+    assert all("token" not in item.lower() for item in captured)

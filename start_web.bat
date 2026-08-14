@@ -4,6 +4,8 @@ chcp 65001 >nul
 
 set "REPO_DIR=%~dp0"
 set "CLI=%REPO_DIR%.venv\Scripts\robocap-rerun.exe"
+set "NO_PROXY=127.0.0.1,localhost,%NO_PROXY%,%no_proxy%"
+set "no_proxy=%NO_PROXY%"
 
 cd /d "%REPO_DIR%"
 

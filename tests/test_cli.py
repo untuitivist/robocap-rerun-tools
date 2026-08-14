@@ -224,6 +224,54 @@ def test_package_parser_defaults_to_compressed_video() -> None:
     assert args.proxy_height == 540
 
 
+def test_modelscope_stage_parser_defaults_to_compressed_video() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "modelscope-stage",
+            "Z:/DATASETS/Frodobots/nokov/session",
+            "--primitive-id",
+            "P01",
+        ]
+    )
+    assert args.raw_video is False
+    assert args.proxy_height == 540
+    assert args.refresh_inspection is False
+
+
+def test_modelscope_upload_parser_uses_resumable_cache() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "modelscope-upload",
+            "Z:/DATASETS/Frodobots/nokov/_modelscope_dataset",
+            "--repo-id",
+            "owner/egomocap",
+        ]
+    )
+    assert args.use_cache is True
+    assert args.create_if_missing is False
+    assert args.visibility == "private"
+
+
+def test_modelscope_auth_reports_missing_token_without_traceback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from robocap_rerun_tools import modelscope_publisher
+
+    settings = modelscope_publisher.ModelScopeSettings(
+        None, "https://modelscope.cn", tmp_path / ".env", "missing"
+    )
+    monkeypatch.setattr(modelscope_publisher, "load_modelscope_settings", lambda: settings)
+    parser = build_parser()
+    args = parser.parse_args(["modelscope-auth"])
+
+    assert args.func(args) == 2
+    captured = capsys.readouterr()
+    assert "not configured" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_web_parser_defaults_to_localhost() -> None:
     parser = build_parser()
     args = parser.parse_args(["web"])

@@ -1,4 +1,7 @@
 .venv/
+.env
+.env.*
+!.env.example
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -9,6 +12,7 @@ dist/
 
 # Local data and generated artifacts
 _artifacts/
+_modelscope_dataset/
 *.rrd
 *.mp4
 *.avi
@@ -23,4 +27,3 @@ _artifacts/
 MANO_LEFT.pkl
 MANO_RIGHT.pkl
 *.pkl
-

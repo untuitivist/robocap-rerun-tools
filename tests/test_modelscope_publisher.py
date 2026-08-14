@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from robocap_rerun_tools import modelscope_publisher as publisher
+
+
+def write_inspection_report(session_dir: Path, segment: str = "segment1") -> Path:
+    report = session_dir / "_artifacts" / segment / "inspection" / publisher.REPORT_NAME
+    report.parent.mkdir(parents=True)
+    payload = {
+        "session": session_dir.name,
+        "sessionPath": str(session_dir.resolve()),
+        "segment": segment,
+        "files": [],
+        "events": [],
+    }
+    report.write_text(
+        "<!doctype html><script>const report="
+        + json.dumps(payload)
+        + "; const eventTypes=[];</script>",
+        encoding="utf-8",
+    )
+    return report
+
+
+def stage_fixture(tmp_path: Path) -> publisher.StageResult:
+    session = tmp_path / "20260803_081935_session39"
+    session.mkdir()
+    (session / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    (session / "robocap_segment1_video_left.mp4").write_bytes(b"video")
+    write_inspection_report(session)
+    return publisher.stage_session(
+        session,
+        "p01",
+        dataset_root=tmp_path / "dataset",
+        segment="segment1",
+        raw_video=True,
+        progress=None,
+    )
+
+
+def test_save_modelscope_settings_uses_utf8_env_without_exposing_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv(publisher.TOKEN_KEY, raising=False)
+    monkeypatch.delenv(publisher.ENDPOINT_KEY, raising=False)
+    env_path = tmp_path / ".env"
+
+    settings = publisher.save_modelscope_settings(
+        "ms-secret-value", "https://modelscope.cn", env_path
+    )
+
+    assert settings.token == "ms-secret-value"
+    assert settings.env_path == env_path.resolve()
+    assert "MODELSCOPE_API_TOKEN='ms-secret-value'" in env_path.read_text(encoding="utf-8")
+    assert not env_path.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert "ms-secret-value" not in publisher.token_status(settings)
+
+
+def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
+    tmp_path: Path,
+) -> None:
+    staged = stage_fixture(tmp_path)
+
+    expected = tmp_path / "dataset" / "P01" / "20260803_081935_session39"
+    assert staged.session_dir == expected.resolve()
+    assert (expected / "motion.trc").is_file()
+    assert (expected / "robocap_segment1_video_left.mp4").read_bytes() == b"video"
+    assert not (expected / "_artifacts").exists()
+    report_text = staged.inspection_html.read_text(encoding="utf-8")
+    assert str(tmp_path.resolve()) not in report_text
+    assert '"sessionPath":"20260803_081935_session39"' in report_text
+
+    metadata = [
+        json.loads(line) for line in staged.metadata_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert metadata == [
+        {
+            "primitive_id": "P01",
+            "session_id": "20260803_081935_session39",
+            "session_path": "P01/20260803_081935_session39",
+            "manifest": "P01/20260803_081935_session39/manifest.json",
+            "inspection_html": (
+                "P01/20260803_081935_session39/timestamp_anomaly_detail_table.html"
+            ),
+            "segment": "segment1",
+            "file_count": 3,
+            "packaged_bytes": staged.total_bytes,
+        }
+    ]
+
+
+def test_staging_same_session_updates_one_metadata_row(tmp_path: Path) -> None:
+    first = stage_fixture(tmp_path)
+    second = publisher.stage_session(
+        tmp_path / "20260803_081935_session39",
+        "P01",
+        dataset_root=tmp_path / "dataset",
+        segment="segment1",
+        raw_video=True,
+        progress=None,
+    )
+
+    assert first.metadata_path == second.metadata_path
+    assert len(second.metadata_path.read_text(encoding="utf-8").splitlines()) == 1
+    assert (
+        publisher.load_staged_session(second.dataset_root, "P01", second.session_id).file_count == 3
+    )
+
+
+def test_stage_session_never_packages_dotenv_files(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / ".env").write_text("MODELSCOPE_API_TOKEN=secret\n", encoding="utf-8")
+    (session / "motion.bvh").write_text("HIERARCHY\n", encoding="utf-8")
+    write_inspection_report(session)
+
+    staged = publisher.stage_session(
+        session,
+        "P02",
+        dataset_root=tmp_path / "dataset",
+        raw_video=True,
+        progress=None,
+    )
+
+    assert not (staged.session_dir / ".env").exists()
+    assert "secret" not in staged.manifest_path.read_text(encoding="utf-8")
+
+
+def test_upload_staged_session_uploads_every_indexed_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    staged = stage_fixture(tmp_path)
+    second_session = tmp_path / "second_session"
+    second_session.mkdir()
+    (second_session / "motion.bvh").write_text("HIERARCHY\n", encoding="utf-8")
+    write_inspection_report(second_session)
+    publisher.stage_session(
+        second_session,
+        "P02",
+        dataset_root=staged.dataset_root,
+        raw_video=True,
+        progress=None,
+    )
+    calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    class FakeApi:
+        def whoami(self):
+            return SimpleNamespace(username="dataset-owner")
+
+        def repo_exists(self, *args, **kwargs):
+            calls.append(("repo_exists", args, kwargs))
+            return False
+
+        def create_repo(self, *args, **kwargs):
+            calls.append(("create_repo", args, kwargs))
+
+        def upload_folder(self, *args, **kwargs):
+            calls.append(("upload_folder", args, kwargs))
+
+    monkeypatch.setattr(publisher, "_hub_api", lambda _settings: FakeApi())
+    settings = publisher.ModelScopeSettings(
+        "secret", "https://modelscope.cn", tmp_path / ".env", ".env"
+    )
+
+    result = publisher.upload_staged_session(
+        staged,
+        "owner/egomocap",
+        create_if_missing=True,
+        visibility="private",
+        settings=settings,
+    )
+
+    assert result.repo_url == "https://modelscope.cn/datasets/owner/egomocap"
+    assert result.session_count == 2
+    assert calls[0] == ("repo_exists", ("owner/egomocap", "dataset"), {})
+    assert calls[1][0] == "create_repo"
+    assert calls[2][0] == "upload_folder"
+    assert calls[2][1][:3] == ("owner/egomocap", "dataset", staged.dataset_root)
+    assert calls[2][2]["allow_patterns"] == [
+        "P01/20260803_081935_session39/**",
+        "P02/second_session/**",
+        "metadata.jsonl",
+        "README.md",
+    ]
+    assert calls[2][2]["disable_tqdm"] is True
+
+
+def test_upload_requires_configured_token(tmp_path: Path) -> None:
+    staged = stage_fixture(tmp_path)
+    settings = publisher.ModelScopeSettings(
+        None, "https://modelscope.cn", tmp_path / ".env", "missing"
+    )
+
+    with pytest.raises(publisher.ModelScopePublisherError, match="not configured"):
+        publisher.upload_staged_session(staged, "owner/egomocap", settings=settings)

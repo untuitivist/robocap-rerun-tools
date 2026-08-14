@@ -83,6 +83,18 @@ export parameters. Different parameter sets therefore do not overwrite each othe
 
 Use `Set as default` beside either Offset field to persist that frame offset and apply it to both
 the Export and Offset tabs. The saved value is restored the next time the Web UI starts.
+
+## ModelScope Dataset Publishing
+
+The ModelScope tab stages one recording under `PXX/<session_id>/`. Compressed video is the default,
+and the standalone timestamp inspection HTML is required and copied into the same session directory.
+The generated dataset root also contains `metadata.jsonl` and a DatasetHub-compatible `README.md`.
+
+`MODELSCOPE_API_TOKEN` and `MODELSCOPE_ENDPOINT` are stored in the repository-local `.env` file.
+The token field never displays the saved value; leaving it blank preserves the current token.
+Use `Prepare session` before `Upload prepared dataset`. Upload sends every session referenced by
+`metadata.jsonl` and uses the official `modelscope-hub`
+client and its resumable upload cache by default.
 """
 
 
@@ -148,6 +160,16 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 
 点击任一 Offset 输入框旁的“设为默认值”，会持久保存当前帧偏移量，并同步到“导出 RRD”和“Offset”页。
 下次启动 Web UI 时会自动恢复该值。
+
+## ModelScope 数据集发布
+
+“ModelScope”页把一套数据准备到 `PXX/<session_id>/`。默认压缩视频，并强制要求已有独立的时间戳
+检查 HTML；检查报告会复制到同一个 session 目录。数据集根目录同时生成 `metadata.jsonl` 和符合
+DatasetHub 读取格式的 `README.md`。
+
+`MODELSCOPE_API_TOKEN` 与 `MODELSCOPE_ENDPOINT` 保存在仓库根目录的 `.env`。网页不会回显已保存
+token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，再执行“上传已准备数据集”。
+上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存。
 """
 
 
@@ -212,6 +234,29 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "Open web viewer",
         "viewer_rrd_file": "RRD file",
         "viewer_port": "Web viewer port (0 = auto)",
+        "modelscope_help": "Dataset target: `PXX/<session_id>/`. Prepare locally before uploading.",
+        "modelscope_primitive": "Action primitive (PXX)",
+        "modelscope_dataset_root": "Local dataset root",
+        "modelscope_repo_id": "ModelScope dataset repo (owner/name)",
+        "modelscope_endpoint": "ModelScope endpoint",
+        "modelscope_revision": "Revision",
+        "modelscope_token": "ModelScope token (blank keeps saved value)",
+        "modelscope_token_status": "Token status",
+        "modelscope_save_token": "Save token and endpoint",
+        "modelscope_clear_token": "Clear saved token",
+        "modelscope_check_token": "Check authentication",
+        "modelscope_refresh_inspection": "Regenerate inspection HTML before preparing",
+        "modelscope_raw_video": "Keep original video",
+        "modelscope_include_rrd": "Include RRD files",
+        "modelscope_proxy_height": "Compressed video height",
+        "modelscope_proxy_crf": "Compressed video CRF",
+        "modelscope_create_repo": "Create repository if missing",
+        "modelscope_visibility": "New repository visibility",
+        "modelscope_license": "New repository license",
+        "modelscope_use_cache": "Use resumable upload cache",
+        "modelscope_max_workers": "Upload workers",
+        "modelscope_stage": "Prepare session",
+        "modelscope_upload": "Upload prepared dataset",
         "doc": EN_DOC,
     },
     "中文": {
@@ -272,6 +317,29 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "打开 Web Viewer",
         "viewer_rrd_file": "RRD 文件",
         "viewer_port": "Web Viewer 端口（0 = 自动）",
+        "modelscope_help": "数据集目录固定为 `PXX/<session_id>/`。先在本地准备，再上传。",
+        "modelscope_primitive": "动作基元（PXX）",
+        "modelscope_dataset_root": "本地数据集根目录",
+        "modelscope_repo_id": "ModelScope 数据集仓库（owner/name）",
+        "modelscope_endpoint": "ModelScope 站点",
+        "modelscope_revision": "分支 / Revision",
+        "modelscope_token": "ModelScope Token（留空保留已保存值）",
+        "modelscope_token_status": "Token 状态",
+        "modelscope_save_token": "保存 Token 与站点",
+        "modelscope_clear_token": "清除已保存 Token",
+        "modelscope_check_token": "检查身份",
+        "modelscope_refresh_inspection": "准备前重新生成检查 HTML",
+        "modelscope_raw_video": "保留原始视频",
+        "modelscope_include_rrd": "包含 RRD 文件",
+        "modelscope_proxy_height": "压缩视频高度",
+        "modelscope_proxy_crf": "压缩视频 CRF",
+        "modelscope_create_repo": "仓库不存在时创建",
+        "modelscope_visibility": "新仓库可见性",
+        "modelscope_license": "新仓库 License",
+        "modelscope_use_cache": "使用可恢复上传缓存",
+        "modelscope_max_workers": "上传并发数",
+        "modelscope_stage": "准备 Session",
+        "modelscope_upload": "上传已准备数据集",
         "doc": ZH_DOC,
     },
 }
@@ -283,6 +351,22 @@ DEFAULT_OFFSET = 5
 OFFSET_UNIT = "robocap_video_frames"
 LEGACY_OFFSET_RATIO = 8
 WEB_SETTINGS_ENV = "ROBOCAP_RERUN_WEB_SETTINGS"
+
+
+def ensure_localhost_no_proxy() -> None:
+    required = ("127.0.0.1", "localhost")
+    values: list[str] = []
+    lowered: set[str] = set()
+    for name in ("NO_PROXY", "no_proxy"):
+        for item in os.environ.get(name, "").split(","):
+            value = item.strip()
+            if value and value.lower() not in lowered:
+                values.append(value)
+                lowered.add(value.lower())
+    values.extend(item for item in required if item.lower() not in lowered)
+    combined = ",".join(values)
+    os.environ["NO_PROXY"] = combined
+    os.environ["no_proxy"] = combined
 
 
 def web_settings_path() -> Path:
@@ -492,7 +576,15 @@ def git_repository_report(*, fetch: bool = False) -> str:
 
 
 def check_environment() -> str:
-    packages = ("robocap-rerun-tools", "numpy", "rerun-sdk", "scipy", "gradio")
+    packages = (
+        "robocap-rerun-tools",
+        "numpy",
+        "rerun-sdk",
+        "scipy",
+        "gradio",
+        "modelscope-hub",
+        "python-dotenv",
+    )
     lines = [
         "# Environment check",
         "",
@@ -865,6 +957,158 @@ def package_data(
     return run_cli(args)
 
 
+def format_modelscope_status(settings: object, language: str) -> str:
+    configured = bool(getattr(settings, "token", None))
+    source = str(getattr(settings, "token_source", "missing"))
+    endpoint = str(getattr(settings, "endpoint", ""))
+    env_path = str(getattr(settings, "env_path", ""))
+    if language == "中文":
+        state = "已配置" if configured else "未配置"
+        return f"**Token：{state}** · 来源：`{source}` · 站点：`{endpoint}` · `.env`：`{env_path}`"
+    state = "configured" if configured else "not configured"
+    return (
+        f"**Token: {state}** · source: `{source}` · endpoint: `{endpoint}` · `.env`: `{env_path}`"
+    )
+
+
+def modelscope_status(language: str = "中文") -> str:
+    from robocap_rerun_tools.modelscope_publisher import load_modelscope_settings
+
+    try:
+        return format_modelscope_status(load_modelscope_settings(), language)
+    except (OSError, ValueError) as exc:
+        return f"ModelScope configuration error: {exc}"
+
+
+def save_modelscope_web_settings(token: str, endpoint: str, language: str) -> tuple[str, str, str]:
+    from robocap_rerun_tools.modelscope_publisher import save_modelscope_settings
+
+    supplied_token = bool((token or "").strip())
+    try:
+        settings = save_modelscope_settings(token, endpoint)
+    except (OSError, ValueError) as exc:
+        return f"ModelScope configuration error: {exc}", modelscope_status(language), ""
+    if language == "中文":
+        action = "Token 与站点已保存" if supplied_token else "站点已保存；Token 保持不变"
+    else:
+        action = "Token and endpoint saved" if supplied_token else "Endpoint saved; token unchanged"
+    return f"{action}: {settings.env_path}", format_modelscope_status(settings, language), ""
+
+
+def clear_modelscope_web_token(language: str) -> tuple[str, str, str]:
+    from robocap_rerun_tools.modelscope_publisher import clear_modelscope_token
+
+    try:
+        settings = clear_modelscope_token()
+    except (OSError, ValueError) as exc:
+        return f"ModelScope configuration error: {exc}", modelscope_status(language), ""
+    message = (
+        "已清除本地 ModelScope Token。" if language == "中文" else "Saved ModelScope token cleared."
+    )
+    return message, format_modelscope_status(settings, language), ""
+
+
+def check_modelscope_web_auth(token: str, endpoint: str, language: str) -> str:
+    from robocap_rerun_tools.modelscope_publisher import (
+        ModelScopePublisherError,
+        ModelScopeSettings,
+        load_modelscope_settings,
+        validate_endpoint,
+        verify_modelscope_auth,
+    )
+
+    try:
+        saved = load_modelscope_settings()
+        candidate = (token or "").strip() or saved.token
+        source = "unsaved Web input" if (token or "").strip() else saved.token_source
+        settings = ModelScopeSettings(
+            candidate,
+            validate_endpoint(endpoint),
+            saved.env_path,
+            source,
+        )
+        username = verify_modelscope_auth(settings)
+    except (OSError, ValueError, ModelScopePublisherError) as exc:
+        return str(exc)
+    if language == "中文":
+        return f"ModelScope 身份验证成功：`{username}`。Token 来源：`{source}`。"
+    return f"ModelScope authentication succeeded as `{username}`. Token source: `{source}`."
+
+
+def stage_modelscope_data(
+    session_dir: str,
+    segment: str,
+    primitive_id: str,
+    dataset_root: str,
+    refresh_inspection: bool,
+    raw_video: bool,
+    include_rrd: bool,
+    proxy_height: int,
+    proxy_crf: int,
+) -> str:
+    args = [
+        "modelscope-stage",
+        session_path(session_dir),
+        "--primitive-id",
+        primitive_id,
+        "--proxy-height",
+        str(int(proxy_height)),
+        "--proxy-crf",
+        str(int(proxy_crf)),
+    ]
+    if optional_text(segment):
+        args.extend(["--segment", segment.strip()])
+    if optional_text(dataset_root):
+        args.extend(["--dataset-root", dataset_root.strip()])
+    if refresh_inspection:
+        args.append("--refresh-inspection")
+    if raw_video:
+        args.append("--raw-video")
+    if include_rrd:
+        args.append("--include-rrd")
+    return run_cli(args)
+
+
+def upload_modelscope_data(
+    session_dir: str,
+    dataset_root: str,
+    repo_id: str,
+    revision: str,
+    create_if_missing: bool,
+    visibility: str,
+    license_name: str,
+    use_cache: bool,
+    max_workers: int,
+) -> str:
+    from robocap_rerun_tools.modelscope_publisher import default_dataset_root
+
+    resolved_session = Path(session_path(session_dir))
+    resolved_root = (
+        Path(dataset_root.strip())
+        if optional_text(dataset_root)
+        else default_dataset_root(resolved_session)
+    )
+    args = [
+        "modelscope-upload",
+        str(resolved_root),
+        "--repo-id",
+        repo_id.strip(),
+        "--revision",
+        revision.strip() or "master",
+        "--visibility",
+        visibility,
+        "--max-workers",
+        str(max(1, int(max_workers))),
+    ]
+    if create_if_missing:
+        args.append("--create-if-missing")
+    if optional_text(license_name):
+        args.extend(["--license", license_name.strip()])
+    if not use_cache:
+        args.append("--no-cache")
+    return run_cli(args)
+
+
 def inspect_offset(
     session_dir: str, segment: str, ratio: str, offset: int, nokov_source: str
 ) -> str:
@@ -1051,6 +1295,29 @@ def language_updates(language: str):
         gr.update(value=labels["viewer_open_button"]),
         gr.update(label=labels["viewer_rrd_file"]),
         gr.update(label=labels["viewer_port"]),
+        gr.update(value=labels["modelscope_help"]),
+        gr.update(label=labels["modelscope_primitive"]),
+        gr.update(label=labels["modelscope_dataset_root"]),
+        gr.update(label=labels["modelscope_repo_id"]),
+        gr.update(label=labels["modelscope_endpoint"]),
+        gr.update(label=labels["modelscope_revision"]),
+        gr.update(label=labels["modelscope_token"]),
+        gr.update(value=modelscope_status(language)),
+        gr.update(value=labels["modelscope_save_token"]),
+        gr.update(value=labels["modelscope_clear_token"]),
+        gr.update(value=labels["modelscope_check_token"]),
+        gr.update(label=labels["modelscope_refresh_inspection"]),
+        gr.update(label=labels["modelscope_raw_video"]),
+        gr.update(label=labels["modelscope_include_rrd"]),
+        gr.update(label=labels["modelscope_proxy_height"]),
+        gr.update(label=labels["modelscope_proxy_crf"]),
+        gr.update(label=labels["modelscope_create_repo"]),
+        gr.update(label=labels["modelscope_visibility"]),
+        gr.update(label=labels["modelscope_license"]),
+        gr.update(label=labels["modelscope_use_cache"]),
+        gr.update(label=labels["modelscope_max_workers"]),
+        gr.update(value=labels["modelscope_stage"]),
+        gr.update(value=labels["modelscope_upload"]),
         gr.update(value=labels["doc"]),
     ]
 
@@ -1065,6 +1332,12 @@ def build_app():
 
     labels = language_values("中文")
     default_offset = load_default_offset()
+    try:
+        from robocap_rerun_tools.modelscope_publisher import load_modelscope_settings
+
+        initial_modelscope_endpoint = load_modelscope_settings().endpoint
+    except (OSError, ValueError):
+        initial_modelscope_endpoint = "https://modelscope.cn"
     with gr.Blocks(title="Robocap Rerun Tools") as app:
         title = gr.Markdown(labels["title"])
         with gr.Row():
@@ -1114,6 +1387,124 @@ def build_app():
             package_button.click(
                 package_data,
                 inputs=[session_dir, segment, package_output, package_height, package_crf],
+                outputs=output,
+            )
+
+        with gr.Tab("ModelScope"):
+            modelscope_help = gr.Markdown(labels["modelscope_help"])
+            with gr.Row():
+                modelscope_primitive = gr.Dropdown(
+                    label=labels["modelscope_primitive"],
+                    choices=[f"P{index:02d}" for index in range(1, 30)],
+                    value="P01",
+                    allow_custom_value=True,
+                    scale=1,
+                )
+                modelscope_dataset_root = gr.Textbox(
+                    label=labels["modelscope_dataset_root"],
+                    placeholder=r"Z:\DATASETS\Frodobots\nokov\_modelscope_dataset",
+                    scale=3,
+                )
+            with gr.Row():
+                modelscope_repo_id = gr.Textbox(
+                    label=labels["modelscope_repo_id"], placeholder="owner/egomocap", scale=3
+                )
+                modelscope_revision = gr.Textbox(
+                    label=labels["modelscope_revision"], value="master", scale=1
+                )
+            with gr.Row():
+                modelscope_endpoint = gr.Textbox(
+                    label=labels["modelscope_endpoint"],
+                    value=initial_modelscope_endpoint,
+                    scale=2,
+                )
+                modelscope_token = gr.Textbox(
+                    label=labels["modelscope_token"], type="password", value="", scale=2
+                )
+            modelscope_token_status = gr.Markdown(modelscope_status("中文"))
+            with gr.Row():
+                modelscope_save_token = gr.Button(labels["modelscope_save_token"])
+                modelscope_clear_token = gr.Button(labels["modelscope_clear_token"])
+                modelscope_check_token = gr.Button(labels["modelscope_check_token"])
+            modelscope_save_token.click(
+                save_modelscope_web_settings,
+                inputs=[modelscope_token, modelscope_endpoint, language],
+                outputs=[output, modelscope_token_status, modelscope_token],
+            )
+            modelscope_clear_token.click(
+                clear_modelscope_web_token,
+                inputs=[language],
+                outputs=[output, modelscope_token_status, modelscope_token],
+            )
+            modelscope_check_token.click(
+                check_modelscope_web_auth,
+                inputs=[modelscope_token, modelscope_endpoint, language],
+                outputs=output,
+            )
+            with gr.Row():
+                modelscope_refresh_inspection = gr.Checkbox(
+                    label=labels["modelscope_refresh_inspection"], value=True
+                )
+                modelscope_raw_video = gr.Checkbox(
+                    label=labels["modelscope_raw_video"], value=False
+                )
+                modelscope_include_rrd = gr.Checkbox(
+                    label=labels["modelscope_include_rrd"], value=False
+                )
+            with gr.Row():
+                modelscope_proxy_height = gr.Number(
+                    label=labels["modelscope_proxy_height"], value=540, precision=0
+                )
+                modelscope_proxy_crf = gr.Number(
+                    label=labels["modelscope_proxy_crf"], value=28, precision=0
+                )
+                modelscope_max_workers = gr.Number(
+                    label=labels["modelscope_max_workers"], value=4, precision=0
+                )
+            with gr.Row():
+                modelscope_create_repo = gr.Checkbox(
+                    label=labels["modelscope_create_repo"], value=False
+                )
+                modelscope_visibility = gr.Dropdown(
+                    label=labels["modelscope_visibility"],
+                    choices=["private", "internal", "public"],
+                    value="private",
+                )
+                modelscope_license = gr.Textbox(
+                    label=labels["modelscope_license"], placeholder="cc-by-4.0"
+                )
+                modelscope_use_cache = gr.Checkbox(label=labels["modelscope_use_cache"], value=True)
+            with gr.Row():
+                modelscope_stage = gr.Button(labels["modelscope_stage"], variant="primary")
+                modelscope_upload = gr.Button(labels["modelscope_upload"])
+            modelscope_stage.click(
+                stage_modelscope_data,
+                inputs=[
+                    session_dir,
+                    segment,
+                    modelscope_primitive,
+                    modelscope_dataset_root,
+                    modelscope_refresh_inspection,
+                    modelscope_raw_video,
+                    modelscope_include_rrd,
+                    modelscope_proxy_height,
+                    modelscope_proxy_crf,
+                ],
+                outputs=output,
+            )
+            modelscope_upload.click(
+                upload_modelscope_data,
+                inputs=[
+                    session_dir,
+                    modelscope_dataset_root,
+                    modelscope_repo_id,
+                    modelscope_revision,
+                    modelscope_create_repo,
+                    modelscope_visibility,
+                    modelscope_license,
+                    modelscope_use_cache,
+                    modelscope_max_workers,
+                ],
                 outputs=output,
             )
 
@@ -1315,6 +1706,29 @@ def build_app():
                 viewer_open_button,
                 viewer_rrd_file,
                 viewer_port,
+                modelscope_help,
+                modelscope_primitive,
+                modelscope_dataset_root,
+                modelscope_repo_id,
+                modelscope_endpoint,
+                modelscope_revision,
+                modelscope_token,
+                modelscope_token_status,
+                modelscope_save_token,
+                modelscope_clear_token,
+                modelscope_check_token,
+                modelscope_refresh_inspection,
+                modelscope_raw_video,
+                modelscope_include_rrd,
+                modelscope_proxy_height,
+                modelscope_proxy_crf,
+                modelscope_create_repo,
+                modelscope_visibility,
+                modelscope_license,
+                modelscope_use_cache,
+                modelscope_max_workers,
+                modelscope_stage,
+                modelscope_upload,
                 docs,
             ],
         )
@@ -1323,6 +1737,10 @@ def build_app():
 
 
 def main(args: argparse.Namespace) -> int:
+    from robocap_rerun_tools.modelscope_publisher import ensure_env_file
+
+    ensure_localhost_no_proxy()
+    ensure_env_file()
     app = build_app()
     app.launch(server_name=args.host, server_port=args.port, inbrowser=args.open)
     return 0
