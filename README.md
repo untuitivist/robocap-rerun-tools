@@ -103,7 +103,9 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
 <dataset_root>/
   README.md                              # required: ModelScope Dataset Card
   metadata.jsonl                         # required: one row per session
-  EgoMotionActions/                      # only generated data directory
+  raw_calibration/                       # required: maintained by calibration workflow
+    <device_id>/                         # files are resolved by explicit device ID
+  EgoMotionActions/                      # generated action data
     PXX/                                 # P01-P29 action primitive
       <session_id>/
         robocap_<segment>_video_*.mp4       # required: six first-person cameras
@@ -122,9 +124,11 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
 The capture streams and motion-capture content are required. Only the concrete NOKOV export
 format(s) and RRD files are optional; at least one motion-capture format must be present.
 
-Raw calibration is stored outside this published dataset root. Only
-`device_ids: {main, left, right}` is written to `manifest.json` and `metadata.jsonl`; local
-`raw_calibration/` files, paths, API responses, and signed URLs are never packaged.
+Raw calibration is outside every action session and is stored once at
+`<dataset_root>/raw_calibration/<device_id>/`. The session staging command does not copy a source
+session's local `raw_calibration/`; that root collection is maintained separately. Session
+`manifest.json` and `metadata.jsonl` reference it only with `device_ids: {main, left, right}`.
+Local paths, API responses, and signed URLs are never packaged.
 
 Copy `.env.example` to `.env`, or save the token from the Web `ModelScope` tab. The local file is
 ignored by Git and excluded from every data package:

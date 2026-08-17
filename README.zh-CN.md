@@ -172,7 +172,9 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 <dataset_root>/
   README.md                              # 必需：ModelScope Dataset Card
   metadata.jsonl                         # 必需：每个 session 一行
-  EgoMotionActions/                      # 唯一自动生成的数据目录
+  raw_calibration/                       # 必需：由独立标定流程维护
+    <device_id>/                         # 通过明确的 device ID 查找
+  EgoMotionActions/                      # 工具生成的动作数据
     PXX/                                 # P01-P29 动作基元
       <session_id>/
         robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
@@ -191,9 +193,10 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 采集数据与动捕内容本身必需。只有具体采用哪些 NOKOV 导出格式和是否包含 RRD 是可选项；动捕格式
 至少存在一种。
 
-原始标定数据放在这个发布数据集 root 之外。`manifest.json` 与 `metadata.jsonl` 只写入明确的
-`device_ids: {main, left, right}`；本地 `raw_calibration/` 中的文件、路径、API 响应和临时签名 URL
-永远不会进入发布包。
+原始标定数据位于每个动作 session 之外，统一放在
+`<dataset_root>/raw_calibration/<device_id>/`。Session 准备命令不会复制源 session 内的本地
+`raw_calibration/`，根级标定数据由独立流程维护。Session 的 `manifest.json` 与 `metadata.jsonl`
+只通过 `device_ids: {main, left, right}` 引用它；本地路径、API 响应和临时签名 URL 永远不会进入发布包。
 
 可以复制 `.env.example` 为 `.env`，也可以在 Web 的“ModelScope”页保存 Token：
 
