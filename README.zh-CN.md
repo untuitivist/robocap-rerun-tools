@@ -169,27 +169,29 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 发布时使用可直接访问的文件，不只上传 ZIP。准备后的目录固定为：
 
 ```text
-metadata.jsonl
-README.md
-PXX/
-  <session_id>/
-    robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
-    robocap_<segment>_imu_*.db          # 必需：Robocap IMU
-    robocap_<segment>_mag_*.db          # 必需：Robocap MAG
-    nokov/
-      *.{bvh,trc,csv,xrs,c3d,...}       # [可选格式]：至少存在一种动捕格式
-                                        # 每种已选格式包含全部人体和刚体
-      *.mp4                             # 必需：一个或多个第三人称视频
-    robowrist_<device_id>_<side>/       # 必需：左右视频、IMU、MAG
-    rerun/<segment>/inspection/*.rrd    # [可选]：仅勾选后包含
-    manifest.json                       # 自动生成；包含 device ID
-    timestamp_anomaly_detail_table.html # 自动生成且必需
+<dataset_root>/
+  README.md                              # 必需：ModelScope Dataset Card
+  metadata.jsonl                         # 必需：每个 session 一行
+  EgoMotionActions/                      # 唯一自动生成的数据目录
+    PXX/                                 # P01-P29 动作基元
+      <session_id>/
+        robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
+        robocap_<segment>_imu_*.db          # 必需：Robocap IMU
+        robocap_<segment>_mag_*.db          # 必需：Robocap MAG
+        nokov/
+          *.{bvh,trc,csv,xrs,c3d,...}       # [可选格式]：至少存在一种
+                                            # 每种已选格式包含全部人体和刚体
+          *.mp4                             # 必需：一个或多个第三人称视频
+        robowrist_<device_id>_<side>/       # 必需：左右视频、IMU、MAG
+        rerun/<segment>/inspection/*.rrd    # [可选]：仅勾选后包含
+        manifest.json                       # 自动生成；包含 device ID
+        timestamp_anomaly_detail_table.html # 自动生成且必需
 ```
 
 采集数据与动捕内容本身必需。只有具体采用哪些 NOKOV 导出格式和是否包含 RRD 是可选项；动捕格式
 至少存在一种。
 
-标定数据放在 Session 数据集之外。`manifest.json` 与 `metadata.jsonl` 只写入明确的
+原始标定数据放在这个发布数据集 root 之外。`manifest.json` 与 `metadata.jsonl` 只写入明确的
 `device_ids: {main, left, right}`；本地 `raw_calibration/` 中的文件、路径、API 响应和临时签名 URL
 永远不会进入发布包。
 

@@ -24,6 +24,7 @@ ENDPOINT_KEY = "MODELSCOPE_ENDPOINT"
 REPORT_NAME = "timestamp_anomaly_detail_table.html"
 METADATA_NAME = "metadata.jsonl"
 DATASET_README_NAME = "README.md"
+ACTIONS_DIR_NAME = "EgoMotionActions"
 PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
 REPO_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -390,7 +391,7 @@ configs:
 # EgoMocap Dataset
 
 Each row in `metadata.jsonl` describes one recording. Session files use the stable
-`PXX/<session_id>/` hierarchy, where `PXX` is an action primitive ID.
+`EgoMotionActions/PXX/<session_id>/` hierarchy, where `PXX` is an action primitive ID.
 
 Every session directory includes a self-contained `timestamp_anomaly_detail_table.html`
 inspection report. Paths inside manifests and reports are dataset-relative.
@@ -405,8 +406,33 @@ inspection report. Paths inside manifests and reports are dataset-relative.
 - Optional artifact: RRD files, only when explicitly selected.
 - Generated: `manifest.json` and `timestamp_anomaly_detail_table.html`.
 
-Calibration files live outside the session dataset. `manifest.json` and `metadata.jsonl` contain
-only explicit `main`, `left`, and `right` device IDs needed to resolve those records.
+Raw calibration lives outside this published dataset root. `manifest.json` and `metadata.jsonl`
+contain only explicit `main`, `left`, and `right` device IDs needed to resolve those records.
+
+## Dataset root
+
+```text
+<dataset_root>/
+  README.md
+  metadata.jsonl
+  EgoMotionActions/
+    PXX/
+      <session_id>/
+        robocap_<segment>_video_*.mp4
+        robocap_<segment>_imu_*.db
+        robocap_<segment>_mag_*.db
+        nokov/
+          *.{bvh,trc,csv,xrs,c3d,...}
+          *.mp4
+        robowrist_<device_id>_<side>/
+        rerun/<segment>/inspection/*.rrd
+        manifest.json
+        timestamp_anomaly_detail_table.html
+```
+
+`README.md` is the ModelScope Dataset Card. `metadata.jsonl` is the dataset-wide session index.
+`EgoMotionActions/` is the only generated data directory. Raw calibration is maintained outside
+this published root and is referenced only through the explicit device IDs.
 """
 
 
@@ -493,7 +519,7 @@ def stage_session(
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id or source.name)
     root = (dataset_root or default_dataset_root(source)).expanduser().resolve()
-    target = root / primitive / resolved_session_id
+    target = root / ACTIONS_DIR_NAME / primitive / resolved_session_id
     _validate_stage_locations(source, root, target)
     device_ids = discover_device_ids(source, ffprobe)
 
@@ -587,7 +613,7 @@ def stage_session(
         encoding="utf-8",
         newline="\n",
     )
-    relative_session = f"{primitive}/{resolved_session_id}"
+    relative_session = f"{ACTIONS_DIR_NAME}/{primitive}/{resolved_session_id}"
     metadata_path = _update_metadata(
         root,
         {
@@ -624,7 +650,7 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
     root = dataset_root.expanduser().resolve()
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id)
-    target = root / primitive / resolved_session_id
+    target = root / ACTIONS_DIR_NAME / primitive / resolved_session_id
     manifest_path = target / "manifest.json"
     metadata_path = root / METADATA_NAME
     readme_path = root / DATASET_README_NAME
@@ -679,12 +705,12 @@ def load_staged_dataset(dataset_root: Path) -> StagedDataset:
     for entry in entries:
         primitive = validate_primitive_id(str(entry.get("primitive_id", "")))
         session_id = validate_session_id(str(entry.get("session_id", "")))
-        expected_path = f"{primitive}/{session_id}"
+        expected_path = f"{ACTIONS_DIR_NAME}/{primitive}/{session_id}"
         if entry.get("session_path") != expected_path:
             raise ModelScopePublisherError(
                 f"Metadata path for {primitive}/{session_id} must be {expected_path}."
             )
-        session_dir = root / primitive / session_id
+        session_dir = root / ACTIONS_DIR_NAME / primitive / session_id
         for required in (session_dir / "manifest.json", session_dir / REPORT_NAME):
             if not required.is_file():
                 missing.append(str(required))
@@ -810,7 +836,7 @@ def upload_staged_session(
     **kwargs: Any,
 ) -> UploadResult:
     dataset = load_staged_dataset(staged.dataset_root)
-    selected = f"{staged.primitive_id}/{staged.session_id}"
+    selected = f"{ACTIONS_DIR_NAME}/{staged.primitive_id}/{staged.session_id}"
     if selected not in dataset.session_paths:
         raise ModelScopePublisherError(
             f"Selected staged session is missing from metadata: {selected}"

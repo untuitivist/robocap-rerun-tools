@@ -1816,7 +1816,8 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
         print(f"ModelScope staging failed: {exc}", file=sys.stderr)
         return 2
     action = "Would stage" if staged.dry_run else "Staged"
-    print(f"{action} {staged.primitive_id}/{staged.session_id}")
+    relative_session = staged.session_dir.relative_to(staged.dataset_root).as_posix()
+    print(f"{action} {relative_session}")
     print(f"Dataset root: {staged.dataset_root}")
     print(f"Session path: {staged.session_dir}")
     print(f"Files: {staged.file_count}; bytes: {staged.total_bytes}")

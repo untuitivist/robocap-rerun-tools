@@ -67,7 +67,13 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
 ) -> None:
     staged = stage_fixture(tmp_path)
 
-    expected = tmp_path / "dataset" / "P01" / "20260803_081935_session39"
+    expected = (
+        tmp_path
+        / "dataset"
+        / publisher.ACTIONS_DIR_NAME
+        / "P01"
+        / "20260803_081935_session39"
+    )
     assert staged.session_dir == expected.resolve()
     assert (expected / "motion.trc").is_file()
     assert (expected / "robocap_segment1_video_left.mp4").read_bytes() == b"video"
@@ -83,10 +89,11 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
         {
             "primitive_id": "P01",
             "session_id": "20260803_081935_session39",
-            "session_path": "P01/20260803_081935_session39",
-            "manifest": "P01/20260803_081935_session39/manifest.json",
+            "session_path": "EgoMotionActions/P01/20260803_081935_session39",
+            "manifest": "EgoMotionActions/P01/20260803_081935_session39/manifest.json",
             "inspection_html": (
-                "P01/20260803_081935_session39/timestamp_anomaly_detail_table.html"
+                "EgoMotionActions/P01/20260803_081935_session39/"
+                "timestamp_anomaly_detail_table.html"
             ),
             "segment": "segment1",
             "device_ids": {"main": None, "left": None, "right": None},
@@ -97,6 +104,10 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
     dataset_readme = staged.readme_path.read_text(encoding="utf-8")
     normalized_readme = " ".join(dataset_readme.split())
     assert "Required capture streams" in dataset_readme
+    assert "EgoMotionActions/PXX/<session_id>/" in dataset_readme
+    assert "EgoMotionActions/` is the only generated data directory" in normalized_readme
+    assert "robowrist_<device_id>_<side>/" in dataset_readme
+    assert "rerun/<segment>/inspection/*.rrd" in dataset_readme
     assert "at least one motion-capture format must be present" in normalized_readme
     assert "Optional artifact: RRD files" in dataset_readme
     assert "Optional: third-person" not in dataset_readme
@@ -315,8 +326,8 @@ def test_upload_staged_session_uploads_every_indexed_session(
     assert calls[2][0] == "upload_folder"
     assert calls[2][1][:3] == ("owner/egomocap", "dataset", staged.dataset_root)
     assert calls[2][2]["allow_patterns"] == [
-        "P01/20260803_081935_session39/**",
-        "P02/second_session/**",
+        "EgoMotionActions/P01/20260803_081935_session39/**",
+        "EgoMotionActions/P02/second_session/**",
         "metadata.jsonl",
         "README.md",
     ]

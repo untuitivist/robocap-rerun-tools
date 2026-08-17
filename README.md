@@ -100,27 +100,29 @@ robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 The tool publishes direct dataset files rather than a ZIP-only sample. Each prepared recording uses:
 
 ```text
-metadata.jsonl
-README.md
-PXX/
-  <session_id>/
-    robocap_<segment>_video_*.mp4       # required: six first-person cameras
-    robocap_<segment>_imu_*.db          # required: Robocap IMU
-    robocap_<segment>_mag_*.db          # required: Robocap MAG
-    nokov/
-      *.{bvh,trc,csv,xrs,c3d,...}       # [optional format]: at least one mocap format is required
-                                        # include every body and rigid body in each chosen format
-      *.mp4                             # required: third-person video(s)
-    robowrist_<device_id>_<side>/       # required: left/right video, IMU, and MAG
-    rerun/<segment>/inspection/*.rrd    # [optional]: only when explicitly selected
-    manifest.json                       # generated; includes device IDs
-    timestamp_anomaly_detail_table.html # generated and required
+<dataset_root>/
+  README.md                              # required: ModelScope Dataset Card
+  metadata.jsonl                         # required: one row per session
+  EgoMotionActions/                      # only generated data directory
+    PXX/                                 # P01-P29 action primitive
+      <session_id>/
+        robocap_<segment>_video_*.mp4       # required: six first-person cameras
+        robocap_<segment>_imu_*.db          # required: Robocap IMU
+        robocap_<segment>_mag_*.db          # required: Robocap MAG
+        nokov/
+          *.{bvh,trc,csv,xrs,c3d,...}       # [optional format]: at least one is required
+                                            # include all bodies and rigid bodies in each format
+          *.mp4                             # required: third-person video(s)
+        robowrist_<device_id>_<side>/       # required: left/right video, IMU, and MAG
+        rerun/<segment>/inspection/*.rrd    # [optional]: only when explicitly selected
+        manifest.json                       # generated; includes device IDs
+        timestamp_anomaly_detail_table.html # generated and required
 ```
 
 The capture streams and motion-capture content are required. Only the concrete NOKOV export
 format(s) and RRD files are optional; at least one motion-capture format must be present.
 
-Calibration files are stored outside the session dataset. Only
+Raw calibration is stored outside this published dataset root. Only
 `device_ids: {main, left, right}` is written to `manifest.json` and `metadata.jsonl`; local
 `raw_calibration/` files, paths, API responses, and signed URLs are never packaged.
 
