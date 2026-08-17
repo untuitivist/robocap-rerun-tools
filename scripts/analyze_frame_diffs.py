@@ -142,7 +142,7 @@ def classify_video(path: Path) -> str:
         return "robocap_video"
     if name.startswith("robowrist_"):
         return "robowrist_video"
-    if "nokov" in parents or not name.startswith(("robocap_", "robowrist_")):
+    if "mocap" in parents or not name.startswith(("robocap_", "robowrist_")):
         return "third_person_video"
     return "video"
 

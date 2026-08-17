@@ -332,9 +332,9 @@ def test_inspection_discovery_ignores_package_manifest(tmp_path: Path) -> None:
 def test_inspection_includes_sensor_databases_and_non_segment_third_person_video(
     tmp_path: Path,
 ) -> None:
-    nokov_dir = tmp_path / "nokov"
-    nokov_dir.mkdir()
-    third_person = nokov_dir / "capture-1.mp4"
+    mocap_dir = tmp_path / "mocap"
+    mocap_dir.mkdir()
+    third_person = mocap_dir / "capture-1.mp4"
     third_person.write_bytes(b"")
     segment1_db = tmp_path / "robocap_segment1_imu_left.db"
     segment1_db.write_bytes(b"")
@@ -715,7 +715,7 @@ def test_hierarchical_nokov_csv_summary_uses_timestamp(tmp_path: Path) -> None:
 
 def test_expected_frame_counts_use_reference_robocap_n(tmp_path: Path) -> None:
     session = tmp_path / "session"
-    (session / "nokov").mkdir(parents=True)
+    (session / "mocap").mkdir(parents=True)
     summaries = [
         make_inspection_summary(
             session / "robocap_segment1_video_left.mp4", "video", 50, "robocap_video", 30.0
@@ -723,9 +723,9 @@ def test_expected_frame_counts_use_reference_robocap_n(tmp_path: Path) -> None:
         make_inspection_summary(
             session / "robocap_segment1_video_right.mp4", "video", 50, "robocap_video", 30.0
         ),
-        make_inspection_summary(session / "nokov" / "motion.trc", "trc", 408, "", 60.0),
+        make_inspection_summary(session / "mocap" / "motion.trc", "trc", 408, "", 60.0),
         make_inspection_summary(
-            session / "nokov" / "capture-1.mp4", "video", 51, "third_person_video", 30.0
+            session / "mocap" / "capture-1.mp4", "video", 51, "third_person_video", 30.0
         ),
     ]
 

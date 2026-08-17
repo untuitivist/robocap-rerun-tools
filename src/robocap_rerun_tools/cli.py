@@ -1127,7 +1127,7 @@ def infer_fps_source(path: str | Path, kind: str) -> str:
     if kind.lower() in GT_FPS_KINDS:
         return "gt"
     if any(
-        part.startswith("test") or part in {"gt", "ground_truth", "ground-truth", "mocap", "nokov"}
+        part.startswith("test") or part in {"gt", "ground_truth", "ground-truth", "mocap"}
         for part in parts[:-1]
     ):
         return "gt"

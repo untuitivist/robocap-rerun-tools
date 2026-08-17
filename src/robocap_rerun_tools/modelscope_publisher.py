@@ -27,6 +27,7 @@ METADATA_NAME = "metadata.jsonl"
 DATASET_README_NAME = "README.md"
 ACTIONS_DIR_NAME = "EgoMotionActions"
 CALIBRATION_DIR_NAME = "raw_calibration"
+MOCAP_DIR_NAME = "mocap"
 PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
 REPO_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -103,6 +104,17 @@ def validate_session_id(value: str) -> str:
     if not session_id or session_id in {".", ".."} or Path(session_id).name != session_id:
         raise ValueError("Session ID must be one non-empty directory name without path separators.")
     return session_id
+
+
+def require_mocap_directory(session_dir: Path) -> Path:
+    mocap_dir = session_dir / MOCAP_DIR_NAME
+    if not mocap_dir.is_dir():
+        raise ModelScopePublisherError(
+            f"Session motion-capture directory must be named {MOCAP_DIR_NAME}/: {mocap_dir}"
+        )
+    if not any(path.is_file() for path in mocap_dir.rglob("*")):
+        raise ModelScopePublisherError(f"Session motion-capture directory is empty: {mocap_dir}")
+    return mocap_dir
 
 
 def validate_endpoint(value: str | None) -> str:
@@ -467,7 +479,7 @@ inspection report. Paths inside manifests and reports are dataset-relative.
 
 - Required capture streams: six `robocap_<segment>_video_*.mp4` first-person cameras, Robocap
   IMU/MAG databases, third-person videos, and Robowrist left/right video and sensor streams.
-- Required motion-capture content: all available NOKOV body and rigid-body data under `nokov/`.
+- Required motion-capture content: all available NOKOV body and rigid-body data under `mocap/`.
   The concrete BVH, CSV, TRC, XRS, C3D, or other export formats are optional choices, but at
   least one motion-capture format must be present.
 - Optional artifact: RRD files, only when explicitly selected.
@@ -494,7 +506,7 @@ are optional. All other listed capture streams and generated records are require
         robocap_<segment>_video_*.mp4            # required six first-person videos
         robocap_<segment>_imu_*.db               # required Robocap IMU
         robocap_<segment>_mag_*.db               # required Robocap MAG
-        nokov/
+        mocap/
           *.mp4                                  # required third-person video
           *.{bvh,trc,csv,xrs,c3d,...}            # one or more formats required
         robowrist_<device_id>_left/               # required left streams
@@ -592,6 +604,7 @@ def stage_session(
     source = session_dir.expanduser().resolve()
     if not source.is_dir():
         raise FileNotFoundError(source)
+    require_mocap_directory(source)
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id or source.name)
     root = (dataset_root or default_dataset_root(source)).expanduser().resolve()

@@ -2846,7 +2846,7 @@ def discover_gt_dir(session_dir: Path, explicit_gt_dir: Path | None) -> Path | N
     preferred = sorted(
         root
         for root in candidate_roots
-        if root.name.lower().startswith("test") or root.name.lower() == "nokov"
+        if root.name.lower().startswith("test") or root.name.lower() == "mocap"
     )
     choices = preferred or sorted(candidate_roots)
     if len(choices) > 1:
@@ -4047,7 +4047,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Optional GT export folder. If omitted, a single session child folder named test*, nokov, or another "
+            "Optional GT export folder. If omitted, a single session child folder named mocap, test*, or another "
             "directory containing GT files is auto-discovered. "
             "For the current NOKOV export this reads *-1.mp4, *-Tracker0.trc, *-LHand.trc, and *-RHand.trc."
         ),

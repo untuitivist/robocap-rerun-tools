@@ -267,7 +267,7 @@ def test_windows_update_script_preflights_before_stopping_and_fast_forward_pull(
 
 
 def test_scan_files_reflects_detected_robowrist_streams(tmp_path) -> None:
-    gt_dir = tmp_path / "nokov"
+    gt_dir = tmp_path / "mocap"
     gt_dir.mkdir()
 
     without_wrist = web_app.scan_files(str(tmp_path), "segment1", str(gt_dir), True)

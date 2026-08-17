@@ -1695,7 +1695,7 @@ def build_app():
 
         with gr.Tab("导出 RRD / Export"):
             scan_button = gr.Button(labels["scan_button"])
-            gt_dir = gr.Textbox(label=labels["gt_dir"], placeholder=r"Z:\...\nokov")
+            gt_dir = gr.Textbox(label=labels["gt_dir"], placeholder=r"Z:\...\mocap")
             gt_files = gr.CheckboxGroup(label=labels["gt_files"], choices=[], value=[])
             with gr.Row():
                 mode = gr.Radio(label=labels["mode"], choices=["time", "frame"], value="frame")
@@ -1730,7 +1730,7 @@ def build_app():
                 include_third_person = gr.Checkbox(label=labels["include_third_person"], value=True)
             with gr.Row():
                 third_person_video = gr.Textbox(
-                    label=labels["third_person_video"], placeholder=r"Z:\...\nokov\demo-1.mp4"
+                    label=labels["third_person_video"], placeholder=r"Z:\...\mocap\demo-1.mp4"
                 )
             scan_button.click(
                 scan_files,
@@ -1770,7 +1770,7 @@ def build_app():
                 offset_ratio = gr.Textbox(label=labels["ratio"], value="auto")
                 single_offset = gr.Number(label=labels["offset"], value=default_offset, precision=0)
                 nokov_source = gr.Textbox(
-                    label=labels["nokov_source"], placeholder=r"Z:\...\test1\test2-hand.bvh"
+                    label=labels["nokov_source"], placeholder=r"Z:\...\mocap\test2-hand.bvh"
                 )
             inspect_offset_help = gr.Markdown(labels["offset_help"])
             with gr.Row():

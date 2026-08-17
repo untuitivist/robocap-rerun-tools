@@ -14,10 +14,21 @@ Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 
 - Robocap 多视角视频：left/right、eye、front、wrist。
 - Robocap sensor CSV。
-- `test*`、`nokov` 或其他 GT 子目录里的 NOKOV 数据：第三人称视频、BVH、TRC、CSV、XRS、手部轨迹。
+- 标准 `mocap` 子目录（也兼容旧 `test*`/其他 GT 子目录）里的 NOKOV 数据：第三人称视频、BVH、TRC、CSV、XRS、手部轨迹。
 - 可选 MANO 模型：`MANO_LEFT.pkl`、`MANO_RIGHT.pkl`。
 
 如果某些视频或数据缺失，导出脚本会跳过对应视图，不会因为少一个流就整体失败，也不会创建无数据的文字占位窗口。MAG 和 Robocap IMU 都不存在时，整行传感器视图会被省略。
+
+旧数据若仍使用原来的 session 动捕子目录名，可先预览、再执行迁移：
+
+```bat
+python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip
+python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip --apply
+```
+
+该命令会重命名 session 子目录，更新 `_analysis`、`_artifacts`、`_modelscope_dataset` 中生成
+报告和 manifest 的路径引用，并原位更新顶层 ZIP 的等长路径字段，不重新压缩数据。RAR 需要使用
+RAR 归档工具单独重命名，并在修改后运行归档完整性测试。
 
 ## 第一次 Clone
 
@@ -180,7 +191,7 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
         robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
         robocap_<segment>_imu_*.db          # 必需：Robocap IMU
         robocap_<segment>_mag_*.db          # 必需：Robocap MAG
-        nokov/
+        mocap/
           *.{bvh,trc,csv,xrs,c3d,...}       # [可选格式]：至少存在一种
                                             # 每种已选格式包含全部人体和刚体
           *.mp4                             # 必需：一个或多个第三人称视频
@@ -316,10 +327,10 @@ NOKOV 导出的坐标默认按毫米读取，并用 `0.001` 转换为 Rerun 中�
 robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --offset 5
 ```
 
-当一个 `test*` 目录里有多个 BVH/TRC 时，建议明确指定参考源：
+当一个 `mocap` 目录里有多个 BVH/TRC 时，建议明确指定参考源：
 
 ```bat
-robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --ratio auto --offset 0 --nokov-source Z:\DATASETS\Frodobots\nokov\20260707_083023_session48\test1\test2-hand.bvh
+robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --ratio auto --offset 0 --nokov-source Z:\DATASETS\Frodobots\nokov\20260707_083023_session48\mocap\test2-hand.bvh
 ```
 
 扫一段候选 offset：

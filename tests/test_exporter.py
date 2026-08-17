@@ -214,7 +214,7 @@ def sample_export_name_parameters() -> exporter.ExportNameParameters:
         include_robowrist=True,
         include_mag=False,
         include_imu=True,
-        gt_dir="nokov",
+        gt_dir="mocap",
         gt_input_files=("left.trc", "tracker.xrs"),
         gt_skeleton=None,
         gt_mesh=None,
@@ -870,16 +870,16 @@ def test_discover_gt_file_sets_uses_all_supported_files(tmp_path: Path) -> None:
     assert sum(1 for file_set in file_sets if file_set.xrs is not None) == 2
 
 
-def test_discover_gt_dir_accepts_nokov_folder_and_ignores_robowrist(tmp_path: Path) -> None:
+def test_discover_gt_dir_accepts_mocap_folder_and_ignores_robowrist(tmp_path: Path) -> None:
     session_dir = tmp_path / "session"
-    nokov_dir = session_dir / "nokov"
+    mocap_dir = session_dir / "mocap"
     robowrist_dir = session_dir / "robowrist_device_left"
-    nokov_dir.mkdir(parents=True)
+    mocap_dir.mkdir(parents=True)
     robowrist_dir.mkdir()
-    (nokov_dir / "Tracker4.trc").write_text("", encoding="utf-8")
+    (mocap_dir / "Tracker4.trc").write_text("", encoding="utf-8")
     (robowrist_dir / "sensor.csv").write_text("", encoding="utf-8")
 
-    assert discover_gt_dir(session_dir, None) == nokov_dir
+    assert discover_gt_dir(session_dir, None) == mocap_dir
 
 
 def test_make_proxy_video_rebuilds_nonempty_unreadable_file(tmp_path: Path, monkeypatch) -> None:

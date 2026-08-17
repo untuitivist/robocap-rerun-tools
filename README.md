@@ -7,11 +7,24 @@ Robocap Rerun Tools is a small Python project for inspecting Robocap/NOKOV sessi
 It is intended for session folders shaped like the current `Z:\DATASETS\Frodobots\nokov\2026..._session...` data:
 
 - Robocap first-person/eye/front/wrist videos and sensor CSV files.
-- A `test*`, `nokov`, or other GT folder with third-person video, BVH/TRC/CSV/XRS data, camera positions, and hand trajectories.
+- A canonical `mocap` folder (or a legacy `test*`/other GT folder) with third-person video, BVH/TRC/CSV/XRS data, camera positions, and hand trajectories.
 - Optional MANO model files for hand mesh generation.
 
 Missing streams are omitted from the Rerun blueprint instead of becoming text placeholders. If both
 Robocap MAG and IMU are absent, the complete sensor row is omitted.
+
+To migrate an older collection whose session child directory still uses the previous name, preview
+and then apply the layout migration:
+
+```bat
+python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip
+python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip --apply
+```
+
+The command renames session directories, updates generated report/manifest path references in
+`_analysis`, `_artifacts`, and `_modelscope_dataset`, and updates same-length path fields in
+top-level ZIP archives without recompressing their data. RAR archives must be renamed with a RAR
+archive tool and verified with its archive test command.
 
 ## Install With uv
 
@@ -115,7 +128,7 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
         robocap_<segment>_video_*.mp4       # required: six first-person cameras
         robocap_<segment>_imu_*.db          # required: Robocap IMU
         robocap_<segment>_mag_*.db          # required: Robocap MAG
-        nokov/
+        mocap/
           *.{bvh,trc,csv,xrs,c3d,...}       # [optional format]: at least one is required
                                             # include all bodies and rigid bodies in each format
           *.mp4                             # required: third-person video(s)
@@ -284,7 +297,7 @@ robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session
 Specify the exact NOKOV BVH/TRC reference stream when the folder contains multiple skeleton tracks:
 
 ```bat
-robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --ratio auto --offset 0 --nokov-source Z:\DATASETS\Frodobots\nokov\20260707_083023_session48\test1\test2-hand.bvh
+robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --ratio auto --offset 0 --nokov-source Z:\DATASETS\Frodobots\nokov\20260707_083023_session48\mocap\test2-hand.bvh
 ```
 
 Sweep a candidate range:

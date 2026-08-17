@@ -16,7 +16,7 @@ session/
   robowrist_*_right/
     robowrist_segment1_video_right_down.mp4
     *.csv
-  test*/ or nokov/
+  mocap/ or test*/
     *-1.mp4
     *-Tracker0.trc
     *-LHand.trc
@@ -26,7 +26,7 @@ session/
     *.xrs
 ```
 
-GT directory discovery recognizes `test*`, `nokov`, or a single other directory containing
+GT directory discovery recognizes the canonical `mocap/` directory, `test*`, or a single other directory containing
 `.bvh`, `.trc`, `.csv`, or `.xrs` files. `robowrist_*` and `_artifacts` are excluded from GT
 discovery. Missing streams are allowed by the exporter. When a Robocap video or signal is absent,
 the Rerun layout uses a text placeholder instead of failing the whole export.
