@@ -425,7 +425,7 @@ def test_upload_staged_session_uploads_every_indexed_session(
         "metadata.jsonl",
         "README.md",
     ]
-    assert calls[2][2]["disable_tqdm"] is True
+    assert calls[2][2]["disable_tqdm"] is False
 
 
 def test_upload_requires_configured_token(tmp_path: Path) -> None:

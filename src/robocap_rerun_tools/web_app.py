@@ -6,13 +6,21 @@ import json
 import math
 import os
 import platform
+import queue
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import webbrowser
+from collections import deque
+from collections.abc import Generator, Iterator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TextIO
 
 EN_DOC = """# Robocap Rerun Tools
 
@@ -50,6 +58,12 @@ without model retargeting. Absent skeleton and third-person sources do not creat
 The middle sensor section is one multi-row, one-column grid: its first row is the complete Robocap
 sensor block, followed by optional left- and right-wrist MAG/IMU rows. Missing rows are omitted. If
 Robocap MAG and IMU are both absent and no wrist streams are selected, the complete section is omitted.
+
+Long-running CLI actions stream their combined stdout and stderr into the Output box. The display
+refreshes about twice per second with command status, elapsed time, a determinate bar for `[n/total]`
+or percentage output, an animated bar while the total is unknown, and recent logs. Carriage-return
+updates from tools such as tqdm are supported. There is no process timeout; old log lines are bounded
+to keep the browser session's memory stable.
 
 ## Alignment
 
@@ -132,6 +146,10 @@ frame_index 异常及其上下行。
 中间传感器区域整体是一个单列多行 Grid：内部第 1 行是完整的 Robocap sensors，后续按实际数据添加
 左、右 wrist MAG/IMU 行，不存在的行直接省略。Robocap MAG、IMU 和所选 wrist 数据都不存在时，
 整个中间区域直接省略。
+
+耗时较长的 CLI 操作会把 stdout 与 stderr 合并后实时写入“输出”框。页面约每 0.5 秒刷新命令状态、
+已用时间、进度条和最近日志；`[当前/总数]`、百分比以及 tqdm 使用的回车刷新都能识别，总量未知时
+显示持续变化的进度条。任务不设置超时，同时限制保留的旧日志量，避免浏览器会话内存持续增长。
 
 ## 对齐公式
 
@@ -341,6 +359,111 @@ DEFAULT_OFFSET = 5
 OFFSET_UNIT = "robocap_video_frames"
 LEGACY_OFFSET_RATIO = 8
 WEB_SETTINGS_ENV = "ROBOCAP_RERUN_WEB_SETTINGS"
+STREAM_REFRESH_SECONDS = 0.5
+STREAM_LOG_MAX_LINES = 1000
+STREAM_LOG_MAX_CHARS = 256 * 1024
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+FRACTION_PROGRESS_PATTERN = re.compile(r"\[(\d+)\s*/\s*(\d+)\]")
+PERCENT_PROGRESS_PATTERN = re.compile(r"(?<![\d.])(100(?:\.0+)?|\d{1,2}(?:\.\d+)?)%")
+STREAM_END = object()
+
+
+@dataclass(frozen=True)
+class StreamCommandResult:
+    returncode: int
+    output: str
+    rendered: str
+
+
+class LiveCommandOutput:
+    def __init__(self, display_command: list[str]) -> None:
+        self.display_command = display_command
+        self.lines: deque[str] = deque()
+        self.character_count = 0
+        self.dropped_lines = 0
+        self.current: int | None = None
+        self.total: int | None = None
+        self.percent: float | None = None
+
+    def add(self, value: str) -> None:
+        line = ANSI_ESCAPE_PATTERN.sub("", value).replace("\b", "").strip()
+        if not line:
+            return
+        if len(line) + 1 > STREAM_LOG_MAX_CHARS:
+            line = line[-(STREAM_LOG_MAX_CHARS - 1) :]
+        self.lines.append(line)
+        self.character_count += len(line) + 1
+        while (
+            len(self.lines) > STREAM_LOG_MAX_LINES
+            or self.character_count > STREAM_LOG_MAX_CHARS
+        ):
+            removed = self.lines.popleft()
+            self.character_count -= len(removed) + 1
+            self.dropped_lines += 1
+
+        fraction = FRACTION_PROGRESS_PATTERN.search(line)
+        if fraction is not None:
+            current, total = (int(value) for value in fraction.groups())
+            if total > 0:
+                self.current = min(current, total)
+                self.total = total
+                self.percent = 100.0 * self.current / total
+                return
+        percentage = PERCENT_PROGRESS_PATTERN.search(line)
+        if percentage is not None:
+            self.percent = min(100.0, max(0.0, float(percentage.group(1))))
+
+    def output(self) -> str:
+        parts = list(self.lines)
+        if self.dropped_lines:
+            parts.insert(0, f"... {self.dropped_lines} earlier log lines omitted ...")
+        return "\n".join(parts)
+
+    def _progress_bar(self, elapsed: float, returncode: int | None) -> str:
+        width = 30
+        if returncode == 0:
+            ratio = 1.0
+        elif self.percent is not None:
+            ratio = self.percent / 100.0
+        else:
+            ratio = None
+
+        if ratio is None:
+            if returncode is not None:
+                return f"[{'!' + '.' * (width - 1)}] failed"
+            position = int(elapsed * 4) % width
+            cells = ["."] * width
+            cells[position] = ">"
+            return f"[{''.join(cells)}] working"
+
+        filled = min(width, max(0, round(width * ratio)))
+        bar = "#" * filled + "-" * (width - filled)
+        detail = f" {self.current}/{self.total}" if self.total is not None else ""
+        return f"[{bar}] {ratio * 100:5.1f}%{detail}"
+
+    def render(self, elapsed: float, returncode: int | None) -> str:
+        if returncode is None:
+            status = "RUNNING"
+        elif returncode == 0:
+            status = "COMPLETED"
+        else:
+            status = f"FAILED (exit code {returncode})"
+        elapsed_seconds = max(0, int(elapsed))
+        hours, remainder = divmod(elapsed_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        elapsed_text = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        command_text = subprocess.list2cmdline(self.display_command)
+        log_text = self.output() or "(waiting for command output)"
+        return "\n".join(
+            [
+                f"Command: {command_text}",
+                f"Status: {status} | Elapsed: {elapsed_text}",
+                f"Progress: {self._progress_bar(elapsed, returncode)}",
+                "",
+                "Log:",
+                log_text,
+            ]
+        )
 
 
 def ensure_localhost_no_proxy() -> None:
@@ -466,21 +589,120 @@ def run_process(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
     return proc.returncode, "\n".join(output_parts)
 
 
-def run_cli_result(args: list[str]) -> tuple[int, str]:
-    command = [sys.executable, "-m", "robocap_rerun_tools.cli", *args]
-    return run_process(command)
+def _read_process_stream(stream: TextIO, events: queue.Queue[object]) -> None:
+    buffer: list[str] = []
+    try:
+        while True:
+            character = stream.read(1)
+            if not character:
+                if buffer:
+                    events.put("".join(buffer))
+                return
+            if character in {"\r", "\n"}:
+                if buffer:
+                    events.put("".join(buffer))
+                    buffer.clear()
+                continue
+            buffer.append(character)
+    finally:
+        try:
+            stream.close()
+        finally:
+            events.put(STREAM_END)
 
 
-def format_cli_result(returncode: int, output: str) -> str:
-    if returncode != 0:
-        suffix = f"\nCommand failed with exit code {returncode}."
-        return f"{output}{suffix}" if output else suffix.strip()
-    return output or "Done."
+def stream_process_output(
+    args: list[str],
+    *,
+    cwd: Path | None = None,
+    display_command: list[str] | None = None,
+) -> Generator[str, None, StreamCommandResult]:
+    live = LiveCommandOutput(display_command or args)
+    started = time.monotonic()
+    environment = os.environ.copy()
+    environment["PYTHONUNBUFFERED"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
+    try:
+        process = subprocess.Popen(
+            args,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=environment,
+        )
+    except OSError as exc:
+        live.add(str(exc))
+        live.add("Command failed with exit code 127.")
+        rendered = live.render(time.monotonic() - started, 127)
+        yield rendered
+        return StreamCommandResult(127, live.output(), rendered)
+
+    assert process.stdout is not None
+    events: queue.Queue[object] = queue.Queue()
+    reader = threading.Thread(
+        target=_read_process_stream,
+        args=(process.stdout, events),
+        name=f"robocap-web-stream-{process.pid}",
+        daemon=True,
+    )
+    reader.start()
+    rendered = live.render(0.0, None)
+    yield rendered
+    next_render = time.monotonic() + STREAM_REFRESH_SECONDS
+    reader_done = False
+
+    try:
+        while True:
+            now = time.monotonic()
+            wait_seconds = max(0.0, min(0.2, next_render - now))
+            try:
+                item = events.get(timeout=wait_seconds)
+                if item is STREAM_END:
+                    reader_done = True
+                else:
+                    live.add(str(item))
+            except queue.Empty:
+                pass
+
+            while True:
+                try:
+                    item = events.get_nowait()
+                except queue.Empty:
+                    break
+                if item is STREAM_END:
+                    reader_done = True
+                else:
+                    live.add(str(item))
+
+            returncode = process.poll()
+            done = returncode is not None and reader_done and events.empty()
+            now = time.monotonic()
+            if now >= next_render or done:
+                if done and returncode != 0:
+                    live.add(f"Command failed with exit code {returncode}.")
+                elif done and not live.lines:
+                    live.add("Done.")
+                rendered = live.render(now - started, returncode if done else None)
+                yield rendered
+                next_render = now + STREAM_REFRESH_SECONDS
+            if done:
+                return StreamCommandResult(returncode, live.output(), rendered)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        reader.join()
 
 
-def run_cli(args: list[str]) -> str:
-    returncode, output = run_cli_result(args)
-    return format_cli_result(returncode, output)
+def stream_cli_command(args: list[str]) -> Generator[str, None, StreamCommandResult]:
+    command = [sys.executable, "-u", "-m", "robocap_rerun_tools.cli", *args]
+    display_command = ["robocap-rerun", *args]
+    return (yield from stream_process_output(command, display_command=display_command))
 
 
 def package_version(name: str) -> str:
@@ -938,36 +1160,36 @@ def open_rerun_webviewer(rrd_file: str, viewer_port: int) -> tuple[str, int]:
     )
 
 
-def inspect_session(session_dir: str, segment: str) -> str:
+def inspect_session(session_dir: str, segment: str) -> Iterator[str]:
     resolved_session = Path(session_path(session_dir))
     resolved_segment = optional_text(segment)
     args = ["inspect", str(resolved_session)]
     if resolved_segment:
         args.extend(["--segment", resolved_segment])
-    returncode, command_output = run_cli_result(args)
-    output = format_cli_result(returncode, command_output)
-    if returncode != 0:
-        return output
+    result = yield from stream_cli_command(args)
+    if result.returncode != 0:
+        return
 
     report_path = timestamp_report_path(resolved_session, resolved_segment)
     if not report_path.is_file():
-        return (
-            f"{output}\n\nInspection command succeeded, but the HTML report was not found:\n"
+        yield (
+            f"{result.rendered}\n\nInspection command succeeded, but the HTML report was not found:\n"
             f"`{report_path}`"
         )
-    return f"{output}\n\nTimestamp anomaly HTML: `{report_path}`"
+        return
+    yield f"{result.rendered}\n\nTimestamp anomaly HTML: `{report_path}`"
 
 
 def package_data(
     session_dir: str, segment: str, output_zip: str, proxy_height: int, proxy_crf: int
-) -> str:
+) -> Iterator[str]:
     args = ["package-data", session_path(session_dir)]
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
     if optional_text(output_zip):
         args.extend(["--output", output_zip.strip()])
     args.extend(["--proxy-height", str(int(proxy_height)), "--proxy-crf", str(int(proxy_crf))])
-    return run_cli(args)
+    yield from stream_cli_command(args)
 
 
 def format_modelscope_status(settings: object, language: str) -> str:
@@ -1061,7 +1283,7 @@ def stage_modelscope_data(
     primitive_id: str,
     refresh_inspection: bool,
     selected_rrd_files: list[str] | None,
-) -> str:
+) -> Iterator[str]:
     args = [
         "modelscope-stage",
         session_path(session_dir),
@@ -1074,7 +1296,7 @@ def stage_modelscope_data(
         args.append("--refresh-inspection")
     for rrd_file in selected_rrd_files or []:
         args.extend(["--rrd-file", str(rrd_file)])
-    return run_cli(args)
+    yield from stream_cli_command(args)
 
 
 def upload_modelscope_data(
@@ -1083,7 +1305,7 @@ def upload_modelscope_data(
     revision: str,
     use_cache: bool,
     max_workers: int,
-) -> str:
+) -> Iterator[str]:
     from robocap_rerun_tools.modelscope_publisher import default_dataset_root
 
     resolved_session = Path(session_path(session_dir))
@@ -1100,12 +1322,12 @@ def upload_modelscope_data(
         args.extend(["--repo-id", repo_id.strip()])
     if not use_cache:
         args.append("--no-cache")
-    return run_cli(args)
+    yield from stream_cli_command(args)
 
 
 def inspect_offset(
     session_dir: str, segment: str, ratio: str, offset: int, nokov_source: str
-) -> str:
+) -> Iterator[str]:
     signed_offset = normalize_offset(offset)
     args = [
         "inspect-offset",
@@ -1119,12 +1341,12 @@ def inspect_offset(
         args.extend(["--segment", segment.strip()])
     if optional_text(nokov_source):
         args.extend(["--nokov-source", nokov_source.strip()])
-    return run_cli(args)
+    yield from stream_cli_command(args)
 
 
 def sweep_offset(
     session_dir: str, segment: str, ratio: str, offset_min: int, offset_max: int, nokov_source: str
-) -> str:
+) -> Iterator[str]:
     signed_offset_min = normalize_offset(offset_min)
     signed_offset_max = normalize_offset(offset_max)
     args = [
@@ -1141,7 +1363,7 @@ def sweep_offset(
         args.extend(["--segment", segment.strip()])
     if optional_text(nokov_source):
         args.extend(["--nokov-source", nokov_source.strip()])
-    return run_cli(args)
+    yield from stream_cli_command(args)
 
 
 def export_rrd(
@@ -1165,7 +1387,7 @@ def export_rrd(
     include_mag: bool,
     include_imu: bool,
     proxy_height: int,
-) -> str:
+) -> Iterator[str]:
     resolved_session_dir = Path(session_path(session_dir))
     robowrist_streams = (
         detected_robowrist_streams(resolved_session_dir, segment) if include_robowrist else ()
@@ -1206,12 +1428,12 @@ def export_rrd(
     if not include_imu:
         args.append("--no-imu")
     args.extend(["--proxy-height", str(int(proxy_height))])
-    result = run_cli(args)
+    result = yield from stream_cli_command(args)
     if include_robowrist and not robowrist_streams:
-        return (
-            "Robowrist: no matching video or sensor streams; automatically excluded.\n\n" + result
+        yield (
+            "Robowrist: no matching video or sensor streams; automatically excluded.\n\n"
+            + result.rendered
         )
-    return result
 
 
 def language_values(language: str) -> dict[str, str]:

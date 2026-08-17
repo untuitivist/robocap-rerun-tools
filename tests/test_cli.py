@@ -599,11 +599,12 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     wrist_dir.mkdir()
     (wrist_dir / "robowrist_segment1_video_left_down.mp4").write_bytes(b"")
 
-    def fake_run_cli(args: list[str]) -> str:
+    def fake_stream_cli(args: list[str]):
         captured.extend(args)
-        return "Done."
+        yield "Done."
+        return web_app.StreamCommandResult(0, "Done.", "Done.")
 
-    monkeypatch.setattr(web_app, "run_cli", fake_run_cli)
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_stream_cli)
     export_kwargs = {
         "session_dir": str(tmp_path),
         "segment": "segment1",
@@ -626,7 +627,7 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
         "include_imu": False,
         "proxy_height": 540,
     }
-    result = web_app.export_rrd(**export_kwargs)
+    result = list(web_app.export_rrd(**export_kwargs))[-1]
 
     assert result == "Done."
     assert "--no-mag" in captured
@@ -641,13 +642,13 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
 
     captured.clear()
     export_kwargs["include_robowrist"] = False
-    web_app.export_rrd(**export_kwargs)
+    list(web_app.export_rrd(**export_kwargs))
     assert "--no-robowrist" in captured
 
     captured.clear()
     export_kwargs["include_robowrist"] = True
     export_kwargs["limit_robocap_frames"] = False
-    web_app.export_rrd(**export_kwargs)
+    list(web_app.export_rrd(**export_kwargs))
     assert "--robocap-start-frame" not in captured
     assert "--robocap-end-frame" not in captured
 
@@ -655,7 +656,7 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     session_without_wrist = tmp_path / "without_wrist"
     session_without_wrist.mkdir()
     export_kwargs["session_dir"] = str(session_without_wrist)
-    result = web_app.export_rrd(**export_kwargs)
+    result = list(web_app.export_rrd(**export_kwargs))[-1]
     assert "--no-robowrist" in captured
     assert result.startswith("Robowrist: no matching video or sensor streams")
 

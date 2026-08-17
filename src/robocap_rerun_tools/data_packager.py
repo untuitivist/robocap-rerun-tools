@@ -294,7 +294,9 @@ def package_session(args: argparse.Namespace) -> Path:
                     args.proxy_bitrate,
                 )
             )
+        print("Writing package manifest.")
         write_manifest(staging_root, session_dir, packaged, args)
+        print("Writing ZIP archive.")
         make_zip(staging_root, output, session_dir.name)
     print(f"Wrote package: {output}")
     return output

@@ -901,7 +901,7 @@ def upload_staged_dataset(
             allow_patterns=allow_patterns,
             max_workers=max_workers,
             use_cache=use_cache,
-            disable_tqdm=True,
+            disable_tqdm=False,
         )
     except ModelScopePublisherError:
         raise

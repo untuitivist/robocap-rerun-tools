@@ -4189,6 +4189,7 @@ def main() -> None:
         args.gt_max_frames = None
     frame_range = normalize_robocap_frame_range(args.robocap_start_frame, args.robocap_end_frame)
     session_dir = args.session_dir
+    print("Export stage: discover Robocap and robowrist streams")
     config = discover_session(
         session_dir,
         args.segment,
@@ -4196,9 +4197,16 @@ def main() -> None:
         include_mag=not args.no_mag,
         include_imu=not args.no_imu,
     )
+    print(
+        "Export sources: "
+        f"{len(config.videos)} videos, {len(config.signals)} signals, {len(config.notes)} notes"
+    )
+    print("Export stage: load NOKOV/GT sources")
     gt_config = load_gt_config(args, session_dir)
     if args.interpolate_dropped_frames:
+        print("Export stage: interpolate dropped NOKOV/GT frames")
         gt_config = interpolate_gt_dropped_frames(gt_config)
+    print("Export stage: align NOKOV/GT coordinates and timestamps")
     gt_config = maybe_align_gt_to_robocap(
         session_dir, config, gt_config, not args.no_gt_align_to_robocap
     )
@@ -4227,6 +4235,7 @@ def main() -> None:
 
     ffmpeg = choose_ffmpeg(args.ffmpeg)
     artifact_paths = build_artifact_paths(session_dir, config)
+    print("Export stage: prepare proxy and reference video timestamps")
     gt_config = maybe_proxy_gt_video(
         gt_config,
         artifact_paths,
@@ -4296,6 +4305,7 @@ def main() -> None:
             "Rerun primary timeline: frame (GT/NOKOV frame scale); "
             "capture_time is retained as a secondary timeline."
         )
+    print("Export stage: compute common capture window")
     time_report_path = write_time_alignment_report(
         session_dir,
         config,
@@ -4395,7 +4405,14 @@ def main() -> None:
     save_path.parent.mkdir(parents=True, exist_ok=True)
     rr.save(save_path, default_blueprint=blueprint)
 
-    for spec in config.videos.values():
+    total_logging_tasks = (
+        len(config.videos) + len(config.signals) + len(config.notes) + 1
+    )
+    logging_index = 0
+    print(f"Export stage: log {total_logging_tasks} Rerun source groups")
+    for label, spec in config.videos.items():
+        logging_index += 1
+        print(f"[{logging_index}/{total_logging_tasks}] log video {label}")
         log_video(
             session_dir,
             spec,
@@ -4408,12 +4425,19 @@ def main() -> None:
             capture_window,
             timeline,
         )
-    for spec in config.signals.values():
+    for label, spec in config.signals.items():
+        logging_index += 1
+        print(f"[{logging_index}/{total_logging_tasks}] log signal {label}")
         log_signal(session_dir, spec, args.max_sensor_points, capture_window, timeline)
-    for note in config.notes.values():
+    for label, note in config.notes.items():
+        logging_index += 1
+        print(f"[{logging_index}/{total_logging_tasks}] log note {label}")
         log_note(note)
+    logging_index += 1
+    print(f"[{logging_index}/{total_logging_tasks}] log NOKOV/GT tracks")
     log_gt(gt_config, capture_window, timeline)
 
+    print("Export stage: finalize Rerun recording")
     rr.send_blueprint(blueprint)
     print(f"Rerun dual-hands demo logging complete: {save_path}")
     print(f"Time alignment report: {time_report_path}")

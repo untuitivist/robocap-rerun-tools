@@ -1,10 +1,29 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 from robocap_rerun_tools import web_app
+
+
+def collect_stream(stream) -> str:
+    snapshots = list(stream)
+    assert snapshots
+    return snapshots[-1]
+
+
+def fake_cli_stream(captured: list[str], output: str = "Done.", returncode: int = 0):
+    def stream(args):
+        captured.extend(args)
+        rendered = output
+        if returncode:
+            rendered += f"\nCommand failed with exit code {returncode}."
+        yield rendered
+        return web_app.StreamCommandResult(returncode, output, rendered)
+
+    return stream
 
 
 def test_web_app_builds_with_report_viewer() -> None:
@@ -31,6 +50,59 @@ def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
     assert "timeout" not in invocation["kwargs"]
 
 
+def test_stream_process_output_refreshes_before_completion_and_parses_progress(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(web_app, "STREAM_REFRESH_SECONDS", 0.02)
+    script = "\n".join(
+        [
+            "import sys, time",
+            "print('[1/2] inspect first', flush=True)",
+            "time.sleep(0.08)",
+            "sys.stdout.write('50% upload\\r')",
+            "sys.stdout.flush()",
+            "time.sleep(0.08)",
+            "print('[2/2] inspect second', flush=True)",
+        ]
+    )
+
+    snapshots = list(
+        web_app.stream_process_output(
+            [sys.executable, "-u", "-c", script],
+            display_command=["test-progress"],
+        )
+    )
+
+    assert any("Status: RUNNING" in item and "inspect first" in item for item in snapshots[:-1])
+    assert "50% upload" in snapshots[-1]
+    assert "Status: COMPLETED" in snapshots[-1]
+    assert "100.0% 2/2" in snapshots[-1]
+
+
+def test_stream_process_output_reports_failure_exit_code() -> None:
+    snapshots = list(
+        web_app.stream_process_output(
+            [sys.executable, "-u", "-c", "print('failed step'); raise SystemExit(3)"],
+            display_command=["test-failure"],
+        )
+    )
+
+    assert "Status: FAILED (exit code 3)" in snapshots[-1]
+    assert "Command failed with exit code 3." in snapshots[-1]
+
+
+def test_live_command_output_bounds_retained_log_lines(monkeypatch) -> None:
+    monkeypatch.setattr(web_app, "STREAM_LOG_MAX_LINES", 2)
+    live = web_app.LiveCommandOutput(["test-log-limit"])
+
+    live.add("first")
+    live.add("second")
+    live.add("third")
+
+    assert live.dropped_lines == 1
+    assert live.output() == "... 1 earlier log lines omitted ...\nsecond\nthird"
+
+
 def test_web_adds_localhost_to_no_proxy(monkeypatch) -> None:
     monkeypatch.delenv("NO_PROXY", raising=False)
     monkeypatch.delenv("no_proxy", raising=False)
@@ -51,13 +123,14 @@ def test_web_inspect_prints_generated_html_report_path(tmp_path, monkeypatch) ->
     captured = []
     monkeypatch.setattr(
         web_app,
-        "run_cli_result",
-        lambda args: (
-            captured.extend(args) or (0, f"Wrote timestamp anomaly inspection to {report_path}")
+        "stream_cli_command",
+        fake_cli_stream(
+            captured,
+            f"Wrote timestamp anomaly inspection to {report_path}",
         ),
     )
 
-    output = web_app.inspect_session(str(tmp_path), "segment1")
+    output = collect_stream(web_app.inspect_session(str(tmp_path), "segment1"))
 
     assert captured == ["inspect", str(tmp_path), "--segment", "segment1"]
     assert "Wrote timestamp anomaly inspection" in output
@@ -71,9 +144,13 @@ def test_web_inspect_does_not_print_stale_report_after_failure(tmp_path, monkeyp
     )
     report_path.parent.mkdir(parents=True)
     report_path.write_text("<title>stale report</title>\n", encoding="utf-8")
-    monkeypatch.setattr(web_app, "run_cli_result", lambda _args: (2, "inspection failed"))
+    monkeypatch.setattr(
+        web_app,
+        "stream_cli_command",
+        fake_cli_stream([], "inspection failed", returncode=2),
+    )
 
-    output = web_app.inspect_session(str(tmp_path), "segment1")
+    output = collect_stream(web_app.inspect_session(str(tmp_path), "segment1"))
 
     assert "inspection failed" in output
     assert "Command failed with exit code 2" in output
@@ -352,17 +429,19 @@ def test_web_modelscope_save_persists_repo_id(monkeypatch) -> None:
 
 def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatch) -> None:
     captured: list[str] = []
-    monkeypatch.setattr(web_app, "run_cli", lambda args: captured.extend(args) or "Done.")
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_cli_stream(captured))
 
-    output = web_app.stage_modelscope_data(
-        str(tmp_path),
-        "segment1",
-        "P03",
-        True,
-        [
-            str(Path("_artifacts") / "segment1" / "inspection" / "frame.rrd"),
-            str(Path("_artifacts") / "segment1" / "inspection" / "time.rrd"),
-        ],
+    output = collect_stream(
+        web_app.stage_modelscope_data(
+            str(tmp_path),
+            "segment1",
+            "P03",
+            True,
+            [
+                str(Path("_artifacts") / "segment1" / "inspection" / "frame.rrd"),
+                str(Path("_artifacts") / "segment1" / "inspection" / "time.rrd"),
+            ],
+        )
     )
 
     assert output == "Done."
@@ -378,14 +457,16 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
 
 def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monkeypatch) -> None:
     captured: list[str] = []
-    monkeypatch.setattr(web_app, "run_cli", lambda args: captured.extend(args) or "Done.")
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_cli_stream(captured))
 
-    output = web_app.upload_modelscope_data(
-        str(tmp_path),
-        "owner/egomocap",
-        "master",
-        True,
-        6,
+    output = collect_stream(
+        web_app.upload_modelscope_data(
+            str(tmp_path),
+            "owner/egomocap",
+            "master",
+            True,
+            6,
+        )
     )
 
     assert output == "Done."
@@ -401,9 +482,11 @@ def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monk
 
 def test_web_modelscope_upload_omits_blank_repo_id_for_env_fallback(tmp_path, monkeypatch) -> None:
     captured: list[str] = []
-    monkeypatch.setattr(web_app, "run_cli", lambda args: captured.extend(args) or "Done.")
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_cli_stream(captured))
 
-    output = web_app.upload_modelscope_data(str(tmp_path), "", "master", True, 4)
+    output = collect_stream(
+        web_app.upload_modelscope_data(str(tmp_path), "", "master", True, 4)
+    )
 
     assert output == "Done."
     assert "--repo-id" not in captured

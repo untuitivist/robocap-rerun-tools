@@ -64,6 +64,10 @@ start_web.bat
 
 Then use `http://127.0.0.1:7860` for inspect, package, offset inspection, and RRD export.
 The web UI has a Chinese/English language switch and a built-in Docs tab.
+CLI-backed actions stream combined stdout/stderr into the Output box about twice per second. The
+box shows status, elapsed time, recent logs, and either parsed `[n/total]`/percentage progress or an
+animated unknown-total bar. Carriage-return updates from tqdm are handled without waiting for the
+command to exit. Logs retain the latest 1000 lines or approximately 256 KiB to bound Web memory.
 Inspection writes only `timestamp_anomaly_detail_table.html`, with all data, styles, and JavaScript
 embedded for offline sharing. The `Reports` tab scans these files and opens the selected report in
 the default browser; the output box prints the generated path instead of duplicating the report.
@@ -346,7 +350,8 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --ret
 ## Outputs
 
 Commands launched from the Web UI do not set a process timeout. RRD export, inspection, packaging,
-offset, and environment commands all wait for the underlying command to finish.
+offset, and ModelScope commands all wait for the underlying command to finish while streaming their
+progress and logs. Environment checks remain immediate in-process operations.
 
 Default outputs are written under:
 

@@ -1632,6 +1632,7 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
 def command_export(args: argparse.Namespace) -> int:
     from robocap_rerun_tools import exporter
 
+    print("Export stage: resolve frame alignment")
     ratio_estimate = None
     resolved_ratio = args.ratio
     if args.mode == "frame" and args.ratio == "auto":
@@ -1707,7 +1708,16 @@ def command_export(args: argparse.Namespace) -> int:
 def command_inspect(args: argparse.Namespace) -> int:
     files = inspection_files(args.session_dir, args.segment)
     ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
-    summaries = [summary for path in files for summary in summarize_path(path, ffprobe)]
+    total_steps = len(files) + 1
+    print(f"Inspection discovered {len(files)} source files.")
+    summaries = []
+    for index, path in enumerate(files, start=1):
+        try:
+            label = path.relative_to(args.session_dir)
+        except ValueError:
+            label = path
+        print(f"[{index}/{total_steps}] inspect {label}")
+        summaries.extend(summarize_path(path, ffprobe))
     out_dir = args.output or inspection_output_dir(args.session_dir, args.segment)
     fps_records = [
         record
@@ -1717,6 +1727,7 @@ def command_inspect(args: argparse.Namespace) -> int:
     ratio_estimate = estimate_frame_ratio(fps_records, "timestamp anomaly inspection")
     from .timestamp_anomaly import write_timestamp_anomaly_report
 
+    print(f"[{total_steps}/{total_steps}] write timestamp anomaly report")
     anomaly_report = write_timestamp_anomaly_report(
         args.session_dir,
         args.segment,
@@ -1858,7 +1869,9 @@ def command_modelscope_upload(args: argparse.Namespace) -> int:
     )
 
     try:
+        print("ModelScope upload stage: validate prepared dataset")
         staged = load_staged_dataset(args.dataset_root)
+        print("ModelScope upload stage: authenticate and upload files")
         result = upload_staged_dataset(
             staged,
             args.repo_id,
