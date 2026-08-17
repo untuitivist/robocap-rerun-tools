@@ -173,18 +173,21 @@ metadata.jsonl
 README.md
 PXX/
   <session_id>/
-    robocap_<segment>_video_*.mp4       # 核心：六路第一人称相机
-    robocap_<segment>_imu_*.db          # 可选
-    robocap_<segment>_mag_*.db          # 可选
+    robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
+    robocap_<segment>_imu_*.db          # 必需：Robocap IMU
+    robocap_<segment>_mag_*.db          # 必需：Robocap MAG
     nokov/
-      *-Body*.*                         # 动捕；各导出格式分别可选
-      *-Tracker*.*                      # 可选；允许零个或多个刚体
-      *.mp4                             # 可选；允许一个或多个第三人称视频
-    robowrist_<device_id>_<side>/       # 可选；左右视频、IMU、MAG
-    rerun/<segment>/inspection/*.rrd    # 可选；仅勾选后包含
+      *.{bvh,trc,csv,xrs,c3d,...}       # [可选格式]：至少存在一种动捕格式
+                                        # 每种已选格式包含全部人体和刚体
+      *.mp4                             # 必需：一个或多个第三人称视频
+    robowrist_<device_id>_<side>/       # 必需：左右视频、IMU、MAG
+    rerun/<segment>/inspection/*.rrd    # [可选]：仅勾选后包含
     manifest.json                       # 自动生成；包含 device ID
     timestamp_anomaly_detail_table.html # 自动生成且必需
 ```
+
+采集数据与动捕内容本身必需。只有具体采用哪些 NOKOV 导出格式和是否包含 RRD 是可选项；动捕格式
+至少存在一种。
 
 标定数据放在 Session 数据集之外。`manifest.json` 与 `metadata.jsonl` 只写入明确的
 `device_ids: {main, left, right}`；本地 `raw_calibration/` 中的文件、路径、API 响应和临时签名 URL

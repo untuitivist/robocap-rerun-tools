@@ -397,11 +397,12 @@ inspection report. Paths inside manifests and reports are dataset-relative.
 
 ## Session contents
 
-- Core: six `robocap_<segment>_video_*.mp4` first-person camera streams.
-- Motion capture: all available NOKOV body and rigid-body exports under `nokov/`; individual
-  BVH, CSV, TRC, XRS, C3D, or other export formats are optional.
-- Optional: third-person videos, Robocap IMU/MAG databases, Robowrist left/right video and
-  sensor streams, and RRD files when explicitly selected.
+- Required capture streams: six `robocap_<segment>_video_*.mp4` first-person cameras, Robocap
+  IMU/MAG databases, third-person videos, and Robowrist left/right video and sensor streams.
+- Required motion-capture content: all available NOKOV body and rigid-body data under `nokov/`.
+  The concrete BVH, CSV, TRC, XRS, C3D, or other export formats are optional choices, but at
+  least one motion-capture format must be present.
+- Optional artifact: RRD files, only when explicitly selected.
 - Generated: `manifest.json` and `timestamp_anomaly_detail_table.html`.
 
 Calibration files live outside the session dataset. `manifest.json` and `metadata.jsonl` contain

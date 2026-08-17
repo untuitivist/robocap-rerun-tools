@@ -94,6 +94,12 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
             "packaged_bytes": staged.total_bytes,
         }
     ]
+    dataset_readme = staged.readme_path.read_text(encoding="utf-8")
+    normalized_readme = " ".join(dataset_readme.split())
+    assert "Required capture streams" in dataset_readme
+    assert "at least one motion-capture format must be present" in normalized_readme
+    assert "Optional artifact: RRD files" in dataset_readme
+    assert "Optional: third-person" not in dataset_readme
 
 
 def test_staging_same_session_updates_one_metadata_row(tmp_path: Path) -> None:

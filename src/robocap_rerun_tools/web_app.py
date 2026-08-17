@@ -90,10 +90,11 @@ The ModelScope tab stages one recording under `PXX/<session_id>/`. Compressed vi
 and the standalone timestamp inspection HTML is required and copied into the same session directory.
 The generated dataset root also contains `metadata.jsonl` and a DatasetHub-compatible `README.md`.
 
-Session contents are classified as core (six Robocap camera videos), motion capture (all available
-NOKOV body/rigid-body exports), optional (third-person video, IMU/MAG, Robowrist, and selected RRD),
-or generated (`manifest.json` and the inspection HTML). Calibration files are stored separately;
-the session manifest and `metadata.jsonl` contain explicit main, left, and right device IDs.
+Session contents include required capture streams (six Robocap camera videos, third-person video,
+IMU/MAG, and Robowrist) and required NOKOV motion-capture content. The concrete motion-capture
+export formats and selected RRD files are the only optional items. Generated files are
+`manifest.json` and the inspection HTML. Calibration files are stored separately; the session
+manifest and `metadata.jsonl` contain explicit main, left, and right device IDs.
 
 `MODELSCOPE_API_TOKEN` and `MODELSCOPE_ENDPOINT` are stored in the repository-local `.env` file.
 The token field never displays the saved value; leaving it blank preserves the current token.
@@ -172,9 +173,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 检查 HTML；检查报告会复制到同一个 session 目录。数据集根目录同时生成 `metadata.jsonl` 和符合
 DatasetHub 读取格式的 `README.md`。
 
-Session 内容分为：核心六路 Robocap 视频、全部可用的 NOKOV 骨骼/刚体导出、可选的第三人称视频、
-IMU/MAG、Robowrist 与所选 RRD，以及自动生成的 `manifest.json` 和检查 HTML。标定文件单独存放，
-Session 的 manifest 与 `metadata.jsonl` 只记录明确的 main、left、right device ID。
+Session 必需内容包括六路 Robocap 视频、第三人称视频、IMU/MAG、Robowrist，以及 NOKOV 动捕内容。
+只有具体采用哪些动捕导出格式和是否包含 RRD 是可选项。`manifest.json` 与检查 HTML 自动生成。
+标定文件单独存放，Session 的 manifest 与 `metadata.jsonl` 只记录明确的 main、left、right device ID。
 
 `MODELSCOPE_API_TOKEN` 与 `MODELSCOPE_ENDPOINT` 保存在仓库根目录的 `.env`。网页不会回显已保存
 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，再执行“上传已准备数据集”。
@@ -245,9 +246,10 @@ LANGUAGE_PACKS = {
         "viewer_port": "Web viewer port (0 = auto)",
         "modelscope_help": (
             "**`PXX/<session_id>/` contents**\n\n"
-            "- Core: six Robocap camera videos.\n"
-            "- Motion capture: every available NOKOV body and rigid-body export.\n"
-            "- Optional: third-person video, IMU/MAG, Robowrist, and selected RRD files.\n"
+            "- Required capture: six Robocap videos, third-person video, IMU/MAG, and Robowrist.\n"
+            "- Required motion capture: every body and rigid body; at least one format.\n"
+            "- [Optional formats]: BVH/CSV/TRC/XRS/C3D or other NOKOV exports.\n"
+            "- [Optional artifact]: selected RRD files only.\n"
             "- Generated: `manifest.json` and timestamp inspection HTML.\n"
             "- Calibration is external; only explicit main/left/right device IDs are recorded.\n\n"
             "The staging root is the Session directory's sibling `_modelscope_dataset`."
@@ -335,9 +337,10 @@ LANGUAGE_PACKS = {
         "viewer_port": "Web Viewer 端口（0 = 自动）",
         "modelscope_help": (
             "**`PXX/<session_id>/` 文件结构**\n\n"
-            "- 核心：六路 Robocap 相机视频。\n"
-            "- 动捕：全部可用的 NOKOV 骨骼与刚体导出文件。\n"
-            "- 可选：第三人称视频、IMU/MAG、Robowrist、勾选后的 RRD。\n"
+            "- 必需采集数据：六路 Robocap 视频、第三人称视频、IMU/MAG、Robowrist。\n"
+            "- 必需动捕内容：全部人体和刚体；至少存在一种格式。\n"
+            "- [可选格式]：BVH/CSV/TRC/XRS/C3D 或其他 NOKOV 导出格式。\n"
+            "- [可选文件]：仅勾选后的 RRD。\n"
             "- 自动生成：`manifest.json` 与时间戳检查 HTML。\n"
             "- 标定数据在外部目录；这里只记录明确的 main/left/right device ID。\n\n"
             "数据集根目录自动使用 Session 同级的 `_modelscope_dataset`。"
