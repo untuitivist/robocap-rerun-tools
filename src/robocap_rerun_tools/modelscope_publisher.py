@@ -28,7 +28,7 @@ PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
 REPO_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 ROBOWRIST_DIR_PATTERN = re.compile(
-    r"robowrist_(?P<device_id>.+)_(?:left|right)\Z", re.IGNORECASE
+    r"robowrist_(?P<device_id>.+)_(?P<side>left|right)\Z", re.IGNORECASE
 )
 
 
@@ -58,7 +58,8 @@ class StageResult:
     total_bytes: int
     dry_run: bool = False
     main_device_id: str | None = None
-    related_device_ids: tuple[str, ...] = ()
+    left_device_id: str | None = None
+    right_device_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -204,11 +205,6 @@ def _clean_device_id(value: object) -> str | None:
     return device_id if DEVICE_ID_PATTERN.fullmatch(device_id) else None
 
 
-def _device_id_values(value: object) -> list[str]:
-    values = value if isinstance(value, list) else str(value or "").split(",")
-    return [device_id for item in values if (device_id := _clean_device_id(item))]
-
-
 def _ffprobe_format_tags(path: Path, ffprobe: str) -> dict[str, object]:
     try:
         result = subprocess.run(
@@ -238,10 +234,12 @@ def _ffprobe_format_tags(path: Path, ffprobe: str) -> dict[str, object]:
     return {str(key).lower(): value for key, value in tags.items()}
 
 
-def _local_device_id_index(session_dir: Path) -> tuple[str | None, list[str]]:
+def _local_device_id_index(
+    session_dir: Path,
+) -> tuple[str | None, str | None, str | None]:
     path = session_dir / "raw_calibration" / "device_ids.json"
     if not path.is_file():
-        return None, []
+        return None, None, None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -250,44 +248,62 @@ def _local_device_id_index(session_dir: Path) -> tuple[str | None, list[str]]:
         raise ModelScopePublisherError(f"Invalid local device ID index: {path}")
     return (
         _clean_device_id(payload.get("main_device_id")),
-        _device_id_values(payload.get("related_device_ids")),
+        _clean_device_id(payload.get("left_device_id")),
+        _clean_device_id(payload.get("right_device_id")),
     )
+
+
+def _merge_device_id(current: str | None, candidate: str | None, role: str) -> str | None:
+    if current and candidate and current != candidate:
+        raise ModelScopePublisherError(
+            f"Conflicting {role} device IDs: {current} != {candidate}"
+        )
+    return current or candidate
 
 
 def discover_device_ids(session_dir: Path, ffprobe: str = "ffprobe") -> dict[str, object]:
     main_device_id: str | None = None
-    related_device_ids: list[str] = []
+    left_device_id: str | None = None
+    right_device_id: str | None = None
 
     main_videos = sorted(session_dir.glob("robocap_*_video_*.mp4"))
     for video in main_videos:
         tags = _ffprobe_format_tags(video, ffprobe)
         main_device_id = _clean_device_id(tags.get("deviceid"))
-        related_device_ids.extend(_device_id_values(tags.get("subdevices")))
-        if main_device_id and related_device_ids:
+        if main_device_id:
             break
 
-    indexed_main, indexed_related = _local_device_id_index(session_dir)
-    if main_device_id and indexed_main and main_device_id != indexed_main:
-        raise ModelScopePublisherError(
-            "Device ID conflict between Robocap video metadata and local device_ids.json: "
-            f"{main_device_id} != {indexed_main}"
-        )
-    main_device_id = main_device_id or indexed_main
-    related_device_ids.extend(indexed_related)
+    indexed_main, indexed_left, indexed_right = _local_device_id_index(session_dir)
+    main_device_id = _merge_device_id(main_device_id, indexed_main, "main")
+    left_device_id = _merge_device_id(left_device_id, indexed_left, "left")
+    right_device_id = _merge_device_id(right_device_id, indexed_right, "right")
 
     for child in sorted(session_dir.iterdir()):
         match = ROBOWRIST_DIR_PATTERN.fullmatch(child.name) if child.is_dir() else None
         if match and (device_id := _clean_device_id(match.group("device_id"))):
-            related_device_ids.append(device_id)
+            side = match.group("side").lower()
+            if side == "left":
+                left_device_id = _merge_device_id(left_device_id, device_id, "left")
+            else:
+                right_device_id = _merge_device_id(right_device_id, device_id, "right")
 
-    unique_related = tuple(
-        dict.fromkeys(
-            device_id
-            for device_id in related_device_ids
-            if device_id and device_id != main_device_id
+    for video in sorted(session_dir.rglob("robowrist_*video*.mp4")):
+        tags = _ffprobe_format_tags(video, ffprobe)
+        device_id = _clean_device_id(tags.get("deviceid"))
+        position = str(tags.get("position") or "").strip().lower()
+        main_device_id = _merge_device_id(
+            main_device_id, _clean_device_id(tags.get("host")), "main"
         )
-    )
-    return {"main": main_device_id, "related": list(unique_related)}
+        if position == "left":
+            left_device_id = _merge_device_id(left_device_id, device_id, "left")
+        elif position == "right":
+            right_device_id = _merge_device_id(right_device_id, device_id, "right")
+
+    return {
+        "main": main_device_id,
+        "left": left_device_id,
+        "right": right_device_id,
+    }
 
 
 def default_dataset_root(session_dir: Path) -> Path:
@@ -389,7 +405,7 @@ inspection report. Paths inside manifests and reports are dataset-relative.
 - Generated: `manifest.json` and `timestamp_anomaly_detail_table.html`.
 
 Calibration files live outside the session dataset. `manifest.json` and `metadata.jsonl` contain
-only the main and related device IDs needed to resolve those external calibration records.
+only explicit `main`, `left`, and `right` device IDs needed to resolve those records.
 """
 
 
@@ -510,7 +526,8 @@ def stage_session(
             + report_source.stat().st_size,
             dry_run=True,
             main_device_id=device_ids["main"],
-            related_device_ids=tuple(device_ids["related"]),
+            left_device_id=device_ids["left"],
+            right_device_id=device_ids["right"],
         )
 
     target.mkdir(parents=True, exist_ok=True)
@@ -597,7 +614,8 @@ def stage_session(
         file_count=len(file_records),
         total_bytes=total_bytes,
         main_device_id=device_ids["main"],
-        related_device_ids=tuple(device_ids["related"]),
+        left_device_id=device_ids["left"],
+        right_device_id=device_ids["right"],
     )
 
 
@@ -641,7 +659,8 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
         file_count=len(files),
         total_bytes=total_bytes,
         main_device_id=_clean_device_id(device_ids.get("main")),
-        related_device_ids=tuple(_device_id_values(device_ids.get("related"))),
+        left_device_id=_clean_device_id(device_ids.get("left")),
+        right_device_id=_clean_device_id(device_ids.get("right")),
     )
 
 

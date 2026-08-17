@@ -89,7 +89,7 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
                 "P01/20260803_081935_session39/timestamp_anomaly_detail_table.html"
             ),
             "segment": "segment1",
-            "device_ids": {"main": None, "related": []},
+            "device_ids": {"main": None, "left": None, "right": None},
             "file_count": 3,
             "packaged_bytes": staged.total_bytes,
         }
@@ -137,12 +137,14 @@ def test_stage_records_device_ids_without_packaging_calibration(tmp_path: Path) 
     session = tmp_path / "session"
     calibration = session / "raw_calibration"
     calibration.mkdir(parents=True)
+    (session / "robowrist_wrist-left-01_left").mkdir()
+    (session / "robowrist_wrist-right-01_right").mkdir()
     (session / "motion.bvh").write_text("HIERARCHY\n", encoding="utf-8")
     (calibration / "device_ids.json").write_text(
         json.dumps(
             {
                 "main_device_id": "main-device-01",
-                "related_device_ids": ["wrist-left-01", "wrist-right-01"],
+                "related_device_ids": ["ambiguous-device-a", "ambiguous-device-b"],
                 "source": "Z:/private/calibration/source",
             }
         ),
@@ -163,13 +165,16 @@ def test_stage_records_device_ids_without_packaging_calibration(tmp_path: Path) 
 
     assert not (staged.session_dir / "raw_calibration").exists()
     assert staged.main_device_id == "main-device-01"
-    assert staged.related_device_ids == ("wrist-left-01", "wrist-right-01")
+    assert staged.left_device_id == "wrist-left-01"
+    assert staged.right_device_id == "wrist-right-01"
     manifest_text = staged.manifest_path.read_text(encoding="utf-8")
     manifest = json.loads(manifest_text)
     assert manifest["device_ids"] == {
         "main": "main-device-01",
-        "related": ["wrist-left-01", "wrist-right-01"],
+        "left": "wrist-left-01",
+        "right": "wrist-right-01",
     }
+    assert "related" not in manifest["device_ids"]
     assert "raw_calibration" not in manifest_text
     assert "signed-secret" not in manifest_text
     metadata = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
@@ -183,19 +188,49 @@ def test_device_ids_use_video_tags_and_robowrist_directories(
     session.mkdir()
     main_video = session / "robocap_segment1_video_left.mp4"
     main_video.write_bytes(b"video")
+    (session / "robowrist_wrist-left-02_left").mkdir()
     (session / "robowrist_wrist-right-02_right").mkdir()
     monkeypatch.setattr(
         publisher,
         "_ffprobe_format_tags",
         lambda path, ffprobe: {
             "deviceid": "main-device-02",
-            "subdevices": "wrist-left-02,wrist-right-02",
+            "subdevices": "ambiguous-device-a,ambiguous-device-b",
         },
     )
 
     assert publisher.discover_device_ids(session) == {
         "main": "main-device-02",
-        "related": ["wrist-left-02", "wrist-right-02"],
+        "left": "wrist-left-02",
+        "right": "wrist-right-02",
+    }
+
+
+def test_device_ids_use_explicit_wrist_position_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "session"
+    streams = session / "streams"
+    streams.mkdir(parents=True)
+    main_video = session / "robocap_segment1_video_left.mp4"
+    left_video = streams / "robowrist_segment1_video_left_down.mp4"
+    right_video = streams / "robowrist_segment1_video_right_down.mp4"
+    for path in (main_video, left_video, right_video):
+        path.write_bytes(b"video")
+
+    def tags(path: Path, _ffprobe: str) -> dict[str, str]:
+        if path == main_video:
+            return {"deviceid": "main-device-03", "subdevices": "unordered-a,unordered-b"}
+        if path == left_video:
+            return {"deviceid": "wrist-left-03", "position": "left", "host": "main-device-03"}
+        return {"deviceid": "wrist-right-03", "position": "right", "host": "main-device-03"}
+
+    monkeypatch.setattr(publisher, "_ffprobe_format_tags", tags)
+
+    assert publisher.discover_device_ids(session) == {
+        "main": "main-device-03",
+        "left": "wrist-left-03",
+        "right": "wrist-right-03",
     }
 
 

@@ -93,7 +93,7 @@ The generated dataset root also contains `metadata.jsonl` and a DatasetHub-compa
 Session contents are classified as core (six Robocap camera videos), motion capture (all available
 NOKOV body/rigid-body exports), optional (third-person video, IMU/MAG, Robowrist, and selected RRD),
 or generated (`manifest.json` and the inspection HTML). Calibration files are stored separately;
-the session manifest and `metadata.jsonl` contain only the main and related device IDs.
+the session manifest and `metadata.jsonl` contain explicit main, left, and right device IDs.
 
 `MODELSCOPE_API_TOKEN` and `MODELSCOPE_ENDPOINT` are stored in the repository-local `.env` file.
 The token field never displays the saved value; leaving it blank preserves the current token.
@@ -174,7 +174,7 @@ DatasetHub 读取格式的 `README.md`。
 
 Session 内容分为：核心六路 Robocap 视频、全部可用的 NOKOV 骨骼/刚体导出、可选的第三人称视频、
 IMU/MAG、Robowrist 与所选 RRD，以及自动生成的 `manifest.json` 和检查 HTML。标定文件单独存放，
-Session 的 manifest 与 `metadata.jsonl` 只记录主设备和关联设备的 device ID。
+Session 的 manifest 与 `metadata.jsonl` 只记录明确的 main、left、right device ID。
 
 `MODELSCOPE_API_TOKEN` 与 `MODELSCOPE_ENDPOINT` 保存在仓库根目录的 `.env`。网页不会回显已保存
 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，再执行“上传已准备数据集”。
@@ -249,7 +249,7 @@ LANGUAGE_PACKS = {
             "- Motion capture: every available NOKOV body and rigid-body export.\n"
             "- Optional: third-person video, IMU/MAG, Robowrist, and selected RRD files.\n"
             "- Generated: `manifest.json` and timestamp inspection HTML.\n"
-            "- Calibration is external; only main/related device IDs are recorded.\n\n"
+            "- Calibration is external; only explicit main/left/right device IDs are recorded.\n\n"
             "The staging root is the Session directory's sibling `_modelscope_dataset`."
         ),
         "modelscope_primitive": "Action primitive (PXX)",
@@ -339,7 +339,7 @@ LANGUAGE_PACKS = {
             "- 动捕：全部可用的 NOKOV 骨骼与刚体导出文件。\n"
             "- 可选：第三人称视频、IMU/MAG、Robowrist、勾选后的 RRD。\n"
             "- 自动生成：`manifest.json` 与时间戳检查 HTML。\n"
-            "- 标定数据在外部目录；这里只记录主设备及关联设备的 device ID。\n\n"
+            "- 标定数据在外部目录；这里只记录明确的 main/left/right device ID。\n\n"
             "数据集根目录自动使用 Session 同级的 `_modelscope_dataset`。"
         ),
         "modelscope_primitive": "动作基元（PXX）",

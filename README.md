@@ -118,7 +118,7 @@ PXX/
 ```
 
 Calibration files are stored outside the session dataset. Only
-`device_ids: {main, related}` is written to `manifest.json` and `metadata.jsonl`; local
+`device_ids: {main, left, right}` is written to `manifest.json` and `metadata.jsonl`; local
 `raw_calibration/` files, paths, API responses, and signed URLs are never packaged.
 
 Copy `.env.example` to `.env`, or save the token from the Web `ModelScope` tab. The local file is

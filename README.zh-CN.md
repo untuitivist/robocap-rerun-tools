@@ -186,8 +186,8 @@ PXX/
     timestamp_anomaly_detail_table.html # 自动生成且必需
 ```
 
-标定数据放在 Session 数据集之外。`manifest.json` 与 `metadata.jsonl` 只写入
-`device_ids: {main, related}`；本地 `raw_calibration/` 中的文件、路径、API 响应和临时签名 URL
+标定数据放在 Session 数据集之外。`manifest.json` 与 `metadata.jsonl` 只写入明确的
+`device_ids: {main, left, right}`；本地 `raw_calibration/` 中的文件、路径、API 响应和临时签名 URL
 永远不会进入发布包。
 
 可以复制 `.env.example` 为 `.env`，也可以在 Web 的“ModelScope”页保存 Token：
