@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -353,6 +353,41 @@ def find_rerun_files(session_dir: Path, segment: str | None) -> list[Path]:
     return sorted(path for path in search_root.rglob("*.rrd") if path.is_file())
 
 
+def resolve_rerun_files(
+    session_dir: Path,
+    segment: str | None,
+    *,
+    include_all: bool,
+    selected_files: Sequence[str | Path] | None,
+) -> list[Path]:
+    if include_all and selected_files:
+        raise ValueError("Use either include_rrd or selected RRD files, not both.")
+
+    available = find_rerun_files(session_dir, segment)
+    if include_all:
+        return available
+    if not selected_files:
+        return []
+
+    available_by_path = {path.resolve(): path for path in available}
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for value in selected_files:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = session_dir / candidate
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        source = available_by_path.get(candidate)
+        if source is None:
+            scope = f"segment {segment!r}" if segment else "the session artifacts"
+            raise ValueError(f"Selected RRD file is not available under {scope}: {value}")
+        seen.add(candidate)
+        resolved.append(source)
+    return resolved
+
+
 def copy_rerun_file(source: Path, session_dir: Path, target_dir: Path) -> PackagedFile:
     artifacts = session_dir / "_artifacts"
     relative_source = source.relative_to(session_dir)
@@ -369,6 +404,15 @@ def copy_rerun_file(source: Path, session_dir: Path, target_dir: Path) -> Packag
         packaged_bytes=size,
         compressed_video=False,
     )
+
+
+def reset_staged_rerun_directory(target_dir: Path) -> None:
+    rerun_dir = target_dir / "rerun"
+    if not rerun_dir.exists():
+        return
+    if rerun_dir.is_symlink() or not rerun_dir.is_dir():
+        raise ModelScopePublisherError(f"Staged RRD path is not a regular directory: {rerun_dir}")
+    shutil.rmtree(rerun_dir)
 
 
 def _portable_inspection_document(document: str, session_id: str) -> str:
@@ -540,6 +584,7 @@ def stage_session(
     proxy_crf: int = 28,
     proxy_bitrate: str = "1400k",
     include_rrd: bool = False,
+    rrd_files: Sequence[str | Path] | None = None,
     inspection_report: Path | None = None,
     dry_run: bool = False,
     progress: Callable[[str], None] | None = print,
@@ -560,7 +605,12 @@ def stage_session(
             f"Required inspection report not found: run inspect for {source} before staging."
         )
     files = discover_package_files(source, segment, include_artifacts=False, include_rrd=False)
-    rerun_files = find_rerun_files(source, segment) if include_rrd else []
+    rerun_files = resolve_rerun_files(
+        source,
+        segment,
+        include_all=include_rrd,
+        selected_files=rrd_files,
+    )
     if not files:
         raise ModelScopePublisherError(f"No session files were discovered in {source}.")
 
@@ -589,6 +639,7 @@ def stage_session(
         )
 
     target.mkdir(parents=True, exist_ok=True)
+    reset_staged_rerun_directory(target)
     packaged = []
     total_source_files = len(files) + len(rerun_files)
     for index, path in enumerate(files, start=1):
@@ -635,7 +686,8 @@ def stage_session(
             "proxy_height": proxy_height,
             "proxy_crf": proxy_crf,
             "proxy_bitrate": proxy_bitrate,
-            "include_rrd": include_rrd,
+            "include_rrd": bool(rerun_files),
+            "rrd_files": [path.relative_to(source).as_posix() for path in rerun_files],
         },
         "files": file_records,
     }

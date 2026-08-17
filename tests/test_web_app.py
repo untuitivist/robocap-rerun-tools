@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -7,7 +8,13 @@ from robocap_rerun_tools import web_app
 
 
 def test_web_app_builds_with_report_viewer() -> None:
-    assert web_app.build_app() is not None
+    app = web_app.build_app()
+    config = json.dumps(app.get_config_file(), ensure_ascii=False)
+
+    assert app is not None
+    assert "参与上传的 RRD 文件" in config
+    assert "保留原始视频" not in config
+    assert "仓库不存在时创建" not in config
 
 
 def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
@@ -220,6 +227,26 @@ def test_scan_rrd_files_selects_newest_recording(tmp_path) -> None:
     assert update["choices"] == [str(new_rrd), str(old_rrd)]
 
 
+def test_scan_modelscope_rrd_files_selects_current_segment_only(tmp_path) -> None:
+    segment1 = tmp_path / "_artifacts" / "segment1" / "inspection"
+    segment2 = tmp_path / "_artifacts" / "segment2" / "inspection"
+    segment1.mkdir(parents=True)
+    segment2.mkdir(parents=True)
+    (segment1 / "frame.rrd").write_bytes(b"")
+    (segment1 / "time.rrd").write_bytes(b"")
+    (segment2 / "other.rrd").write_bytes(b"")
+
+    summary, update = web_app.scan_modelscope_rrd_files(str(tmp_path), "segment1")
+
+    expected = [
+        str(Path("_artifacts") / "segment1" / "inspection" / "frame.rrd"),
+        str(Path("_artifacts") / "segment1" / "inspection" / "time.rrd"),
+    ]
+    assert "Selectable RRD files: 2" in summary
+    assert update["choices"] == expected
+    assert update["value"] == expected
+
+
 def test_scan_timestamp_reports_selects_newest_report(tmp_path) -> None:
     old_report = tmp_path / "a" / "timestamp_anomaly_detail_table.html"
     new_report = tmp_path / "b" / "timestamp_anomaly_detail_table.html"
@@ -332,19 +359,21 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
         "segment1",
         "P03",
         True,
-        False,
-        True,
-        720,
-        24,
+        [
+            str(Path("_artifacts") / "segment1" / "inspection" / "frame.rrd"),
+            str(Path("_artifacts") / "segment1" / "inspection" / "time.rrd"),
+        ],
     )
 
     assert output == "Done."
     assert captured[:4] == ["modelscope-stage", str(tmp_path), "--primitive-id", "P03"]
     assert "--refresh-inspection" in captured
-    assert "--include-rrd" in captured
+    assert captured.count("--rrd-file") == 2
+    assert "--include-rrd" not in captured
     assert "--raw-video" not in captured
     assert "--dataset-root" not in captured
-    assert captured[captured.index("--proxy-height") + 1] == "720"
+    assert "--proxy-height" not in captured
+    assert "--proxy-crf" not in captured
 
 
 def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monkeypatch) -> None:
@@ -356,9 +385,6 @@ def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monk
         "owner/egomocap",
         "master",
         True,
-        "private",
-        "cc-by-4.0",
-        True,
         6,
     )
 
@@ -366,7 +392,9 @@ def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monk
     assert captured[0] == "modelscope-upload"
     assert captured[1] == str(tmp_path.parent / "_modelscope_dataset")
     assert captured[captured.index("--repo-id") + 1] == "owner/egomocap"
-    assert "--create-if-missing" in captured
+    assert "--create-if-missing" not in captured
+    assert "--visibility" not in captured
+    assert "--license" not in captured
     assert "--no-cache" not in captured
     assert all("token" not in item.lower() for item in captured)
 
@@ -375,9 +403,7 @@ def test_web_modelscope_upload_omits_blank_repo_id_for_env_fallback(tmp_path, mo
     captured: list[str] = []
     monkeypatch.setattr(web_app, "run_cli", lambda args: captured.extend(args) or "Done.")
 
-    output = web_app.upload_modelscope_data(
-        str(tmp_path), "", "master", False, "private", "", True, 4
-    )
+    output = web_app.upload_modelscope_data(str(tmp_path), "", "master", True, 4)
 
     assert output == "Done."
     assert "--repo-id" not in captured

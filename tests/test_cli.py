@@ -237,6 +237,29 @@ def test_modelscope_stage_parser_defaults_to_compressed_video() -> None:
     assert args.raw_video is False
     assert args.proxy_height == 540
     assert args.refresh_inspection is False
+    assert args.rrd_files is None
+
+
+def test_modelscope_stage_parser_accepts_selected_rrd_files() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "modelscope-stage",
+            "Z:/DATASETS/Frodobots/nokov/session",
+            "--primitive-id",
+            "P01",
+            "--rrd-file",
+            "_artifacts/segment1/inspection/frame.rrd",
+            "--rrd-file",
+            "_artifacts/segment1/inspection/time.rrd",
+        ]
+    )
+
+    assert args.include_rrd is False
+    assert args.rrd_files == [
+        Path("_artifacts/segment1/inspection/frame.rrd"),
+        Path("_artifacts/segment1/inspection/time.rrd"),
+    ]
 
 
 def test_modelscope_upload_parser_uses_resumable_cache() -> None:

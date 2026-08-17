@@ -153,6 +153,15 @@ copied report, and updates the dataset-level metadata:
 robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection
 ```
 
+The Web tab scans the selected Segment and lets each RRD file be selected independently. The CLI
+equivalent is a repeatable `--rrd-file` option with either a Session-relative or absolute path;
+`--include-rrd` remains available when every RRD in the Segment should be staged. Preparing the
+same Session again synchronizes its generated `rerun/` directory with the current selection:
+
+```bat
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --rrd-file _artifacts\segment1\inspection\frame.rrd
+```
+
 Upload every session referenced by the prepared `metadata.jsonl`. The resumable cache skips files
 that have not changed:
 
@@ -164,8 +173,9 @@ The command uses `MODELSCOPE_REPO_ID` from `.env`. Pass `--repo-id owner/another
 override the saved repository for one upload.
 
 Add `--create-if-missing --visibility private` only when the tool should create a missing dataset
-repository. Uploads use the official `modelscope-hub` resumable cache by default. The Web tab exposes
-the same prepare, token check/save, repository creation, and upload controls.
+repository from the CLI. Uploads use the official `modelscope-hub` resumable cache by default. The
+Web tab always uses the compressed-video defaults and requires an existing repository; it does not
+expose raw-video, proxy encoding, repository creation, visibility, or license controls.
 
 Inspect one session before exporting:
 

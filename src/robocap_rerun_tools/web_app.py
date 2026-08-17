@@ -86,16 +86,17 @@ the Export and Offset tabs. The saved value is restored the next time the Web UI
 
 ## ModelScope Dataset Publishing
 
-The ModelScope tab prepares the current Session for upload. Compressed video is the default, and a
-standalone timestamp inspection HTML is required. The generated dataset `README.md` is the
-canonical description of the complete dataset structure and file requirements.
+The ModelScope tab prepares the current Session for upload. Web staging always uses the CLI's
+compressed-video defaults, and a standalone timestamp inspection HTML is required. Scan the RRD
+files and select only the recordings that should be included. The generated dataset `README.md` is
+the canonical description of the complete dataset structure and file requirements.
 
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
 preserves the current token.
 Use `Prepare session` before `Upload prepared dataset`. Upload sends every session referenced by
 `metadata.jsonl` and uses the official `modelscope-hub`
-client and its resumable upload cache by default.
+client and its resumable upload cache by default. The target repository must already exist.
 """
 
 
@@ -164,13 +165,15 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 
 ## ModelScope 数据集发布
 
-“ModelScope”页用于准备和上传当前 Session。默认压缩视频，并强制要求已有独立的时间戳检查 HTML。
-生成的数据集 `README.md` 是完整数据集结构与文件要求的唯一说明位置。
+“ModelScope”页用于准备和上传当前 Session。网页准备流程固定使用 CLI 的压缩视频默认值，并强制要求
+已有独立的时间戳检查 HTML。扫描 RRD 后可逐项勾选需要加入数据集的文件。生成的数据集 `README.md`
+是完整数据集结构与文件要求的唯一说明位置。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
 再执行“上传已准备数据集”。
-上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存。
+上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存；
+目标仓库必须已经存在。
 """
 
 
@@ -245,13 +248,8 @@ LANGUAGE_PACKS = {
         "modelscope_clear_token": "Clear saved token",
         "modelscope_check_token": "Check authentication",
         "modelscope_refresh_inspection": "Regenerate inspection HTML before preparing",
-        "modelscope_raw_video": "Keep original video",
-        "modelscope_include_rrd": "Include RRD files",
-        "modelscope_proxy_height": "Compressed video height",
-        "modelscope_proxy_crf": "Compressed video CRF",
-        "modelscope_create_repo": "Create repository if missing",
-        "modelscope_visibility": "New repository visibility",
-        "modelscope_license": "New repository license",
+        "modelscope_scan_rrd": "Scan RRD files",
+        "modelscope_rrd_files": "RRD files to upload",
         "modelscope_use_cache": "Use resumable upload cache",
         "modelscope_max_workers": "Upload workers",
         "modelscope_stage": "Prepare session",
@@ -326,13 +324,8 @@ LANGUAGE_PACKS = {
         "modelscope_clear_token": "清除已保存 Token",
         "modelscope_check_token": "检查身份",
         "modelscope_refresh_inspection": "准备前重新生成检查 HTML",
-        "modelscope_raw_video": "保留原始视频",
-        "modelscope_include_rrd": "包含 RRD 文件",
-        "modelscope_proxy_height": "压缩视频高度",
-        "modelscope_proxy_crf": "压缩视频 CRF",
-        "modelscope_create_repo": "仓库不存在时创建",
-        "modelscope_visibility": "新仓库可见性",
-        "modelscope_license": "新仓库 License",
+        "modelscope_scan_rrd": "扫描 RRD 文件",
+        "modelscope_rrd_files": "参与上传的 RRD 文件",
         "modelscope_use_cache": "使用可恢复上传缓存",
         "modelscope_max_workers": "上传并发数",
         "modelscope_stage": "准备 Session",
@@ -799,6 +792,29 @@ def scan_rrd_files(session_dir: str) -> tuple[str, object]:
     return summary, gr.update(choices=choices, value=choices[0] if choices else None)
 
 
+def scan_modelscope_rrd_files(session_dir: str, segment: str) -> tuple[str, object]:
+    from robocap_rerun_tools.modelscope_publisher import find_rerun_files
+
+    path = Path(session_path(session_dir)).resolve()
+    rrd_files = find_rerun_files(path, optional_text(segment))
+    choices = [str(file.relative_to(path)) for file in rrd_files]
+    summary = "\n".join(
+        [
+            f"Session: {path}",
+            f"Segment: {optional_text(segment) or 'all'}",
+            f"Selectable RRD files: {len(choices)}",
+            *(f"- {choice}" for choice in choices),
+        ]
+    )
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError(
+            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+        ) from exc
+    return summary, gr.update(choices=choices, value=choices)
+
+
 def timestamp_report_path(session_dir: Path, segment: str | None) -> Path:
     return session_dir / "_artifacts" / (segment or "all") / "inspection" / TIMESTAMP_REPORT_NAME
 
@@ -1044,29 +1060,20 @@ def stage_modelscope_data(
     segment: str,
     primitive_id: str,
     refresh_inspection: bool,
-    raw_video: bool,
-    include_rrd: bool,
-    proxy_height: int,
-    proxy_crf: int,
+    selected_rrd_files: list[str] | None,
 ) -> str:
     args = [
         "modelscope-stage",
         session_path(session_dir),
         "--primitive-id",
         primitive_id,
-        "--proxy-height",
-        str(int(proxy_height)),
-        "--proxy-crf",
-        str(int(proxy_crf)),
     ]
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
     if refresh_inspection:
         args.append("--refresh-inspection")
-    if raw_video:
-        args.append("--raw-video")
-    if include_rrd:
-        args.append("--include-rrd")
+    for rrd_file in selected_rrd_files or []:
+        args.extend(["--rrd-file", str(rrd_file)])
     return run_cli(args)
 
 
@@ -1074,9 +1081,6 @@ def upload_modelscope_data(
     session_dir: str,
     repo_id: str,
     revision: str,
-    create_if_missing: bool,
-    visibility: str,
-    license_name: str,
     use_cache: bool,
     max_workers: int,
 ) -> str:
@@ -1089,17 +1093,11 @@ def upload_modelscope_data(
         str(resolved_root),
         "--revision",
         revision.strip() or "master",
-        "--visibility",
-        visibility,
         "--max-workers",
         str(max(1, int(max_workers))),
     ]
     if optional_text(repo_id):
         args.extend(["--repo-id", repo_id.strip()])
-    if create_if_missing:
-        args.append("--create-if-missing")
-    if optional_text(license_name):
-        args.extend(["--license", license_name.strip()])
     if not use_cache:
         args.append("--no-cache")
     return run_cli(args)
@@ -1301,13 +1299,8 @@ def language_updates(language: str):
         gr.update(value=labels["modelscope_clear_token"]),
         gr.update(value=labels["modelscope_check_token"]),
         gr.update(label=labels["modelscope_refresh_inspection"]),
-        gr.update(label=labels["modelscope_raw_video"]),
-        gr.update(label=labels["modelscope_include_rrd"]),
-        gr.update(label=labels["modelscope_proxy_height"]),
-        gr.update(label=labels["modelscope_proxy_crf"]),
-        gr.update(label=labels["modelscope_create_repo"]),
-        gr.update(label=labels["modelscope_visibility"]),
-        gr.update(label=labels["modelscope_license"]),
+        gr.update(value=labels["modelscope_scan_rrd"]),
+        gr.update(label=labels["modelscope_rrd_files"]),
         gr.update(label=labels["modelscope_use_cache"]),
         gr.update(label=labels["modelscope_max_workers"]),
         gr.update(value=labels["modelscope_stage"]),
@@ -1439,35 +1432,19 @@ def build_app():
                 modelscope_refresh_inspection = gr.Checkbox(
                     label=labels["modelscope_refresh_inspection"], value=True
                 )
-                modelscope_raw_video = gr.Checkbox(
-                    label=labels["modelscope_raw_video"], value=False
-                )
-                modelscope_include_rrd = gr.Checkbox(
-                    label=labels["modelscope_include_rrd"], value=False
-                )
-            with gr.Row():
-                modelscope_proxy_height = gr.Number(
-                    label=labels["modelscope_proxy_height"], value=540, precision=0
-                )
-                modelscope_proxy_crf = gr.Number(
-                    label=labels["modelscope_proxy_crf"], value=28, precision=0
-                )
+                modelscope_use_cache = gr.Checkbox(label=labels["modelscope_use_cache"], value=True)
                 modelscope_max_workers = gr.Number(
                     label=labels["modelscope_max_workers"], value=4, precision=0
                 )
-            with gr.Row():
-                modelscope_create_repo = gr.Checkbox(
-                    label=labels["modelscope_create_repo"], value=False
-                )
-                modelscope_visibility = gr.Dropdown(
-                    label=labels["modelscope_visibility"],
-                    choices=["private", "internal", "public"],
-                    value="private",
-                )
-                modelscope_license = gr.Textbox(
-                    label=labels["modelscope_license"], placeholder="cc-by-4.0"
-                )
-                modelscope_use_cache = gr.Checkbox(label=labels["modelscope_use_cache"], value=True)
+            modelscope_scan_rrd = gr.Button(labels["modelscope_scan_rrd"])
+            modelscope_rrd_files = gr.CheckboxGroup(
+                label=labels["modelscope_rrd_files"], choices=[], value=[]
+            )
+            modelscope_scan_rrd.click(
+                scan_modelscope_rrd_files,
+                inputs=[session_dir, segment],
+                outputs=[output, modelscope_rrd_files],
+            )
             with gr.Row():
                 modelscope_stage = gr.Button(labels["modelscope_stage"], variant="primary")
                 modelscope_upload = gr.Button(labels["modelscope_upload"])
@@ -1478,10 +1455,7 @@ def build_app():
                     segment,
                     modelscope_primitive,
                     modelscope_refresh_inspection,
-                    modelscope_raw_video,
-                    modelscope_include_rrd,
-                    modelscope_proxy_height,
-                    modelscope_proxy_crf,
+                    modelscope_rrd_files,
                 ],
                 outputs=output,
             )
@@ -1491,9 +1465,6 @@ def build_app():
                     session_dir,
                     modelscope_repo_id,
                     modelscope_revision,
-                    modelscope_create_repo,
-                    modelscope_visibility,
-                    modelscope_license,
                     modelscope_use_cache,
                     modelscope_max_workers,
                 ],
@@ -1708,13 +1679,8 @@ def build_app():
                 modelscope_clear_token,
                 modelscope_check_token,
                 modelscope_refresh_inspection,
-                modelscope_raw_video,
-                modelscope_include_rrd,
-                modelscope_proxy_height,
-                modelscope_proxy_crf,
-                modelscope_create_repo,
-                modelscope_visibility,
-                modelscope_license,
+                modelscope_scan_rrd,
+                modelscope_rrd_files,
                 modelscope_use_cache,
                 modelscope_max_workers,
                 modelscope_stage,

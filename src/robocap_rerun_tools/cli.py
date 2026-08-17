@@ -1810,6 +1810,7 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
             proxy_crf=args.proxy_crf,
             proxy_bitrate=args.proxy_bitrate,
             include_rrd=args.include_rrd,
+            rrd_files=args.rrd_files,
             dry_run=args.dry_run,
         )
     except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
@@ -1968,7 +1969,19 @@ def build_parser() -> argparse.ArgumentParser:
     modelscope_stage_parser.add_argument("--proxy-bitrate", default="1400k")
     modelscope_stage_parser.add_argument("--ffmpeg", default="ffmpeg")
     modelscope_stage_parser.add_argument("--ffprobe", default="ffprobe")
-    modelscope_stage_parser.add_argument("--include-rrd", action="store_true")
+    modelscope_rrd_group = modelscope_stage_parser.add_mutually_exclusive_group()
+    modelscope_rrd_group.add_argument(
+        "--include-rrd",
+        action="store_true",
+        help="Include every RRD under the selected session/segment artifacts.",
+    )
+    modelscope_rrd_group.add_argument(
+        "--rrd-file",
+        dest="rrd_files",
+        action="append",
+        type=Path,
+        help="Include one RRD path relative to the session, or an absolute path; repeat as needed.",
+    )
     modelscope_stage_parser.add_argument(
         "--refresh-inspection",
         action="store_true",

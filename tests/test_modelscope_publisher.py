@@ -301,6 +301,70 @@ def test_stage_includes_selected_rrd_outside_artifacts_tree(tmp_path: Path) -> N
     assert rerun_records[0]["packaged_as"] == "rerun/segment1/inspection/aligned.rrd"
 
 
+def test_stage_includes_only_explicitly_selected_rrd_files(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    report = write_inspection_report(session)
+    selected = report.parent / "frame.rrd"
+    omitted = report.parent / "time.rrd"
+    selected.write_bytes(b"frame")
+    omitted.write_bytes(b"time")
+
+    initial = publisher.stage_session(
+        session,
+        "P05",
+        dataset_root=tmp_path / "dataset",
+        segment="segment1",
+        include_rrd=True,
+        raw_video=True,
+        progress=None,
+    )
+    initial_rerun_dir = initial.session_dir / "rerun" / "segment1" / "inspection"
+    assert (initial_rerun_dir / "frame.rrd").is_file()
+    assert (initial_rerun_dir / "time.rrd").is_file()
+
+    staged = publisher.stage_session(
+        session,
+        "P05",
+        dataset_root=tmp_path / "dataset",
+        segment="segment1",
+        rrd_files=[selected.relative_to(session)],
+        raw_video=True,
+        progress=None,
+    )
+
+    rerun_dir = staged.session_dir / "rerun" / "segment1" / "inspection"
+    assert (rerun_dir / "frame.rrd").read_bytes() == b"frame"
+    assert not (rerun_dir / "time.rrd").exists()
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["options"]["include_rrd"] is True
+    assert manifest["options"]["rrd_files"] == [
+        "_artifacts/segment1/inspection/frame.rrd"
+    ]
+
+
+def test_stage_rejects_selected_rrd_outside_current_segment(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    write_inspection_report(session, "segment1")
+    other_report = write_inspection_report(session, "segment2")
+    other_rrd = other_report.parent / "other.rrd"
+    other_rrd.write_bytes(b"other")
+
+    with pytest.raises(ValueError, match="not available under segment 'segment1'"):
+        publisher.stage_session(
+            session,
+            "P05",
+            dataset_root=tmp_path / "dataset",
+            segment="segment1",
+            rrd_files=[other_rrd],
+            raw_video=True,
+            progress=None,
+        )
+
+
 def test_upload_staged_session_uploads_every_indexed_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
