@@ -266,6 +266,13 @@ def test_modelscope_status_never_exposes_token() -> None:
     assert "secret-token" not in status
 
 
+def test_web_does_not_duplicate_dataset_structure_documentation() -> None:
+    assert "modelscope_help" not in web_app.LANGUAGE_PACKS["English"]
+    assert "modelscope_help" not in web_app.LANGUAGE_PACKS["中文"]
+    assert "<dataset_root>/" not in web_app.EN_DOC
+    assert "<dataset_root>/" not in web_app.ZH_DOC
+
+
 def test_web_modelscope_auth_reports_invalid_endpoint(monkeypatch) -> None:
     from robocap_rerun_tools import modelscope_publisher
 

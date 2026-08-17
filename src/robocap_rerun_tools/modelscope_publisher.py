@@ -411,27 +411,31 @@ Raw calibration lives outside each action session under the dataset-level
 `raw_calibration/<device_id>/` tree. Session manifests and `metadata.jsonl` contain only explicit
 `main`, `left`, and `right` device IDs needed to resolve those records.
 
-## Dataset root
+## Complete dataset structure
+
+Only the concrete NOKOV motion-capture export format selection and explicitly selected RRD files
+are optional. All other listed capture streams and generated records are required.
 
 ```text
 <dataset_root>/
-  README.md
-  metadata.jsonl
-  raw_calibration/
+  README.md                                      # required Dataset Card
+  metadata.jsonl                                # required global session index
+  raw_calibration/                              # required, maintained separately
     <device_id>/
-  EgoMotionActions/
+  EgoMotionActions/                             # required action recordings
     PXX/
       <session_id>/
-        robocap_<segment>_video_*.mp4
-        robocap_<segment>_imu_*.db
-        robocap_<segment>_mag_*.db
+        robocap_<segment>_video_*.mp4            # required six first-person videos
+        robocap_<segment>_imu_*.db               # required Robocap IMU
+        robocap_<segment>_mag_*.db               # required Robocap MAG
         nokov/
-          *.{bvh,trc,csv,xrs,c3d,...}
-          *.mp4
-        robowrist_<device_id>_<side>/
-        rerun/<segment>/inspection/*.rrd
-        manifest.json
-        timestamp_anomaly_detail_table.html
+          *.mp4                                  # required third-person video
+          *.{bvh,trc,csv,xrs,c3d,...}            # one or more formats required
+        robowrist_<device_id>_left/               # required left streams
+        robowrist_<device_id>_right/              # required right streams
+        rerun/<segment>/inspection/*.rrd          # optional
+        manifest.json                            # generated, required
+        timestamp_anomaly_detail_table.html      # generated, required
 ```
 
 `README.md` is the ModelScope Dataset Card. `metadata.jsonl` is the dataset-wide session index.
