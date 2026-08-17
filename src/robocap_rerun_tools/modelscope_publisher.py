@@ -458,6 +458,33 @@ def copy_portable_inspection_report(source: Path, target: Path, session_id: str)
     target.write_text(portable, encoding="utf-8", newline="")
 
 
+_DATASET_DOWNLOAD = """## Download
+
+Browse the ModelScope **Dataset Files** page for file metadata and individual data files.
+
+:modelscope-code[]{type="sdk"}
+
+:modelscope-code[]{type="git"}
+
+After downloading, read the dataset-wide session index without any additional dependency:
+
+```python
+import json
+from pathlib import Path
+
+dataset_root = Path("./EgoMotionActions")
+records = [
+    json.loads(line)
+    for line in (dataset_root / "metadata.jsonl").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+for record in records:
+    print(record["primitive_id"], record["session_id"], record["session_path"])
+```
+
+"""
+
+
 _ACTION_TASK_CATALOG = """## Global collection rules
 
 - **Participant behavior:** Move naturally; do not exaggerate gait or arm swing and do not imitate
@@ -543,6 +570,7 @@ def _dataset_readme() -> str:
 domain:
 - multi-modal
 - cv
+license: Apache License 2.0
 tasks:
 - action-recognition
 - body-3d-keypoints
@@ -570,6 +598,7 @@ Every session directory includes a self-contained `timestamp_anomaly_detail_tabl
 inspection report. Paths inside manifests and reports are dataset-relative.
 
 """
+        + _DATASET_DOWNLOAD
         + _ACTION_TASK_CATALOG
         + """## Session contents
 

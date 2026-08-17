@@ -157,6 +157,14 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
 def test_dataset_readme_contains_complete_action_task_catalog() -> None:
     dataset_readme = publisher._dataset_readme()
 
+    assert "license: Apache License 2.0" in dataset_readme
+    assert "## Download" in dataset_readme
+    assert ':modelscope-code[]{type="sdk"}' in dataset_readme
+    assert ':modelscope-code[]{type="git"}' in dataset_readme
+    assert "uv venv" not in dataset_readme
+    assert "uv pip" not in dataset_readme
+    assert "modelscope login" not in dataset_readme
+    assert 'record["primitive_id"]' in dataset_readme
     assert "## Global collection rules" in dataset_readme
     assert "## Action task catalog (P01-P29)" in dataset_readme
     assert "Episodes / participant` is not yet" in dataset_readme
