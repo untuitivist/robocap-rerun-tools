@@ -12,7 +12,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
-DEFAULT_EXCLUDED_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache"}
+DEFAULT_EXCLUDED_DIRS = {
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    "raw_calibration",
+}
 DEFAULT_EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 
 
@@ -32,7 +39,7 @@ def is_video(path: Path) -> bool:
 
 def is_excluded(path: Path, session_dir: Path, include_artifacts: bool, include_rrd: bool) -> bool:
     relative = path.relative_to(session_dir)
-    if any(part in DEFAULT_EXCLUDED_DIRS for part in relative.parts):
+    if any(part.lower() in DEFAULT_EXCLUDED_DIRS for part in relative.parts):
         return True
     if path.name == ".env" or path.name.startswith(".env."):
         return True
@@ -146,8 +153,8 @@ def copy_or_compress_file(
         target = staging_root / package_relative
         compress_video(source, target, ffmpeg, proxy_height, proxy_crf, proxy_bitrate)
         return PackagedFile(
-            source=str(relative),
-            packaged_as=str(package_relative),
+            source=relative.as_posix(),
+            packaged_as=package_relative.as_posix(),
             kind="video_proxy",
             original_bytes=original_size,
             packaged_bytes=target.stat().st_size,
@@ -158,8 +165,8 @@ def copy_or_compress_file(
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return PackagedFile(
-        source=str(relative),
-        packaged_as=str(relative),
+        source=relative.as_posix(),
+        packaged_as=relative.as_posix(),
         kind="video_raw" if is_video(source) else "data",
         original_bytes=original_size,
         packaged_bytes=target.stat().st_size,

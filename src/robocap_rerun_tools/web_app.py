@@ -90,6 +90,11 @@ The ModelScope tab stages one recording under `PXX/<session_id>/`. Compressed vi
 and the standalone timestamp inspection HTML is required and copied into the same session directory.
 The generated dataset root also contains `metadata.jsonl` and a DatasetHub-compatible `README.md`.
 
+Session contents are classified as core (six Robocap camera videos), motion capture (all available
+NOKOV body/rigid-body exports), optional (third-person video, IMU/MAG, Robowrist, and selected RRD),
+or generated (`manifest.json` and the inspection HTML). Calibration files are stored separately;
+the session manifest and `metadata.jsonl` contain only the main and related device IDs.
+
 `MODELSCOPE_API_TOKEN` and `MODELSCOPE_ENDPOINT` are stored in the repository-local `.env` file.
 The token field never displays the saved value; leaving it blank preserves the current token.
 Use `Prepare session` before `Upload prepared dataset`. Upload sends every session referenced by
@@ -167,6 +172,10 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 检查 HTML；检查报告会复制到同一个 session 目录。数据集根目录同时生成 `metadata.jsonl` 和符合
 DatasetHub 读取格式的 `README.md`。
 
+Session 内容分为：核心六路 Robocap 视频、全部可用的 NOKOV 骨骼/刚体导出、可选的第三人称视频、
+IMU/MAG、Robowrist 与所选 RRD，以及自动生成的 `manifest.json` 和检查 HTML。标定文件单独存放，
+Session 的 manifest 与 `metadata.jsonl` 只记录主设备和关联设备的 device ID。
+
 `MODELSCOPE_API_TOKEN` 与 `MODELSCOPE_ENDPOINT` 保存在仓库根目录的 `.env`。网页不会回显已保存
 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，再执行“上传已准备数据集”。
 上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存。
@@ -234,9 +243,16 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "Open web viewer",
         "viewer_rrd_file": "RRD file",
         "viewer_port": "Web viewer port (0 = auto)",
-        "modelscope_help": "Dataset target: `PXX/<session_id>/`. Prepare locally before uploading.",
+        "modelscope_help": (
+            "**`PXX/<session_id>/` contents**\n\n"
+            "- Core: six Robocap camera videos.\n"
+            "- Motion capture: every available NOKOV body and rigid-body export.\n"
+            "- Optional: third-person video, IMU/MAG, Robowrist, and selected RRD files.\n"
+            "- Generated: `manifest.json` and timestamp inspection HTML.\n"
+            "- Calibration is external; only main/related device IDs are recorded.\n\n"
+            "The staging root is the Session directory's sibling `_modelscope_dataset`."
+        ),
         "modelscope_primitive": "Action primitive (PXX)",
-        "modelscope_dataset_root": "Local dataset root",
         "modelscope_repo_id": "ModelScope dataset repo (owner/name)",
         "modelscope_endpoint": "ModelScope endpoint",
         "modelscope_revision": "Revision",
@@ -317,9 +333,16 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "打开 Web Viewer",
         "viewer_rrd_file": "RRD 文件",
         "viewer_port": "Web Viewer 端口（0 = 自动）",
-        "modelscope_help": "数据集目录固定为 `PXX/<session_id>/`。先在本地准备，再上传。",
+        "modelscope_help": (
+            "**`PXX/<session_id>/` 文件结构**\n\n"
+            "- 核心：六路 Robocap 相机视频。\n"
+            "- 动捕：全部可用的 NOKOV 骨骼与刚体导出文件。\n"
+            "- 可选：第三人称视频、IMU/MAG、Robowrist、勾选后的 RRD。\n"
+            "- 自动生成：`manifest.json` 与时间戳检查 HTML。\n"
+            "- 标定数据在外部目录；这里只记录主设备及关联设备的 device ID。\n\n"
+            "数据集根目录自动使用 Session 同级的 `_modelscope_dataset`。"
+        ),
         "modelscope_primitive": "动作基元（PXX）",
-        "modelscope_dataset_root": "本地数据集根目录",
         "modelscope_repo_id": "ModelScope 数据集仓库（owner/name）",
         "modelscope_endpoint": "ModelScope 站点",
         "modelscope_revision": "分支 / Revision",
@@ -1039,7 +1062,6 @@ def stage_modelscope_data(
     session_dir: str,
     segment: str,
     primitive_id: str,
-    dataset_root: str,
     refresh_inspection: bool,
     raw_video: bool,
     include_rrd: bool,
@@ -1058,8 +1080,6 @@ def stage_modelscope_data(
     ]
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
-    if optional_text(dataset_root):
-        args.extend(["--dataset-root", dataset_root.strip()])
     if refresh_inspection:
         args.append("--refresh-inspection")
     if raw_video:
@@ -1071,7 +1091,6 @@ def stage_modelscope_data(
 
 def upload_modelscope_data(
     session_dir: str,
-    dataset_root: str,
     repo_id: str,
     revision: str,
     create_if_missing: bool,
@@ -1083,11 +1102,7 @@ def upload_modelscope_data(
     from robocap_rerun_tools.modelscope_publisher import default_dataset_root
 
     resolved_session = Path(session_path(session_dir))
-    resolved_root = (
-        Path(dataset_root.strip())
-        if optional_text(dataset_root)
-        else default_dataset_root(resolved_session)
-    )
+    resolved_root = default_dataset_root(resolved_session)
     args = [
         "modelscope-upload",
         str(resolved_root),
@@ -1297,7 +1312,6 @@ def language_updates(language: str):
         gr.update(label=labels["viewer_port"]),
         gr.update(value=labels["modelscope_help"]),
         gr.update(label=labels["modelscope_primitive"]),
-        gr.update(label=labels["modelscope_dataset_root"]),
         gr.update(label=labels["modelscope_repo_id"]),
         gr.update(label=labels["modelscope_endpoint"]),
         gr.update(label=labels["modelscope_revision"]),
@@ -1400,11 +1414,6 @@ def build_app():
                     allow_custom_value=True,
                     scale=1,
                 )
-                modelscope_dataset_root = gr.Textbox(
-                    label=labels["modelscope_dataset_root"],
-                    placeholder=r"Z:\DATASETS\Frodobots\nokov\_modelscope_dataset",
-                    scale=3,
-                )
             with gr.Row():
                 modelscope_repo_id = gr.Textbox(
                     label=labels["modelscope_repo_id"], placeholder="owner/egomocap", scale=3
@@ -1483,7 +1492,6 @@ def build_app():
                     session_dir,
                     segment,
                     modelscope_primitive,
-                    modelscope_dataset_root,
                     modelscope_refresh_inspection,
                     modelscope_raw_video,
                     modelscope_include_rrd,
@@ -1496,7 +1504,6 @@ def build_app():
                 upload_modelscope_data,
                 inputs=[
                     session_dir,
-                    modelscope_dataset_root,
                     modelscope_repo_id,
                     modelscope_revision,
                     modelscope_create_repo,
@@ -1708,7 +1715,6 @@ def build_app():
                 viewer_port,
                 modelscope_help,
                 modelscope_primitive,
-                modelscope_dataset_root,
                 modelscope_repo_id,
                 modelscope_endpoint,
                 modelscope_revision,

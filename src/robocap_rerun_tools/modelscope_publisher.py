@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -12,7 +14,7 @@ from urllib.parse import urlsplit
 
 from dotenv import dotenv_values, set_key
 
-from .data_packager import copy_or_compress_file, discover_package_files, is_video
+from .data_packager import PackagedFile, copy_or_compress_file, discover_package_files, is_video
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
@@ -24,6 +26,10 @@ METADATA_NAME = "metadata.jsonl"
 DATASET_README_NAME = "README.md"
 PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
 REPO_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+ROBOWRIST_DIR_PATTERN = re.compile(
+    r"robowrist_(?P<device_id>.+)_(?:left|right)\Z", re.IGNORECASE
+)
 
 
 class ModelScopePublisherError(RuntimeError):
@@ -51,6 +57,8 @@ class StageResult:
     file_count: int
     total_bytes: int
     dry_run: bool = False
+    main_device_id: str | None = None
+    related_device_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -189,6 +197,99 @@ def token_status(settings: ModelScopeSettings) -> str:
     )
 
 
+def _clean_device_id(value: object) -> str | None:
+    device_id = str(value or "").strip()
+    if not device_id or device_id.upper() == "NONE":
+        return None
+    return device_id if DEVICE_ID_PATTERN.fullmatch(device_id) else None
+
+
+def _device_id_values(value: object) -> list[str]:
+    values = value if isinstance(value, list) else str(value or "").split(",")
+    return [device_id for item in values if (device_id := _clean_device_id(item))]
+
+
+def _ffprobe_format_tags(path: Path, ffprobe: str) -> dict[str, object]:
+    try:
+        result = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format_tags",
+                "-of",
+                "json",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        payload = json.loads(result.stdout)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        return {}
+    format_data = payload.get("format", {}) if isinstance(payload, dict) else {}
+    tags = format_data.get("tags", {}) if isinstance(format_data, dict) else {}
+    if not isinstance(tags, dict):
+        return {}
+    return {str(key).lower(): value for key, value in tags.items()}
+
+
+def _local_device_id_index(session_dir: Path) -> tuple[str | None, list[str]]:
+    path = session_dir / "raw_calibration" / "device_ids.json"
+    if not path.is_file():
+        return None, []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ModelScopePublisherError(f"Invalid local device ID index: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ModelScopePublisherError(f"Invalid local device ID index: {path}")
+    return (
+        _clean_device_id(payload.get("main_device_id")),
+        _device_id_values(payload.get("related_device_ids")),
+    )
+
+
+def discover_device_ids(session_dir: Path, ffprobe: str = "ffprobe") -> dict[str, object]:
+    main_device_id: str | None = None
+    related_device_ids: list[str] = []
+
+    main_videos = sorted(session_dir.glob("robocap_*_video_*.mp4"))
+    for video in main_videos:
+        tags = _ffprobe_format_tags(video, ffprobe)
+        main_device_id = _clean_device_id(tags.get("deviceid"))
+        related_device_ids.extend(_device_id_values(tags.get("subdevices")))
+        if main_device_id and related_device_ids:
+            break
+
+    indexed_main, indexed_related = _local_device_id_index(session_dir)
+    if main_device_id and indexed_main and main_device_id != indexed_main:
+        raise ModelScopePublisherError(
+            "Device ID conflict between Robocap video metadata and local device_ids.json: "
+            f"{main_device_id} != {indexed_main}"
+        )
+    main_device_id = main_device_id or indexed_main
+    related_device_ids.extend(indexed_related)
+
+    for child in sorted(session_dir.iterdir()):
+        match = ROBOWRIST_DIR_PATTERN.fullmatch(child.name) if child.is_dir() else None
+        if match and (device_id := _clean_device_id(match.group("device_id"))):
+            related_device_ids.append(device_id)
+
+    unique_related = tuple(
+        dict.fromkeys(
+            device_id
+            for device_id in related_device_ids
+            if device_id and device_id != main_device_id
+        )
+    )
+    return {"main": main_device_id, "related": list(unique_related)}
+
+
 def default_dataset_root(session_dir: Path) -> Path:
     return session_dir.resolve().parent / "_modelscope_dataset"
 
@@ -202,6 +303,32 @@ def find_inspection_report(session_dir: Path, segment: str | None) -> Path | Non
     if not candidates:
         return None
     return max(candidates, key=lambda path: path.stat().st_mtime_ns)
+
+
+def find_rerun_files(session_dir: Path, segment: str | None) -> list[Path]:
+    artifacts = session_dir / "_artifacts"
+    search_root = artifacts / segment if segment else artifacts
+    if not search_root.is_dir():
+        return []
+    return sorted(path for path in search_root.rglob("*.rrd") if path.is_file())
+
+
+def copy_rerun_file(source: Path, session_dir: Path, target_dir: Path) -> PackagedFile:
+    artifacts = session_dir / "_artifacts"
+    relative_source = source.relative_to(session_dir)
+    relative_target = Path("rerun") / source.relative_to(artifacts)
+    target = target_dir / relative_target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    size = source.stat().st_size
+    return PackagedFile(
+        source=relative_source.as_posix(),
+        packaged_as=relative_target.as_posix(),
+        kind="rerun",
+        original_bytes=size,
+        packaged_bytes=size,
+        compressed_video=False,
+    )
 
 
 def _portable_inspection_document(document: str, session_id: str) -> str:
@@ -251,6 +378,18 @@ Each row in `metadata.jsonl` describes one recording. Session files use the stab
 
 Every session directory includes a self-contained `timestamp_anomaly_detail_table.html`
 inspection report. Paths inside manifests and reports are dataset-relative.
+
+## Session contents
+
+- Core: six `robocap_<segment>_video_*.mp4` first-person camera streams.
+- Motion capture: all available NOKOV body and rigid-body exports under `nokov/`; individual
+  BVH, CSV, TRC, XRS, C3D, or other export formats are optional.
+- Optional: third-person videos, Robocap IMU/MAG databases, Robowrist left/right video and
+  sensor streams, and RRD files when explicitly selected.
+- Generated: `manifest.json` and `timestamp_anomaly_detail_table.html`.
+
+Calibration files live outside the session dataset. `manifest.json` and `metadata.jsonl` contain
+only the main and related device IDs needed to resolve those external calibration records.
 """
 
 
@@ -322,6 +461,7 @@ def stage_session(
     segment: str | None = None,
     raw_video: bool = False,
     ffmpeg: str = "ffmpeg",
+    ffprobe: str = "ffprobe",
     proxy_height: int = 540,
     proxy_crf: int = 28,
     proxy_bitrate: str = "1400k",
@@ -338,15 +478,15 @@ def stage_session(
     root = (dataset_root or default_dataset_root(source)).expanduser().resolve()
     target = root / primitive / resolved_session_id
     _validate_stage_locations(source, root, target)
+    device_ids = discover_device_ids(source, ffprobe)
 
     report_source = inspection_report or find_inspection_report(source, segment)
     if report_source is None or not report_source.is_file():
         raise FileNotFoundError(
             f"Required inspection report not found: run inspect for {source} before staging."
         )
-    files = discover_package_files(
-        source, segment, include_artifacts=False, include_rrd=include_rrd
-    )
+    files = discover_package_files(source, segment, include_artifacts=False, include_rrd=False)
+    rerun_files = find_rerun_files(source, segment) if include_rrd else []
     if not files:
         raise ModelScopePublisherError(f"No session files were discovered in {source}.")
 
@@ -356,25 +496,30 @@ def stage_session(
     inspection_target = target / REPORT_NAME
     if dry_run:
         return StageResult(
-            root,
-            target,
-            primitive,
-            resolved_session_id,
-            manifest_path,
-            metadata_path,
-            readme_path,
-            inspection_target,
-            len(files) + 1,
-            sum(path.stat().st_size for path in files) + report_source.stat().st_size,
-            True,
+            dataset_root=root,
+            session_dir=target,
+            primitive_id=primitive,
+            session_id=resolved_session_id,
+            manifest_path=manifest_path,
+            metadata_path=metadata_path,
+            readme_path=readme_path,
+            inspection_html=inspection_target,
+            file_count=len(files) + len(rerun_files) + 1,
+            total_bytes=sum(path.stat().st_size for path in files)
+            + sum(path.stat().st_size for path in rerun_files)
+            + report_source.stat().st_size,
+            dry_run=True,
+            main_device_id=device_ids["main"],
+            related_device_ids=tuple(device_ids["related"]),
         )
 
     target.mkdir(parents=True, exist_ok=True)
     packaged = []
+    total_source_files = len(files) + len(rerun_files)
     for index, path in enumerate(files, start=1):
         if progress is not None:
             operation = "compress" if is_video(path) and not raw_video else "copy"
-            progress(f"[{index}/{len(files)}] {operation} {path.relative_to(source)}")
+            progress(f"[{index}/{total_source_files}] {operation} {path.relative_to(source)}")
         packaged.append(
             copy_or_compress_file(
                 path,
@@ -387,6 +532,10 @@ def stage_session(
                 proxy_bitrate,
             )
         )
+    for index, path in enumerate(rerun_files, start=len(files) + 1):
+        if progress is not None:
+            progress(f"[{index}/{total_source_files}] copy {path.relative_to(source)}")
+        packaged.append(copy_rerun_file(path, source, target))
 
     copy_portable_inspection_report(report_source, inspection_target, resolved_session_id)
     report_record = {
@@ -405,6 +554,7 @@ def stage_session(
         "primitive_id": primitive,
         "session_id": resolved_session_id,
         "segment": segment or "auto/all",
+        "device_ids": device_ids,
         "options": {
             "raw_video": raw_video,
             "proxy_height": proxy_height,
@@ -429,22 +579,25 @@ def stage_session(
             "manifest": f"{relative_session}/manifest.json",
             "inspection_html": f"{relative_session}/{REPORT_NAME}",
             "segment": segment or "auto/all",
+            "device_ids": device_ids,
             "file_count": len(file_records),
             "packaged_bytes": total_bytes,
         },
     )
     readme_path = _write_dataset_readme(root)
     return StageResult(
-        root,
-        target,
-        primitive,
-        resolved_session_id,
-        manifest_path,
-        metadata_path,
-        readme_path,
-        inspection_target,
-        len(file_records),
-        total_bytes,
+        dataset_root=root,
+        session_dir=target,
+        primitive_id=primitive,
+        session_id=resolved_session_id,
+        manifest_path=manifest_path,
+        metadata_path=metadata_path,
+        readme_path=readme_path,
+        inspection_html=inspection_target,
+        file_count=len(file_records),
+        total_bytes=total_bytes,
+        main_device_id=device_ids["main"],
+        related_device_ids=tuple(device_ids["related"]),
     )
 
 
@@ -470,20 +623,25 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
             "Staged manifest identity does not match the requested session."
         )
     files = manifest.get("files") or []
+    device_ids = manifest.get("device_ids") or {}
+    if not isinstance(device_ids, dict):
+        raise ModelScopePublisherError("Staged manifest device_ids must be a JSON object.")
     total_bytes = sum(
         int(item.get("packaged_bytes", 0)) for item in files if isinstance(item, dict)
     )
     return StageResult(
-        root,
-        target,
-        primitive,
-        resolved_session_id,
-        manifest_path,
-        metadata_path,
-        readme_path,
-        inspection_html,
-        len(files),
-        total_bytes,
+        dataset_root=root,
+        session_dir=target,
+        primitive_id=primitive,
+        session_id=resolved_session_id,
+        manifest_path=manifest_path,
+        metadata_path=metadata_path,
+        readme_path=readme_path,
+        inspection_html=inspection_html,
+        file_count=len(files),
+        total_bytes=total_bytes,
+        main_device_id=_clean_device_id(device_ids.get("main")),
+        related_device_ids=tuple(_device_id_values(device_ids.get("related"))),
     )
 
 

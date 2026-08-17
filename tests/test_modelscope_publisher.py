@@ -89,6 +89,7 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
                 "P01/20260803_081935_session39/timestamp_anomaly_detail_table.html"
             ),
             "segment": "segment1",
+            "device_ids": {"main": None, "related": []},
             "file_count": 3,
             "packaged_bytes": staged.total_bytes,
         }
@@ -130,6 +131,96 @@ def test_stage_session_never_packages_dotenv_files(tmp_path: Path) -> None:
 
     assert not (staged.session_dir / ".env").exists()
     assert "secret" not in staged.manifest_path.read_text(encoding="utf-8")
+
+
+def test_stage_records_device_ids_without_packaging_calibration(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    calibration = session / "raw_calibration"
+    calibration.mkdir(parents=True)
+    (session / "motion.bvh").write_text("HIERARCHY\n", encoding="utf-8")
+    (calibration / "device_ids.json").write_text(
+        json.dumps(
+            {
+                "main_device_id": "main-device-01",
+                "related_device_ids": ["wrist-left-01", "wrist-right-01"],
+                "source": "Z:/private/calibration/source",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (calibration / "api_response.json").write_text(
+        '{"signed_url":"https://private.example/signed-secret"}', encoding="utf-8"
+    )
+    write_inspection_report(session)
+
+    staged = publisher.stage_session(
+        session,
+        "P04",
+        dataset_root=tmp_path / "dataset",
+        raw_video=True,
+        progress=None,
+    )
+
+    assert not (staged.session_dir / "raw_calibration").exists()
+    assert staged.main_device_id == "main-device-01"
+    assert staged.related_device_ids == ("wrist-left-01", "wrist-right-01")
+    manifest_text = staged.manifest_path.read_text(encoding="utf-8")
+    manifest = json.loads(manifest_text)
+    assert manifest["device_ids"] == {
+        "main": "main-device-01",
+        "related": ["wrist-left-01", "wrist-right-01"],
+    }
+    assert "raw_calibration" not in manifest_text
+    assert "signed-secret" not in manifest_text
+    metadata = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["device_ids"] == manifest["device_ids"]
+
+
+def test_device_ids_use_video_tags_and_robowrist_directories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    main_video = session / "robocap_segment1_video_left.mp4"
+    main_video.write_bytes(b"video")
+    (session / "robowrist_wrist-right-02_right").mkdir()
+    monkeypatch.setattr(
+        publisher,
+        "_ffprobe_format_tags",
+        lambda path, ffprobe: {
+            "deviceid": "main-device-02",
+            "subdevices": "wrist-left-02,wrist-right-02",
+        },
+    )
+
+    assert publisher.discover_device_ids(session) == {
+        "main": "main-device-02",
+        "related": ["wrist-left-02", "wrist-right-02"],
+    }
+
+
+def test_stage_includes_selected_rrd_outside_artifacts_tree(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    report = write_inspection_report(session)
+    source_rrd = report.parent / "aligned.rrd"
+    source_rrd.write_bytes(b"rrd")
+
+    staged = publisher.stage_session(
+        session,
+        "P05",
+        dataset_root=tmp_path / "dataset",
+        include_rrd=True,
+        raw_video=True,
+        progress=None,
+    )
+
+    packaged_rrd = staged.session_dir / "rerun" / "segment1" / "inspection" / "aligned.rrd"
+    assert packaged_rrd.read_bytes() == b"rrd"
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    rerun_records = [item for item in manifest["files"] if item["kind"] == "rerun"]
+    assert rerun_records[0]["packaged_as"] == "rerun/segment1/inspection/aligned.rrd"
 
 
 def test_upload_staged_session_uploads_every_indexed_session(

@@ -100,14 +100,26 @@ robocap-rerun package-data Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 The tool publishes direct dataset files rather than a ZIP-only sample. Each prepared recording uses:
 
 ```text
-PXX/
-  <session_id>/
-    <session files>
-    manifest.json
-    timestamp_anomaly_detail_table.html
 metadata.jsonl
 README.md
+PXX/
+  <session_id>/
+    robocap_<segment>_video_*.mp4       # core: six first-person cameras
+    robocap_<segment>_imu_*.db          # optional
+    robocap_<segment>_mag_*.db          # optional
+    nokov/
+      *-Body*.*                         # motion capture; each export format is optional
+      *-Tracker*.*                      # optional; zero or more rigid bodies
+      *.mp4                             # optional third-person video(s)
+    robowrist_<device_id>_<side>/       # optional left/right video, IMU, and MAG
+    rerun/<segment>/inspection/*.rrd    # optional; only when explicitly selected
+    manifest.json                       # generated; includes device IDs
+    timestamp_anomaly_detail_table.html # generated and required
 ```
+
+Calibration files are stored outside the session dataset. Only
+`device_ids: {main, related}` is written to `manifest.json` and `metadata.jsonl`; local
+`raw_calibration/` files, paths, API responses, and signed URLs are never packaged.
 
 Copy `.env.example` to `.env`, or save the token from the Web `ModelScope` tab. The local file is
 ignored by Git and excluded from every data package:
@@ -123,11 +135,12 @@ The saved token is never added to a CLI argument or printed. Verify it with:
 robocap-rerun modelscope-auth
 ```
 
-Prepare one session. This regenerates the inspection HTML, compresses video by default, removes
-local absolute paths from the copied report, and updates the dataset-level metadata:
+Prepare one session. The staging root is automatically `<session parent>/_modelscope_dataset`; this
+regenerates the inspection HTML, compresses video by default, removes local absolute paths from the
+copied report, and updates the dataset-level metadata:
 
 ```bat
-robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection --dataset-root Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection
 ```
 
 Upload every session referenced by the prepared `metadata.jsonl`. The resumable cache skips files

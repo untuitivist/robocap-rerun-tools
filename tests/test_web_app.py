@@ -290,7 +290,6 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
         str(tmp_path),
         "segment1",
         "P03",
-        str(tmp_path.parent / "dataset"),
         True,
         False,
         True,
@@ -303,6 +302,7 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
     assert "--refresh-inspection" in captured
     assert "--include-rrd" in captured
     assert "--raw-video" not in captured
+    assert "--dataset-root" not in captured
     assert captured[captured.index("--proxy-height") + 1] == "720"
 
 
@@ -312,7 +312,6 @@ def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monk
 
     output = web_app.upload_modelscope_data(
         str(tmp_path),
-        str(tmp_path.parent / "dataset"),
         "owner/egomocap",
         "master",
         True,
@@ -324,6 +323,7 @@ def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monk
 
     assert output == "Done."
     assert captured[0] == "modelscope-upload"
+    assert captured[1] == str(tmp_path.parent / "_modelscope_dataset")
     assert captured[captured.index("--repo-id") + 1] == "owner/egomocap"
     assert "--create-if-missing" in captured
     assert "--no-cache" not in captured

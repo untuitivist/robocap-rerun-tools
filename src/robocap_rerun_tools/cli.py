@@ -1805,6 +1805,7 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
             segment=args.segment,
             raw_video=args.raw_video,
             ffmpeg=args.ffmpeg,
+            ffprobe=resolve_ffprobe(args.ffprobe, args.ffmpeg),
             proxy_height=args.proxy_height,
             proxy_crf=args.proxy_crf,
             proxy_bitrate=args.proxy_bitrate,
@@ -1819,6 +1820,11 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
     print(f"Dataset root: {staged.dataset_root}")
     print(f"Session path: {staged.session_dir}")
     print(f"Files: {staged.file_count}; bytes: {staged.total_bytes}")
+    print(f"Main device ID: {staged.main_device_id or 'not detected'}")
+    print(
+        "Related device IDs: "
+        + (", ".join(staged.related_device_ids) if staged.related_device_ids else "none")
+    )
     print(f"Inspection HTML: {staged.inspection_html}")
     if not staged.dry_run:
         print(f"Metadata: {staged.metadata_path}")

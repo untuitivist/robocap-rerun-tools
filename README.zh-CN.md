@@ -169,14 +169,26 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 发布时使用可直接访问的文件，不只上传 ZIP。准备后的目录固定为：
 
 ```text
-PXX/
-  <session_id>/
-    <session 数据文件>
-    manifest.json
-    timestamp_anomaly_detail_table.html
 metadata.jsonl
 README.md
+PXX/
+  <session_id>/
+    robocap_<segment>_video_*.mp4       # 核心：六路第一人称相机
+    robocap_<segment>_imu_*.db          # 可选
+    robocap_<segment>_mag_*.db          # 可选
+    nokov/
+      *-Body*.*                         # 动捕；各导出格式分别可选
+      *-Tracker*.*                      # 可选；允许零个或多个刚体
+      *.mp4                             # 可选；允许一个或多个第三人称视频
+    robowrist_<device_id>_<side>/       # 可选；左右视频、IMU、MAG
+    rerun/<segment>/inspection/*.rrd    # 可选；仅勾选后包含
+    manifest.json                       # 自动生成；包含 device ID
+    timestamp_anomaly_detail_table.html # 自动生成且必需
 ```
+
+标定数据放在 Session 数据集之外。`manifest.json` 与 `metadata.jsonl` 只写入
+`device_ids: {main, related}`；本地 `raw_calibration/` 中的文件、路径、API 响应和临时签名 URL
+永远不会进入发布包。
 
 可以复制 `.env.example` 为 `.env`，也可以在 Web 的“ModelScope”页保存 Token：
 
@@ -191,11 +203,12 @@ MODELSCOPE_ENDPOINT=https://modelscope.cn
 robocap-rerun modelscope-auth
 ```
 
-先准备一套 session。下面的命令会重新生成检查 HTML，默认压缩视频，去掉待上传 HTML 中的本机
-绝对路径，并更新数据集根目录的 `metadata.jsonl`：
+先准备一套 session。数据集根目录自动使用该 Session 同级的 `_modelscope_dataset`。下面的命令会
+重新生成检查 HTML，默认压缩视频，去掉待上传 HTML 中的本机绝对路径，并更新数据集根目录的
+`metadata.jsonl`：
 
 ```bat
-robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection --dataset-root Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection
 ```
 
 再上传 `metadata.jsonl` 引用的全部已准备 session。可恢复上传缓存会跳过未变化的文件：
