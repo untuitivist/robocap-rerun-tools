@@ -458,8 +458,88 @@ def copy_portable_inspection_report(source: Path, target: Path, session_id: str)
     target.write_text(portable, encoding="utf-8", newline="")
 
 
+_ACTION_TASK_CATALOG = """## Global collection rules
+
+- **Participant behavior:** Move naturally; do not exaggerate gait or arm swing and do not imitate
+  a robot.
+- **Speed:** Participants should not measure speed. Use the verbal descriptions: slow, normal,
+  fast. Keep movement comfortable and controlled.
+- **Start:** Unless otherwise specified, begin standing naturally with feet approximately
+  hip-width apart.
+- **End:** Unless otherwise specified, finish in stable standing and remain still for ~2 seconds.
+- **Variation:** For standardized trials, follow the listed geometry. For randomized trials, vary
+  target positions, turn directions, path shape, and obstacle placement.
+
+## Action task catalog (P01-P29)
+
+Each recording is assigned to exactly one action primitive. `Episodes / participant` is not yet
+specified in the collection definition and remains **TBD** for every primitive.
+
+### Speed & stopping
+
+| ID | Primitive | Participant instruction | Distance / geometry | Approx. duration | Room | Purpose |
+|---|---|---|---:|---:|---|---|
+| P01 | Normal straight walking | Start still; walk straight at normal comfortable speed; stop at endpoint. | 5 m | 5–7 s | Open | Baseline forward locomotion |
+| P02 | Slow walking | Walk forward noticeably slower than normal; do not shuffle; stop. | 5 m | 7–10 s | Open | Slow-speed locomotion |
+| P03 | Fast walking | Walk quickly but do not run; remain comfortable and controlled; stop. | 5 m | 4–6 s | Open | Fast walking |
+| P04 | Accelerate | Start still; gradually go slow → normal → fast; briefly maintain fast speed; stop. | 5 m | 8–10 s | Open | Natural acceleration |
+| P05 | Decelerate | Start at normal speed; gradually slow over several steps; stop gently. | 5 m | 7–10 s | Open | Natural deceleration |
+| P06 | Sudden stop | Walk normally; at marked point stop as quickly as comfortably possible; remain still. | 5 m | 5–8 s | Open | Stopping dynamics |
+| P07 | Start from rest | Stand still 2 s; begin walking naturally; walk forward; stop. | 5 m | 7–9 s | Open | Stand-to-walk transition |
+
+### Turning & trajectories
+
+| ID | Primitive | Participant instruction | Distance / geometry | Approx. duration | Room | Purpose |
+|---|---|---|---:|---:|---|---|
+| P08 | Gentle curves | Walk forward; gradually curve left/right; straighten out. | ~5 m path | 7–10 s | Open | Continuous curvature |
+| P09 | 45° turn | Walk straight; at marker turn ~45° while continuing to walk; continue straight. | ~5 m | 6–9 s | Open | Moderate heading change |
+| P10 | 90° turn | Walk straight; turn 90° left/right while continuing to walk; continue. | ~5 m | 6–9 s | Open | Major heading change |
+| P11 | 180° turn | Walk straight; turn around and walk back; use wide or tight turn. | ~5 m | 7–10 s | Open | Reverse heading |
+| P12 | Multiple turns | Walk through 3–5 turns in sequence; keep moving; stop at end. | ~8–12 m | 10–15 s | Open | Composed turning |
+| P13 | Figure eight | Walk one full figure-eight continuously at comfortable speed; stop. | ~8–12 m | 10–15 s | Open | Alternating curvature |
+
+### Non-forward motion
+
+| ID | Primitive | Participant instruction | Distance / geometry | Approx. duration | Room | Purpose |
+|---|---|---|---:|---:|---|---|
+| P14 | Sideways walking | Move laterally left/right for ~3 m; natural controlled steps; stop. | 3 m | 5–8 s | Open | Lateral locomotion |
+| P15 | Diagonal walking | Walk forward while moving diagonally left/right; finish ~45° from start direction. | ~4–5 m | 6–9 s | Open | Diagonal locomotion |
+| P16 | Backward walking | Walk backward slowly; stop. | 3 m | 6–10 s | Open | Backward locomotion |
+
+### Composed & long sequences
+
+| ID | Primitive | Participant instruction | Distance / geometry | Approx. duration | Room | Purpose |
+|---|---|---|---:|---:|---|---|
+| P17 | Speed change + turn | Walk normally; turn left/right while slowing; after turn accelerate back to normal. | ~5–7 m | 8–12 s | Open | Coupled speed/heading |
+| P18 | Stop → turn → walk | Walk; stop fully; turn 90° left/right while standing; walk new direction. | ~5 m | 8–11 s | Open | Discrete transition |
+| P19 | Walk → turn → stop | Walk; turn 90° left/right; walk several steps; stop. | ~5 m | 7–10 s | Open | Composed primitive |
+| P20 | S-shaped walking | Follow S-shaped path continuously; no stopping between curves. | ~8–10 m | 10–15 s | Open | Continuous heading changes |
+| P21 | Variable-speed natural walk | Walk continuously ~15 s; naturally alternate slow/normal/fast several times; no stop. | Room | 15 s | Open | Natural speed trajectory |
+| P22 | Random locomotion | Walk through randomly placed floor targets; choose natural path; include turns and speed changes. | Room | 15–25 s | Open | Goal-directed variation |
+| P23 | Long continuous locomotion | Walk continuously around room; naturally change direction/speed; no manipulation. | Room | 30 s | Open | Long-horizon baseline |
+
+### Full-body transitions
+
+| ID | Primitive | Participant instruction | Distance / geometry | Approx. duration | Room | Purpose |
+|---|---|---|---:|---:|---|---|
+| P24 | Walk → crouch → walk | Walk; crouch comfortably at marker; remain briefly; stand and continue. | ~5 m | 10–15 s | Transition | Whole-body transition |
+| P25 | Walk → sit → stand → walk | Walk to chair; sit ~2 s; stand; walk away. | ~5 m | 12–18 s | Transition | Sit/stand transition |
+
+### Terrain & navigation
+
+| ID | Primitive | Participant instruction | Distance / geometry | Approx. duration | Room | Purpose |
+|---|---|---|---:|---:|---|---|
+| P26 | Step over obstacle | Walk toward low obstacle; step over without stopping; continue. | ~5 m | 7–10 s | Terrain | Foot placement |
+| P27 | Walk around obstacle | Walk toward obstacle; alter path to avoid it; continue toward original destination. | ~5 m | 7–12 s | Navigation | Obstacle avoidance |
+| P28 | Narrow passage | Walk through passage without touching sides; continue normally after exit. | 0.7–1.2 m | 7–12 s | Navigation | Body-aware navigation |
+| P29 | Target-directed navigation | Start at marker; visit targets in order; choose natural paths; avoid obstacles; stop at final target. | Room | 15–30 s | Navigation | High-value goal-directed locomotion |
+
+"""
+
+
 def _dataset_readme() -> str:
-    return """---
+    return (
+        """---
 domain:
 - multi-modal
 - cv
@@ -489,7 +569,9 @@ Each row in `metadata.jsonl` describes one recording. Session files use the stab
 Every session directory includes a self-contained `timestamp_anomaly_detail_table.html`
 inspection report. Paths inside manifests and reports are dataset-relative.
 
-## Session contents
+"""
+        + _ACTION_TASK_CATALOG
+        + """## Session contents
 
 - Required capture streams: six `robocap_<segment>_video_*.mp4` first-person cameras, Robocap
   IMU/MAG databases, third-person videos, and Robowrist left/right video and sensor streams.
@@ -535,12 +617,14 @@ are optional. All other listed capture streams and generated records are require
 session staging never copies session-local calibration files into it. `EgoMotionActions/` is
 generated by session staging.
 """
+    )
 
 
 def _write_dataset_readme(dataset_root: Path) -> Path:
     readme_path = dataset_root / DATASET_README_NAME
-    if not readme_path.exists():
-        readme_path.write_text(_dataset_readme(), encoding="utf-8", newline="\n")
+    document = _dataset_readme()
+    if not readme_path.is_file() or readme_path.read_text(encoding="utf-8") != document:
+        readme_path.write_text(document, encoding="utf-8", newline="\n")
     return readme_path
 
 

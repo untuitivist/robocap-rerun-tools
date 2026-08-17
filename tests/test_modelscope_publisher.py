@@ -154,6 +154,44 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
     assert "robowrist_<device_id>_right/" in dataset_readme
 
 
+def test_dataset_readme_contains_complete_action_task_catalog() -> None:
+    dataset_readme = publisher._dataset_readme()
+
+    assert "## Global collection rules" in dataset_readme
+    assert "## Action task catalog (P01-P29)" in dataset_readme
+    assert "Episodes / participant` is not yet" in dataset_readme
+    for group in (
+        "Speed & stopping",
+        "Turning & trajectories",
+        "Non-forward motion",
+        "Composed & long sequences",
+        "Full-body transitions",
+        "Terrain & navigation",
+    ):
+        assert f"### {group}\n" in dataset_readme
+    for number in range(1, 30):
+        assert dataset_readme.count(f"| P{number:02d} |") == 1
+    for definition in (
+        "Start still; walk straight at normal comfortable speed; stop at endpoint.",
+        "Walk through 3–5 turns in sequence; keep moving; stop at end.",
+        "Walk backward slowly; stop.",
+        "Walk continuously around room; naturally change direction/speed; no manipulation.",
+        "Walk to chair; sit ~2 s; stand; walk away.",
+        "Start at marker; visit targets in order; choose natural paths; avoid obstacles; stop at final target.",
+    ):
+        assert definition in dataset_readme
+
+
+def test_write_dataset_readme_refreshes_existing_generated_card(tmp_path: Path) -> None:
+    readme_path = tmp_path / publisher.DATASET_README_NAME
+    readme_path.write_text("stale generated card\n", encoding="utf-8")
+
+    written = publisher._write_dataset_readme(tmp_path)
+
+    assert written == readme_path
+    assert readme_path.read_text(encoding="utf-8") == publisher._dataset_readme()
+
+
 def test_staging_same_session_updates_one_metadata_row(tmp_path: Path) -> None:
     first = stage_fixture(tmp_path)
     second = publisher.stage_session(
