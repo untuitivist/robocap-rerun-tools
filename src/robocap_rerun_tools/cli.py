@@ -1986,7 +1986,11 @@ def build_parser() -> argparse.ArgumentParser:
         "modelscope-upload", help="Upload all sessions in one prepared dataset root."
     )
     modelscope_upload_parser.add_argument("dataset_root", type=Path)
-    modelscope_upload_parser.add_argument("--repo-id", required=True)
+    modelscope_upload_parser.add_argument(
+        "--repo-id",
+        default=None,
+        help="ModelScope owner/name; defaults to MODELSCOPE_REPO_ID from .env.",
+    )
     modelscope_upload_parser.add_argument("--revision", default="master")
     modelscope_upload_parser.add_argument("--create-if-missing", action="store_true")
     modelscope_upload_parser.add_argument(

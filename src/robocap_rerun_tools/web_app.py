@@ -90,8 +90,9 @@ The ModelScope tab prepares the current Session for upload. Compressed video is 
 standalone timestamp inspection HTML is required. The generated dataset `README.md` is the
 canonical description of the complete dataset structure and file requirements.
 
-`MODELSCOPE_API_TOKEN` and `MODELSCOPE_ENDPOINT` are stored in the repository-local `.env` file.
-The token field never displays the saved value; leaving it blank preserves the current token.
+`MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
+repository-local `.env` file. The token field never displays the saved value; leaving it blank
+preserves the current token.
 Use `Prepare session` before `Upload prepared dataset`. Upload sends every session referenced by
 `metadata.jsonl` and uses the official `modelscope-hub`
 client and its resumable upload cache by default.
@@ -166,8 +167,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 “ModelScope”页用于准备和上传当前 Session。默认压缩视频，并强制要求已有独立的时间戳检查 HTML。
 生成的数据集 `README.md` 是完整数据集结构与文件要求的唯一说明位置。
 
-`MODELSCOPE_API_TOKEN` 与 `MODELSCOPE_ENDPOINT` 保存在仓库根目录的 `.env`。网页不会回显已保存
-token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，再执行“上传已准备数据集”。
+`MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
+`.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
+再执行“上传已准备数据集”。
 上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存。
 """
 
@@ -234,12 +236,12 @@ LANGUAGE_PACKS = {
         "viewer_rrd_file": "RRD file",
         "viewer_port": "Web viewer port (0 = auto)",
         "modelscope_primitive": "Action primitive (PXX)",
-        "modelscope_repo_id": "ModelScope dataset repo (owner/name)",
+        "modelscope_repo_id": "ModelScope dataset repo (owner/name; blank keeps saved value)",
         "modelscope_endpoint": "ModelScope endpoint",
         "modelscope_revision": "Revision",
         "modelscope_token": "ModelScope token (blank keeps saved value)",
         "modelscope_token_status": "Token status",
-        "modelscope_save_token": "Save token and endpoint",
+        "modelscope_save_token": "Save ModelScope settings",
         "modelscope_clear_token": "Clear saved token",
         "modelscope_check_token": "Check authentication",
         "modelscope_refresh_inspection": "Regenerate inspection HTML before preparing",
@@ -315,12 +317,12 @@ LANGUAGE_PACKS = {
         "viewer_rrd_file": "RRD 文件",
         "viewer_port": "Web Viewer 端口（0 = 自动）",
         "modelscope_primitive": "动作基元（PXX）",
-        "modelscope_repo_id": "ModelScope 数据集仓库（owner/name）",
+        "modelscope_repo_id": "ModelScope 数据集仓库（owner/name；留空保留已保存值）",
         "modelscope_endpoint": "ModelScope 站点",
         "modelscope_revision": "分支 / Revision",
         "modelscope_token": "ModelScope Token（留空保留已保存值）",
         "modelscope_token_status": "Token 状态",
-        "modelscope_save_token": "保存 Token 与站点",
+        "modelscope_save_token": "保存 ModelScope 配置",
         "modelscope_clear_token": "清除已保存 Token",
         "modelscope_check_token": "检查身份",
         "modelscope_refresh_inspection": "准备前重新生成检查 HTML",
@@ -956,13 +958,19 @@ def format_modelscope_status(settings: object, language: str) -> str:
     configured = bool(getattr(settings, "token", None))
     source = str(getattr(settings, "token_source", "missing"))
     endpoint = str(getattr(settings, "endpoint", ""))
+    repository = str(getattr(settings, "repo_id", None) or "not configured")
     env_path = str(getattr(settings, "env_path", ""))
     if language == "中文":
         state = "已配置" if configured else "未配置"
-        return f"**Token：{state}** · 来源：`{source}` · 站点：`{endpoint}` · `.env`：`{env_path}`"
+        repository_text = repository if repository != "not configured" else "未配置"
+        return (
+            f"**Token：{state}** · 来源：`{source}` · 站点：`{endpoint}` · "
+            f"仓库：`{repository_text}` · `.env`：`{env_path}`"
+        )
     state = "configured" if configured else "not configured"
     return (
-        f"**Token: {state}** · source: `{source}` · endpoint: `{endpoint}` · `.env`: `{env_path}`"
+        f"**Token: {state}** · source: `{source}` · endpoint: `{endpoint}` · "
+        f"repository: `{repository}` · `.env`: `{env_path}`"
     )
 
 
@@ -975,18 +983,19 @@ def modelscope_status(language: str = "中文") -> str:
         return f"ModelScope configuration error: {exc}"
 
 
-def save_modelscope_web_settings(token: str, endpoint: str, language: str) -> tuple[str, str, str]:
+def save_modelscope_web_settings(
+    token: str, endpoint: str, repo_id: str, language: str
+) -> tuple[str, str, str]:
     from robocap_rerun_tools.modelscope_publisher import save_modelscope_settings
 
-    supplied_token = bool((token or "").strip())
     try:
-        settings = save_modelscope_settings(token, endpoint)
+        settings = save_modelscope_settings(token, endpoint, repo_id=repo_id)
     except (OSError, ValueError) as exc:
         return f"ModelScope configuration error: {exc}", modelscope_status(language), ""
     if language == "中文":
-        action = "Token 与站点已保存" if supplied_token else "站点已保存；Token 保持不变"
+        action = "ModelScope 配置已保存；空白 Token 或仓库值保持不变"
     else:
-        action = "Token and endpoint saved" if supplied_token else "Endpoint saved; token unchanged"
+        action = "ModelScope settings saved; blank token or repository values remain unchanged"
     return f"{action}: {settings.env_path}", format_modelscope_status(settings, language), ""
 
 
@@ -1078,8 +1087,6 @@ def upload_modelscope_data(
     args = [
         "modelscope-upload",
         str(resolved_root),
-        "--repo-id",
-        repo_id.strip(),
         "--revision",
         revision.strip() or "master",
         "--visibility",
@@ -1087,6 +1094,8 @@ def upload_modelscope_data(
         "--max-workers",
         str(max(1, int(max_workers))),
     ]
+    if optional_text(repo_id):
+        args.extend(["--repo-id", repo_id.strip()])
     if create_if_missing:
         args.append("--create-if-missing")
     if optional_text(license_name):
@@ -1320,9 +1329,12 @@ def build_app():
     try:
         from robocap_rerun_tools.modelscope_publisher import load_modelscope_settings
 
-        initial_modelscope_endpoint = load_modelscope_settings().endpoint
+        initial_modelscope_settings = load_modelscope_settings()
+        initial_modelscope_endpoint = initial_modelscope_settings.endpoint
+        initial_modelscope_repo_id = initial_modelscope_settings.repo_id or ""
     except (OSError, ValueError):
         initial_modelscope_endpoint = "https://modelscope.cn"
+        initial_modelscope_repo_id = ""
     with gr.Blocks(title="Robocap Rerun Tools") as app:
         title = gr.Markdown(labels["title"])
         with gr.Row():
@@ -1386,7 +1398,10 @@ def build_app():
                 )
             with gr.Row():
                 modelscope_repo_id = gr.Textbox(
-                    label=labels["modelscope_repo_id"], placeholder="owner/egomocap", scale=3
+                    label=labels["modelscope_repo_id"],
+                    placeholder="owner/egomocap",
+                    value=initial_modelscope_repo_id,
+                    scale=3,
                 )
                 modelscope_revision = gr.Textbox(
                     label=labels["modelscope_revision"], value="master", scale=1
@@ -1407,7 +1422,7 @@ def build_app():
                 modelscope_check_token = gr.Button(labels["modelscope_check_token"])
             modelscope_save_token.click(
                 save_modelscope_web_settings,
-                inputs=[modelscope_token, modelscope_endpoint, language],
+                inputs=[modelscope_token, modelscope_endpoint, modelscope_repo_id, language],
                 outputs=[output, modelscope_token_status, modelscope_token],
             )
             modelscope_clear_token.click(

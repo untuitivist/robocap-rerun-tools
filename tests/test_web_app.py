@@ -1,5 +1,6 @@
 import os
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 from robocap_rerun_tools import web_app
@@ -257,12 +258,14 @@ def test_modelscope_status_never_exposes_token() -> None:
         token="secret-token",
         token_source=".env",
         endpoint="https://modelscope.cn",
+        repo_id="owner/egomocap",
         env_path="C:/repo/.env",
     )
 
     status = web_app.format_modelscope_status(settings, "中文")
 
     assert "已配置" in status
+    assert "owner/egomocap" in status
     assert "secret-token" not in status
 
 
@@ -287,6 +290,37 @@ def test_web_modelscope_auth_reports_invalid_endpoint(monkeypatch) -> None:
     output = web_app.check_modelscope_web_auth("", "not-an-origin", "中文")
 
     assert "HTTP(S) origin" in output
+
+
+def test_web_modelscope_save_persists_repo_id(monkeypatch) -> None:
+    from robocap_rerun_tools import modelscope_publisher
+
+    captured: dict[str, object] = {}
+
+    def fake_save(token, endpoint, *, repo_id=None):
+        captured.update(token=token, endpoint=endpoint, repo_id=repo_id)
+        return modelscope_publisher.ModelScopeSettings(
+            token,
+            endpoint,
+            Path("C:/repo/.env"),
+            "unsaved Web input",
+            repo_id,
+        )
+
+    monkeypatch.setattr(modelscope_publisher, "save_modelscope_settings", fake_save)
+
+    message, status, cleared_token = web_app.save_modelscope_web_settings(
+        "secret-token", "https://modelscope.cn", "owner/egomocap", "中文"
+    )
+
+    assert captured == {
+        "token": "secret-token",
+        "endpoint": "https://modelscope.cn",
+        "repo_id": "owner/egomocap",
+    }
+    assert "owner/egomocap" in status
+    assert "secret-token" not in message + status
+    assert cleared_token == ""
 
 
 def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatch) -> None:
@@ -335,3 +369,15 @@ def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monk
     assert "--create-if-missing" in captured
     assert "--no-cache" not in captured
     assert all("token" not in item.lower() for item in captured)
+
+
+def test_web_modelscope_upload_omits_blank_repo_id_for_env_fallback(tmp_path, monkeypatch) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(web_app, "run_cli", lambda args: captured.extend(args) or "Done.")
+
+    output = web_app.upload_modelscope_data(
+        str(tmp_path), "", "master", False, "private", "", True, 4
+    )
+
+    assert output == "Done."
+    assert "--repo-id" not in captured

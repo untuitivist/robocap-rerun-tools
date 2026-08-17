@@ -49,17 +49,38 @@ def test_save_modelscope_settings_uses_utf8_env_without_exposing_token(
 ) -> None:
     monkeypatch.delenv(publisher.TOKEN_KEY, raising=False)
     monkeypatch.delenv(publisher.ENDPOINT_KEY, raising=False)
+    monkeypatch.delenv(publisher.REPO_ID_KEY, raising=False)
     env_path = tmp_path / ".env"
 
     settings = publisher.save_modelscope_settings(
-        "ms-secret-value", "https://modelscope.cn", env_path
+        "ms-secret-value",
+        "https://modelscope.cn",
+        env_path,
+        repo_id="owner/egomocap",
     )
 
     assert settings.token == "ms-secret-value"
     assert settings.env_path == env_path.resolve()
+    assert settings.repo_id == "owner/egomocap"
     assert "MODELSCOPE_API_TOKEN='ms-secret-value'" in env_path.read_text(encoding="utf-8")
+    assert "MODELSCOPE_REPO_ID='owner/egomocap'" in env_path.read_text(encoding="utf-8")
     assert not env_path.read_bytes().startswith(b"\xef\xbb\xbf")
     assert "ms-secret-value" not in publisher.token_status(settings)
+
+
+def test_ensure_env_file_adds_repo_key_to_existing_configuration(tmp_path: Path) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "MODELSCOPE_API_TOKEN=secret\nMODELSCOPE_ENDPOINT=https://modelscope.cn\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    publisher.ensure_env_file(env_path)
+
+    env_text = env_path.read_text(encoding="utf-8")
+    assert publisher.REPO_ID_KEY in env_text
+    assert not env_path.read_bytes().startswith(b"\xef\xbb\xbf")
 
 
 def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
@@ -316,12 +337,12 @@ def test_upload_staged_session_uploads_every_indexed_session(
 
     monkeypatch.setattr(publisher, "_hub_api", lambda _settings: FakeApi())
     settings = publisher.ModelScopeSettings(
-        "secret", "https://modelscope.cn", tmp_path / ".env", ".env"
+        "secret", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/egomocap"
     )
 
     result = publisher.upload_staged_session(
         staged,
-        "owner/egomocap",
+        None,
         create_if_missing=True,
         visibility="private",
         settings=settings,

@@ -254,6 +254,15 @@ def test_modelscope_upload_parser_uses_resumable_cache() -> None:
     assert args.visibility == "private"
 
 
+def test_modelscope_upload_repo_id_defaults_to_env_configuration() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        ["modelscope-upload", "Z:/DATASETS/Frodobots/nokov/_modelscope_dataset"]
+    )
+
+    assert args.repo_id is None
+
+
 def test_modelscope_auth_reports_missing_token_without_traceback(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

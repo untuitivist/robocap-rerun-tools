@@ -21,6 +21,7 @@ DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 DEFAULT_ENDPOINT = "https://modelscope.cn"
 TOKEN_KEY = "MODELSCOPE_API_TOKEN"
 ENDPOINT_KEY = "MODELSCOPE_ENDPOINT"
+REPO_ID_KEY = "MODELSCOPE_REPO_ID"
 REPORT_NAME = "timestamp_anomaly_detail_table.html"
 METADATA_NAME = "metadata.jsonl"
 DATASET_README_NAME = "README.md"
@@ -44,6 +45,7 @@ class ModelScopeSettings:
     endpoint: str
     env_path: Path
     token_source: str
+    repo_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,10 +139,21 @@ def ensure_env_file(env_path: Path = DEFAULT_ENV_PATH) -> Path:
         path.write_text(
             "# Local secrets. Do not commit this file.\n"
             f"{TOKEN_KEY}=\n"
-            f"{ENDPOINT_KEY}={DEFAULT_ENDPOINT}\n",
+            f"{ENDPOINT_KEY}={DEFAULT_ENDPOINT}\n"
+            f"{REPO_ID_KEY}=\n",
             encoding="utf-8",
             newline="\n",
         )
+    else:
+        values = dotenv_values(path, encoding="utf-8", interpolate=False)
+        defaults = {
+            TOKEN_KEY: "",
+            ENDPOINT_KEY: DEFAULT_ENDPOINT,
+            REPO_ID_KEY: "",
+        }
+        for key, value in defaults.items():
+            if key not in values:
+                set_key(str(path), key, value, quote_mode="always", encoding="utf-8")
     return path
 
 
@@ -157,6 +170,8 @@ def load_modelscope_settings(
     endpoint = validate_endpoint(
         process_values.get(ENDPOINT_KEY) or file_values.get(ENDPOINT_KEY) or DEFAULT_ENDPOINT
     )
+    repo_value = process_values.get(REPO_ID_KEY) or file_values.get(REPO_ID_KEY)
+    repo_id = validate_repo_id(str(repo_value)) if repo_value else None
     token_source = (
         ".env"
         if file_token and process_token == file_token
@@ -166,22 +181,28 @@ def load_modelscope_settings(
         if file_token
         else "missing"
     )
-    return ModelScopeSettings(token, endpoint, path, token_source)
+    return ModelScopeSettings(token, endpoint, path, token_source, repo_id)
 
 
 def save_modelscope_settings(
     token: str | None,
     endpoint: str | None,
     env_path: Path = DEFAULT_ENV_PATH,
+    *,
+    repo_id: str | None = None,
 ) -> ModelScopeSettings:
     path = ensure_env_file(env_path)
     clean_token = _clean_secret(token)
     clean_endpoint = validate_endpoint(endpoint)
+    clean_repo_id = validate_repo_id(repo_id) if (repo_id or "").strip() else None
     if clean_token is not None:
         set_key(str(path), TOKEN_KEY, clean_token, quote_mode="always", encoding="utf-8")
         os.environ[TOKEN_KEY] = clean_token
     set_key(str(path), ENDPOINT_KEY, clean_endpoint, quote_mode="always", encoding="utf-8")
     os.environ[ENDPOINT_KEY] = clean_endpoint
+    if clean_repo_id is not None:
+        set_key(str(path), REPO_ID_KEY, clean_repo_id, quote_mode="always", encoding="utf-8")
+        os.environ[REPO_ID_KEY] = clean_repo_id
     return load_modelscope_settings(path)
 
 
@@ -194,9 +215,10 @@ def clear_modelscope_token(env_path: Path = DEFAULT_ENV_PATH) -> ModelScopeSetti
 
 def token_status(settings: ModelScopeSettings) -> str:
     state = "configured" if settings.token else "not configured"
+    repository = settings.repo_id or "not configured"
     return (
         f"ModelScope token: {state}; source: {settings.token_source}; "
-        f"endpoint: {settings.endpoint}; env: {settings.env_path}"
+        f"endpoint: {settings.endpoint}; repository: {repository}; env: {settings.env_path}"
     )
 
 
@@ -771,7 +793,7 @@ def verify_modelscope_auth(settings: ModelScopeSettings | None = None) -> str:
 
 def upload_staged_dataset(
     staged: StagedDataset,
-    repo_id: str,
+    repo_id: str | None,
     *,
     revision: str = "master",
     create_if_missing: bool = False,
@@ -785,7 +807,12 @@ def upload_staged_dataset(
     resolved = settings or load_modelscope_settings()
     if not resolved.token:
         raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")
-    repository = validate_repo_id(repo_id)
+    repository_value = (repo_id or resolved.repo_id or "").strip()
+    if not repository_value:
+        raise ModelScopePublisherError(
+            f"Repository is not configured. Pass --repo-id or set {REPO_ID_KEY} in {resolved.env_path}."
+        )
+    repository = validate_repo_id(repository_value)
     target_revision = revision.strip() or "master"
     if visibility not in {"private", "internal", "public"}:
         raise ValueError("Visibility must be private, internal, or public.")
@@ -843,7 +870,7 @@ def upload_staged_dataset(
 
 def upload_staged_session(
     staged: StageResult,
-    repo_id: str,
+    repo_id: str | None,
     **kwargs: Any,
 ) -> UploadResult:
     dataset = load_staged_dataset(staged.dataset_root)

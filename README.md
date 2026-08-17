@@ -136,6 +136,7 @@ ignored by Git and excluded from every data package:
 ```dotenv
 MODELSCOPE_API_TOKEN=
 MODELSCOPE_ENDPOINT=https://modelscope.cn
+MODELSCOPE_REPO_ID=owner/egomocap
 ```
 
 The saved token is never added to a CLI argument or printed. Verify it with:
@@ -156,8 +157,11 @@ Upload every session referenced by the prepared `metadata.jsonl`. The resumable 
 that have not changed:
 
 ```bat
-robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset --repo-id owner/egomocap
+robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
+
+The command uses `MODELSCOPE_REPO_ID` from `.env`. Pass `--repo-id owner/another-dataset` only to
+override the saved repository for one upload.
 
 Add `--create-if-missing --visibility private` only when the tool should create a missing dataset
 repository. Uploads use the official `modelscope-hub` resumable cache by default. The Web tab exposes
