@@ -460,6 +460,20 @@ def copy_portable_inspection_report(source: Path, target: Path, session_id: str)
 
 def _dataset_readme() -> str:
     return """---
+domain:
+- multi-modal
+- cv
+tasks:
+- action-recognition
+- body-3d-keypoints
+tags:
+- egocentric-video
+- human-motion
+- motion-capture
+- synchronized-multimodal
+- wearable-sensors
+- imu
+- magnetometer
 configs:
 - config_name: default
   data_files:

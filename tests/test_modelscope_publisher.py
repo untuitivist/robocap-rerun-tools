@@ -126,6 +126,18 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
     ]
     dataset_readme = staged.readme_path.read_text(encoding="utf-8")
     normalized_readme = " ".join(dataset_readme.split())
+    assert "domain:\n- multi-modal\n- cv\n" in dataset_readme
+    assert "tasks:\n- action-recognition\n- body-3d-keypoints\n" in dataset_readme
+    for tag in (
+        "egocentric-video",
+        "human-motion",
+        "motion-capture",
+        "synchronized-multimodal",
+        "wearable-sensors",
+        "imu",
+        "magnetometer",
+    ):
+        assert f"- {tag}\n" in dataset_readme
     assert "Required capture streams" in dataset_readme
     assert "Complete dataset structure" in dataset_readme
     assert "Only the concrete NOKOV motion-capture export format selection" in normalized_readme
