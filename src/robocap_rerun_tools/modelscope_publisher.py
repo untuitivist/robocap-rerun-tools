@@ -466,6 +466,19 @@ Browse the ModelScope **Dataset Files** page for file metadata and individual da
 
 :modelscope-code[]{type="git"}
 
+### Update a local copy
+
+If the dataset was cloned with Git, run the following command inside the cloned repository to
+fast-forward it to the latest ModelScope revision:
+
+```bat
+git pull --ff-only
+```
+
+If Git reports that LFS objects are still missing after the pull, run `git lfs pull`. A directory
+downloaded with the ModelScope SDK is not necessarily a Git working tree; update that copy by
+running the SDK download command again with the same local directory.
+
 After downloading, read the dataset-wide session index without any additional dependency:
 
 ```python

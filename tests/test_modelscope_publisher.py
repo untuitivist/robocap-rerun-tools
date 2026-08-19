@@ -161,6 +161,10 @@ def test_dataset_readme_contains_complete_action_task_catalog() -> None:
     assert "## Download" in dataset_readme
     assert ':modelscope-code[]{type="sdk"}' in dataset_readme
     assert ':modelscope-code[]{type="git"}' in dataset_readme
+    assert "### Update a local copy" in dataset_readme
+    assert "git pull --ff-only" in dataset_readme
+    assert "git lfs pull" in dataset_readme
+    assert "running the SDK download command again" in dataset_readme
     assert "uv venv" not in dataset_readme
     assert "uv pip" not in dataset_readme
     assert "modelscope login" not in dataset_readme
