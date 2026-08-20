@@ -1,6 +1,20 @@
 # Robocap Rerun Tools 中文说明
 
-这个仓库用于检查 Robocap/NOKOV session 的帧率、时间线和 offset，并生成 Rerun `.rrd` 文件。核心目标是把 Robocap 视频、传感器数据、NOKOV BVH/TRC/CSV/XRS 骨骼数据、第三人称视频和可选 MANO 手部 mesh 放到同一个 `capture_time` 时间线上。
+[English documentation](README.md)
+
+这个工具用于检查并对齐 Robocap、NOKOV 动捕、第三人称视频和可选 robowrist 数据，然后生成
+同步的 Rerun `.rrd`。时间对齐导出以 `capture_time` 为主时间轴；帧对齐导出以整数 `frame`
+为主时间轴。
+
+## 功能
+
+- 检查视频、动捕、MAG、IMU 和 robowrist 的 FPS、帧数/样本数、相邻时间戳间隔及推算漏帧。
+- 生成单文件 `timestamp_anomaly_detail_table.html`，数据、样式和 JavaScript 全部内嵌，可离线分享。
+- 导出 time/frame 两种 RRD，支持自动整数 FPS 比例、有符号 Robocap 帧 offset、漏帧插值和帧范围。
+- 同时读取勾选的 BVH/TRC/CSV/XRS，以及同一 3D 空间中的多个人体和刚体，不创建空白占位视图。
+- 可选择第三人称视频、Robocap 视频/传感器、robowrist、MAG 和 IMU 是否进入 RRD。
+- 使用压缩视频打包 session，并准备、上传约定的 ModelScope 数据集结构。
+- 直接从 Web 打开检查 HTML 和生成的 RRD。
 
 ## 适用数据
 
@@ -13,104 +27,76 @@ Z:\DATASETS\Frodobots\nokov\20260707_083023_session48
 常见内容包括：
 
 - Robocap 多视角视频：left/right、eye、front、wrist。
-- Robocap sensor CSV。
-- 标准 `mocap` 子目录（也兼容旧 `test*`/其他 GT 子目录）里的 NOKOV 数据：第三人称视频、BVH、TRC、CSV、XRS、手部轨迹。
-- 可选 MANO 模型：`MANO_LEFT.pkl`、`MANO_RIGHT.pkl`。
+- Robocap 传感器文件。
+- 标准 `mocap/` 子目录，也兼容旧 `test*/` 或其他 GT 子目录，其中包含第三人称视频和
+  BVH/TRC/CSV/XRS 动捕导出。
+- 可选 `robowrist_<device_id>_<side>/` 目录。
+- 可选 MANO 模型，仅用于 CLI 高级手部 mesh 重定向。
 
 如果某些视频或数据缺失，导出脚本会跳过对应视图，不会因为少一个流就整体失败，也不会创建无数据的文字占位窗口。MAG 和 Robocap IMU 都不存在时，整行传感器视图会被省略。
 
-旧数据若仍使用原来的 session 动捕子目录名，可先预览、再执行迁移：
+## Windows 快速开始
 
-```bat
-python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip
-python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip --apply
-```
-
-该命令会重命名 session 子目录，更新 `_analysis`、`_artifacts`、`_modelscope_dataset` 中生成
-报告和 manifest 的路径引用，并原位更新顶层 ZIP 的等长路径字段，不重新压缩数据。RAR 需要使用
-RAR 归档工具单独重命名，并在修改后运行归档完整性测试。
-
-## 第一次 Clone
-
-如果只是下载代码，建议用 HTTPS，不需要 SSH key：
+运行工具只需先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)；Git 仅用于克隆和
+更新代码。使用 HTTPS 克隆，不需要 SSH key：
 
 ```bat
 git clone https://github.com/untuitivist/robocap-rerun-tools.git
 cd robocap-rerun-tools
+start_web.bat
 ```
 
-如果组织仓库是 private，clone 时需要 GitHub 账号权限。推荐安装 GitHub CLI 后用浏览器登录：
+`start_web.bat` 会自动执行 `uv sync --extra web`：创建 `.venv`，按需下载兼容的 Python 3.11+，
+安装全部 Python 依赖，并打开 `http://127.0.0.1:7860`。首次同步还会下载约 87 MiB、同时包含
+FFmpeg 和 FFprobe 的 `ffmpeg-binaries-compat` wheel。因此不需要单独安装 Python/FFmpeg，
+也不需要管理员权限、激活虚拟环境或修改系统 `PATH`。
+
+工具默认优先使用 uv 锁定的 FFmpeg/FFprobe，保证不同电脑处理一致；仅当当前平台没有可用 wheel 时，
+才回退到系统中的完整 FFmpeg/FFprobe。目前 wheel 支持 Windows x64、Linux x64 和 macOS universal。
+
+## CLI 与开发
+
+只使用 CLI：
 
 ```bat
-winget install GitHub.cli
-gh auth login
+uv sync
+uv run robocap-rerun --help
 ```
 
-登录时选择：
-
-```text
-GitHub.com
-HTTPS
-Login with a web browser
-```
-
-不要把 token 写进 clone URL，也不要把个人 token 发给别人。
-
-## 安装环境
-
-只需先安装 `uv`。Git 只在克隆或更新仓库时需要。进入仓库后执行：
+不经过启动脚本打开 Web：
 
 ```bat
-uv sync --extra web
+uv run --extra web robocap-rerun web --open
 ```
 
-这一条命令会创建 `.venv`，在需要时下载兼容的 Python 3.11+，并安装 CLI、Web UI、
-`ffmpeg` 和 `ffprobe`。FFmpeg 来自 `ffmpeg-binaries-compat` 的平台 wheel，不需要管理员权限，
-也不需要手工加入系统 `PATH`。目前支持 Windows x64、Linux x64 和 macOS universal wheel。
-
-如果要跑测试或开发，同时同步 Web 和开发依赖：
+开发和测试：
 
 ```bat
 uv sync --extra web --extra dev
-```
-
-无需激活虚拟环境即可检查 CLI：
-
-```bat
-uv run robocap-rerun --help
+uv run python -m pytest -q
 ```
 
 下文命令为了简洁直接写 `robocap-rerun`。可以先执行一次
 `.venv\Scripts\activate.bat`，也可以在每条命令前加 `uv run`。
 
-## 常用命令
+## Web 界面
 
-启动本地 Web UI：
-
-```bat
-robocap-rerun web --open
-```
-
-或者直接运行：
+之后每次启动直接运行：
 
 ```bat
 start_web.bat
 ```
 
-默认地址：
-
-```text
-http://127.0.0.1:7860
-```
-
-网页里可以做：
+页面提供：
 
 - 中文/英文切换
-- 在“文档 / Docs”页直接看中文说明
-- inspect 帧率和异常帧间隔
-- package-data 打包数据，默认压缩视频
-- export time/frame RRD
-- inspect-offset 和 sweep-offset
+- 检查帧率、漏帧和异常时间戳，并快捷打开独立 HTML 报告
+- 默认压缩视频的数据打包
+- time/frame RRD 导出、offset 检查和 offset sweep
+- RRD Web Viewer
+- ModelScope 数据准备、上传和 Token 配置
+- 环境、依赖和 Git 更新检查
+- 内置中文文档
 
 两个 Offset 输入框旁都有“设为默认值”按钮。点击后会把当前整数 Robocap 视频帧偏移量同步到“导出 RRD”和
 “Offset”两个页面，并在 Web UI 重启后继续使用。Windows 配置保存在
@@ -207,6 +193,7 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 ```dotenv
 MODELSCOPE_API_TOKEN=
 MODELSCOPE_ENDPOINT=https://modelscope.cn
+MODELSCOPE_REPO_ID=owner/egomocap
 ```
 
 `.env` 已被 Git 忽略，也会被所有数据打包流程排除。Token 不会进入命令行参数或日志。检查身份：
@@ -226,12 +213,14 @@ robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_sessi
 再上传 `metadata.jsonl` 引用的全部已准备 session。可恢复上传缓存会跳过未变化的文件：
 
 ```bat
-robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset --repo-id owner/egomocap
+robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
 
-只有确实需要由工具创建仓库时才增加 `--create-if-missing --visibility private`。上传使用官方
-`modelscope-hub`，默认开启可恢复上传缓存。Web 页面提供相同的准备、Token 保存/检查、仓库创建和
-上传选项。
+上传默认使用 `.env` 中的 `MODELSCOPE_REPO_ID`；只有临时覆盖时才传
+`--repo-id owner/another-dataset`。仅 CLI 在明确需要时支持
+`--create-if-missing --visibility private`。上传使用官方 `modelscope-hub` 和可恢复缓存。
+Web 固定使用压缩视频，并要求目标仓库已经存在；不提供原始视频、编码参数、仓库创建、可见性或
+license 控件。
 
 先检查一个 session 的视频帧率、文件帧数和异常帧间隔：
 
@@ -410,18 +399,18 @@ RRD 文件名会纳入导出参数，避免不同配置互相覆盖。可读部�
 精确压缩参数、传感器点数上限、时间裁剪/对齐开关、坐标缩放、GT 输入、MANO 目录等其余会影响
 内容的参数。即使显式指定 `--save`，也会追加同样的参数后缀；如果路径已经包含同一后缀则不会重复。
 
-## 已经 Clone 过，后续怎么更新
+## 更新已有 Clone
 
-如果你只是在另一台电脑使用别人推上来的新版本：
+拉取代码后直接运行启动器；启动器会自动同步发生变化的依赖：
 
 ```bat
-cd robocap-rerun-tools
 git pull --ff-only
-uv sync --extra web
 start_web.bat
 ```
 
-如果依赖有变化，也可以重新同步开发依赖：
+Web“环境 / Environment”页提供相同的干净工作区更新流程，不会自动 stash 或覆盖本地修改。
+
+开发环境需要额外同步测试工具：
 
 ```bat
 uv sync --extra web --extra dev
@@ -431,9 +420,9 @@ uv sync --extra web --extra dev
 
 ```bat
 git status
-git pull
 git add <你改过的文件>
 git commit -m "说明这次改了什么"
+git pull --rebase
 git push
 ```
 
@@ -444,7 +433,20 @@ git push
 - 没有 `git commit` 的修改不会被 `git push` 上传。
 - 如果只是使用工具，不改代码，通常只需要 `git pull`。
 
-## 不要提交的数据
+## 迁移旧动捕目录
+
+旧数据若仍使用原来的 session 动捕子目录名，先预览，再正式执行：
+
+```bat
+uv run python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip
+uv run python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip --apply
+```
+
+该命令会重命名 session 子目录，更新 `_analysis`、`_artifacts`、`_modelscope_dataset` 中生成
+报告和 manifest 的路径引用，并原位更新顶层 ZIP 的等长路径字段，不重新压缩数据。RAR 需要使用
+RAR 归档工具单独重命名，并在修改后运行归档完整性测试。
+
+## 仓库中不要提交的数据
 
 不要提交以下内容：
 

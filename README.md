@@ -1,86 +1,103 @@
 # Robocap Rerun Tools
 
-[中文说明](README.zh-CN.md)
+[中文文档](README.zh-CN.md)
 
-Robocap Rerun Tools is a small Python project for inspecting Robocap/NOKOV sessions and exporting Rerun `.rrd` files with one shared `capture_time` timeline.
+Robocap Rerun Tools inspects and aligns Robocap, NOKOV motion capture, third-person video, and
+optional robowrist streams, then exports synchronized Rerun `.rrd` recordings. Time-aligned exports
+use `capture_time` as the primary timeline; frame-aligned exports use the integer `frame` timeline.
 
-It is intended for session folders shaped like the current `Z:\DATASETS\Frodobots\nokov\2026..._session...` data:
+## Capabilities
 
-- Robocap first-person/eye/front/wrist videos and sensor CSV files.
-- A canonical `mocap` folder (or a legacy `test*`/other GT folder) with third-person video, BVH/TRC/CSV/XRS data, camera positions, and hand trajectories.
-- Optional MANO model files for hand mesh generation.
+- Inspect FPS, frame/sample counts, adjacent timestamp intervals, and inferred dropped frames across
+  videos, motion capture, MAG, IMU, and robowrist data.
+- Generate one self-contained `timestamp_anomaly_detail_table.html` that can be opened and shared
+  offline.
+- Export time-aligned or frame-aligned RRD files with automatic integer FPS ratio, signed Robocap
+  frame offset, optional dropped-frame interpolation, and selectable frame ranges.
+- Load every selected BVH/TRC/CSV/XRS source, including multiple bodies and rigid bodies in one 3D
+  world, without creating empty placeholder views.
+- Include selectable third-person video, Robocap video/sensors, robowrist, MAG, and IMU streams.
+- Package sessions with compressed video and stage/upload the documented ModelScope dataset layout.
+- Open generated HTML reports and RRD recordings directly from the Web UI.
+
+## Session Layout
+
+The tool targets session folders such as
+`Z:\DATASETS\Frodobots\nokov\2026..._session...` containing:
+
+- Robocap first-person, eye, front, and optional wrist videos plus sensor files.
+- A canonical `mocap/` directory, or a legacy `test*/`/other GT directory, containing third-person
+  video and BVH/TRC/CSV/XRS motion-capture exports.
+- Optional `robowrist_<device_id>_<side>/` directories.
+- Optional MANO model files for advanced CLI hand-mesh retargeting.
 
 Missing streams are omitted from the Rerun blueprint instead of becoming text placeholders. If both
 Robocap MAG and IMU are absent, the complete sensor row is omitted.
 
-To migrate an older collection whose session child directory still uses the previous name, preview
-and then apply the layout migration:
+## Quick Start On Windows
+
+The only runtime prerequisite is [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Git is needed only to clone or update the repository. Clone over HTTPS, then run the launcher:
 
 ```bat
-python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip
-python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip --apply
+git clone https://github.com/untuitivist/robocap-rerun-tools.git
+cd robocap-rerun-tools
+start_web.bat
 ```
 
-The command renames session directories, updates generated report/manifest path references in
-`_analysis`, `_artifacts`, and `_modelscope_dataset`, and updates same-length path fields in
-top-level ZIP archives without recompressing their data. RAR archives must be renamed with a RAR
-archive tool and verified with its archive test command.
+`start_web.bat` runs `uv sync --extra web`, creates `.venv`, downloads a compatible Python 3.11+
+interpreter when needed, installs all Python dependencies, and opens the Web UI at
+`http://127.0.0.1:7860`. The first sync also downloads the approximately 87 MiB
+`ffmpeg-binaries-compat` wheel containing FFmpeg and FFprobe. No system Python, FFmpeg installation,
+administrator access, virtual-environment activation, or `PATH` editing is required.
 
-## Install With uv
+The bundled binaries are preferred for reproducible processing. A complete system FFmpeg/FFprobe
+pair is only used as a fallback on platforms without a bundled wheel. Current bundled wheels cover
+Windows x64, Linux x64, and macOS universal.
 
-Install `uv` first. Git is only needed to clone or update the repository. Then run:
+## CLI And Development
+
+For CLI-only use:
 
 ```bat
-cd /d Z:\DATASETS\Frodobots\robocap-rerun-tools
-uv sync --extra web
+uv sync
+uv run robocap-rerun --help
 ```
 
-This single command creates `.venv`, downloads a compatible Python 3.11+ interpreter when needed,
-and installs the CLI, Web UI, `ffmpeg`, and `ffprobe`. The FFmpeg executables come from the
-platform-specific `ffmpeg-binaries-compat` wheel and do not need administrator access or a system
-`PATH` entry. Windows x64, Linux x64, and macOS universal wheels are supported.
+Start the Web UI without the launcher:
+
+```bat
+uv run --extra web robocap-rerun web --open
+```
 
 For development and tests, include both extras:
 
 ```bat
 uv sync --extra web --extra dev
-```
-
-Check the CLI without activating the virtual environment:
-
-```bat
-uv run robocap-rerun --help
+uv run python -m pytest -q
 ```
 
 The command examples below use `robocap-rerun` directly. Either activate once with
 `.venv\Scripts\activate.bat` or prefix a command with `uv run`.
 
-## Common Usage
+## Web UI
 
-Start the local browser UI:
+The bilingual Web UI provides inspection, packaging, time/frame RRD export, offset inspection,
+ModelScope staging/upload, report opening, RRD viewing, environment checks, and code updates.
 
-```bat
-robocap-rerun web --open
-```
-
-Or use the Windows launcher:
-
-```bat
-start_web.bat
-```
-
-Then use `http://127.0.0.1:7860` for inspect, package, offset inspection, and RRD export.
-The web UI has a Chinese/English language switch and a built-in Docs tab.
 CLI-backed actions stream combined stdout/stderr into the Output box about twice per second. The
 box shows status, elapsed time, recent logs, and either parsed `[n/total]`/percentage progress or an
 animated unknown-total bar. Carriage-return updates from tqdm are handled without waiting for the
 command to exit. Logs retain the latest 1000 lines or approximately 256 KiB to bound Web memory.
+
 Inspection writes only `timestamp_anomaly_detail_table.html`, with all data, styles, and JavaScript
 embedded for offline sharing. The `Reports` tab scans these files and opens the selected report in
 the default browser; the output box prints the generated path instead of duplicating the report.
+
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
 synchronizes it across the Export and Offset tabs, and restores it after Web UI restarts. On Windows,
 the setting is stored in `%LOCALAPPDATA%\robocap-rerun-tools\web_settings.json`.
+
 On the export tab, use `Scan files` to populate the GT/NOKOV file list. You can then choose which
 `.bvh`, `.trc`, `.csv`, and `.xrs` files enter the RRD, choose whether to include a third-person
 video, and choose whether robowrist, MAG, and IMU streams are included. The Web exporter records
@@ -93,6 +110,7 @@ commit, HTTPS origin, upstream, local changes, and ahead/behind counts. `Check c
 Code and dependency updates use a separate `cmd` window, stop Web only after preflight, print logs,
 run `uv sync --extra web`, and restart through `start_web.bat`. Local changes are never stashed or
 overwritten.
+
 The `Viewer` tab can scan generated `.rrd` files under the current session and open a selected file
 in Rerun Web Viewer. The newest RRD is selected by default. The viewer runs in a separate `cmd`
 window so its logs stay visible.
@@ -386,6 +404,34 @@ coordinate scales, GT inputs, MANO directory, and other content-affecting export
 An explicit `--save` path receives the same suffix; supplying the already parameterized result does
 not duplicate it.
 
-## Notes For GitHub
+## Update An Existing Clone
+
+Pull code with fast-forward-only policy, then run the launcher. The launcher synchronizes changed
+dependencies automatically:
+
+```bat
+git pull --ff-only
+start_web.bat
+```
+
+The Web UI offers the same clean-worktree update flow in its `Environment` tab. It never stashes or
+overwrites local changes.
+
+## Migrate A Legacy Motion-Capture Directory
+
+To migrate a collection whose session child directories still use the previous motion-capture name,
+preview the changes first and then apply them:
+
+```bat
+uv run python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip
+uv run python scripts\migrate_mocap_layout.py Z:\DATASETS\Frodobots\nokov --rewrite-zip --apply
+```
+
+The command renames session directories, updates generated report/manifest path references in
+`_analysis`, `_artifacts`, and `_modelscope_dataset`, and updates same-length path fields in
+top-level ZIP archives without recompressing their data. RAR archives must be renamed with a RAR
+archive tool and verified with its archive test command.
+
+## Repository Hygiene
 
 Keep this repository code-only. Do not commit dataset folders, generated `_artifacts`, proxy videos, `.rrd` files, or private MANO pickle files.
