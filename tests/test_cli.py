@@ -92,6 +92,14 @@ def test_export_parser_accepts_negative_frame_offset() -> None:
     assert args.offset == -5
 
 
+def test_export_parser_has_no_display_layout_option() -> None:
+    parser = build_parser()
+    subparsers = next(action for action in parser._actions if action.dest == "command")
+    export_parser = subparsers.choices["export"]
+
+    assert "--display" not in export_parser._option_string_actions
+
+
 def test_frame_alignment_ratio_defaults_to_auto() -> None:
     parser = build_parser()
     session = "Z:/DATASETS/Frodobots/nokov/session"
@@ -616,7 +624,6 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
         "robocap_end_frame": 20,
         "save_path": "",
         "use_proxy": False,
-        "display": True,
         "interpolate_dropped_frames": True,
         "gt_dir": "",
         "selected_gt_files": [],

@@ -10,14 +10,13 @@ from robocap_rerun_tools.exporter import (
     discover_gt_dir,
     discover_gt_file_sets,
     discover_session,
-    display_sensors_container,
-    display_videos_container,
     make_proxy_video,
     parse_nokov_csv,
     parse_trc,
     parse_xrs,
     robocap_sensors_container,
     robowrist_stream_labels,
+    sensors_container,
     synthesize_frame_aligned_timestamps,
 )
 
@@ -202,7 +201,6 @@ def sample_export_name_parameters() -> exporter.ExportNameParameters:
         proxy_crf=28,
         proxy_bitrate="1400k",
         ffmpeg="auto",
-        blueprint_preset="display",
         max_sensor_points=6000,
         trim_to_common_time=True,
         align_gt_to_robocap=True,
@@ -231,7 +229,7 @@ def test_rrd_name_contains_readable_parameters_and_stable_fingerprint() -> None:
 
     named = exporter.with_export_parameter_suffix(path, parameters)
 
-    assert "_r8_o5_ref-left_f100-200_interp1_rt-none_p540_bp-display_" in named.name
+    assert "_r8_o5_ref-left_f100-200_interp1_rt-none_p540_" in named.name
     assert "_data-rw1-mag0-imu1-tp1_cfg-" in named.name
     assert exporter.with_export_parameter_suffix(named, parameters) == named
 
@@ -997,8 +995,14 @@ def test_robocap_sensor_layout_spans_mag_across_two_imu_rows(tmp_path: Path) -> 
     container = robocap_sensors_container(config)
     mag_view, imu_column = container.contents
 
+    assert container.name == "Robocap sensors"
     assert container.column_shares == [1.0, 2.0]
     assert mag_view.name == "middle_mag"
+    assert imu_column.name == "Robocap IMU rows"
+    assert [row.name for row in imu_column.contents] == [
+        "Left robocap IMU",
+        "Right robocap IMU",
+    ]
     assert [[view.name for view in row.contents] for row in imu_column.contents] == [
         ["left_robocap_acc", "left_robocap_gyro"],
         ["right_robocap_acc", "right_robocap_gyro"],
@@ -1010,10 +1014,10 @@ def test_robocap_sensor_layout_is_omitted_without_mag_or_imu(tmp_path: Path) -> 
     config = discover_session(tmp_path, "segment1")
 
     assert robocap_sensors_container(config) is None
-    assert exporter.all_signals_container(config) is None
+    assert sensors_container(config) is None
 
 
-def _write_display_session_files(tmp_path: Path) -> None:
+def _write_sensor_session_files(tmp_path: Path) -> None:
     for name in (
         "robocap_segment1_video_left.mp4",
         "robocap_segment1_video_left_eye.mp4",
@@ -1034,36 +1038,42 @@ def _write_display_session_files(tmp_path: Path) -> None:
         (wrist_dir / f"robowrist_segment1_imu_{side}.db").write_bytes(b"")
 
 
-def test_display_layout_renders_robowrist_only_when_enabled(tmp_path: Path) -> None:
-    _write_display_session_files(tmp_path)
+def test_sensor_layout_renders_robowrist_only_when_enabled(tmp_path: Path) -> None:
+    _write_sensor_session_files(tmp_path)
 
     included = discover_session(tmp_path, "segment1", include_robowrist=True)
-    videos = display_videos_container(included)
-    sensors = display_sensors_container(included)
-    assert [column.name for column in videos.contents] == [
-        "left / right",
-        "left eye / right eye",
-        "left front / right front",
-        "left wrist / right wrist",
-    ]
+    sensors = sensors_container(included)
     assert [row.name for row in sensors.contents] == [
-        "Robocap sensors only",
+        "Robocap sensors",
         "Left wrist sensors",
         "Right wrist sensors",
     ]
     assert sensors.grid_columns == 1
     assert sensors.row_shares == [1.6, 1.0, 1.0]
-    exporter.build_display_blueprint(included)
+    assert [[view.name for view in row.contents] for row in sensors.contents[1:]] == [
+        ["left_wrist_mag", "left_wrist_acc", "left_wrist_gyro"],
+        ["right_wrist_mag", "right_wrist_acc", "right_wrist_gyro"],
+    ]
 
     excluded = discover_session(tmp_path, "segment1", include_robowrist=False)
-    videos = display_videos_container(excluded)
-    sensors = display_sensors_container(excluded)
-    assert [column.name for column in videos.contents] == [
-        "left / right",
-        "left eye / right eye",
-        "left front / right front",
-    ]
-    assert [row.name for row in sensors.contents] == ["Robocap sensors only"]
+    sensors = sensors_container(excluded)
+    assert [row.name for row in sensors.contents] == ["Robocap sensors"]
     assert sensors.grid_columns == 1
     assert sensors.row_shares == [1.6]
-    exporter.build_display_blueprint(excluded)
+
+
+def test_blueprint_uses_sensor_layout(tmp_path: Path, monkeypatch) -> None:
+    _write_sensor_session_files(tmp_path)
+    config = discover_session(tmp_path, "segment1")
+    calls = []
+    original = exporter.sensors_container
+
+    def tracked_sensors_container(session_config):
+        calls.append(session_config)
+        return original(session_config)
+
+    monkeypatch.setattr(exporter, "sensors_container", tracked_sensors_container)
+
+    exporter.build_blueprint(config)
+
+    assert calls == [config]

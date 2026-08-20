@@ -438,7 +438,6 @@ class ExportNameParameters:
     proxy_crf: int
     proxy_bitrate: str
     ffmpeg: str
-    blueprint_preset: str
     max_sensor_points: int
     trim_to_common_time: bool
     align_gt_to_robocap: bool
@@ -1002,7 +1001,6 @@ def with_export_parameter_suffix(path: Path, parameters: ExportNameParameters) -
         f"interp{int(parameters.interpolate_dropped_frames)}",
         f"rt-{compact_filename_token(parameters.retarget_model)}",
         media_token,
-        f"bp-{compact_filename_token(parameters.blueprint_preset)}",
         stream_token,
     ]
     payload = json.dumps(
@@ -3727,15 +3725,17 @@ def gt_third_person_video_view(gt_config: GTConfig | None) -> rrb.View | None:
 def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
     mag_view = available_signal_view(config, "middle_mag")
     imu_rows: list[rrb.ContainerLike] = []
-    for labels in (
-        ("left_robocap_acc", "left_robocap_gyro"),
-        ("right_robocap_acc", "right_robocap_gyro"),
+    for name, labels in (
+        ("Left robocap IMU", ("left_robocap_acc", "left_robocap_gyro")),
+        ("Right robocap IMU", ("right_robocap_acc", "right_robocap_gyro")),
     ):
         views = [
             view for label in labels if (view := available_signal_view(config, label)) is not None
         ]
         if views:
-            imu_rows.append(rrb.Horizontal(*views, column_shares=[1.0 for _ in views]))
+            imu_rows.append(
+                rrb.Horizontal(*views, column_shares=[1.0 for _ in views], name=name)
+            )
 
     columns: list[rrb.ContainerLike] = []
     column_shares: list[float] = []
@@ -3743,11 +3743,17 @@ def robocap_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None
         columns.append(mag_view)
         column_shares.append(1.0)
     if imu_rows:
-        columns.append(rrb.Vertical(*imu_rows, row_shares=[1.0 for _ in imu_rows]))
+        columns.append(
+            rrb.Vertical(
+                *imu_rows,
+                row_shares=[1.0 for _ in imu_rows],
+                name="Robocap IMU rows",
+            )
+        )
         column_shares.append(2.0)
     if not columns:
         return None
-    return rrb.Horizontal(*columns, column_shares=column_shares, name="Robocap sensors only")
+    return rrb.Horizontal(*columns, column_shares=column_shares, name="Robocap sensors")
 
 
 def wrist_sensor_rows(config: SessionConfig) -> list[rrb.ContainerLike]:
@@ -3764,7 +3770,7 @@ def wrist_sensor_rows(config: SessionConfig) -> list[rrb.ContainerLike]:
     return rows
 
 
-def display_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
+def sensors_container(config: SessionConfig) -> rrb.ContainerLike | None:
     robocap_overview = robocap_sensors_container(config)
     rows: list[rrb.ContainerLike] = []
     row_shares: list[float] = []
@@ -3780,37 +3786,8 @@ def display_sensors_container(config: SessionConfig) -> rrb.ContainerLike | None
         *rows,
         grid_columns=1,
         row_shares=row_shares,
-        name="Display sensors",
+        name="Signals",
     )
-
-
-def all_signals_container(config: SessionConfig) -> rrb.ContainerLike | None:
-    views = [
-        view
-        for label in SIGNAL_SLOT_ORDER
-        if (view := available_signal_view(config, label)) is not None
-    ]
-    if not views:
-        return None
-    return rrb.Grid(*views, grid_columns=3, name="Signals")
-
-
-def display_videos_container(config: SessionConfig) -> rrb.ContainerLike:
-    columns: list[rrb.ContainerLike] = []
-    for name, labels in (
-        ("left / right", ("left", "right")),
-        ("left eye / right eye", ("left_eye", "right_eye")),
-        ("left front / right front", ("left_front", "right_front")),
-        ("left wrist / right wrist", ("left_wrist_down", "right_wrist_down")),
-    ):
-        views = [
-            view for label in labels if (view := available_video_view(config, label)) is not None
-        ]
-        if views:
-            columns.append(rrb.Vertical(*views, row_shares=[1.0 for _ in views], name=name))
-    if not columns:
-        return rrb.TextDocumentView(name="Robocap videos", origin=GT_NOTE_ENTITY)
-    return rrb.Horizontal(*columns, column_shares=[1.0 for _ in columns], name="Robocap videos")
 
 
 def gt_overview_container(gt_config: GTConfig | None) -> rrb.ContainerLike | None:
@@ -3829,37 +3806,11 @@ def gt_overview_container(gt_config: GTConfig | None) -> rrb.ContainerLike | Non
     return rrb.Horizontal(*views, column_shares=column_shares, name="GT")
 
 
-def build_display_blueprint(
-    config: SessionConfig,
-    gt_config: GTConfig | None = None,
-    timeline_name: str = "capture_time",
-) -> rrb.Blueprint:
-    rows: list[rrb.ContainerLike] = [display_videos_container(config)]
-    row_shares = [2.4]
-    sensor_overview = display_sensors_container(config)
-    if sensor_overview is not None:
-        rows.append(sensor_overview)
-        row_shares.append(1.6)
-    gt_overview = gt_overview_container(gt_config)
-    if gt_overview is not None:
-        rows.append(gt_overview)
-        row_shares.append(2.4)
-    return rrb.Blueprint(
-        rrb.TimePanel(timeline=timeline_name),
-        rrb.Vertical(*rows, row_shares=row_shares),
-        collapse_panels=True,
-    )
-
-
 def build_blueprint(
     config: SessionConfig,
     gt_config: GTConfig | None = None,
-    preset: str = "default",
     timeline_name: str = "capture_time",
 ) -> rrb.Blueprint:
-    if preset == "display":
-        return build_display_blueprint(config, gt_config, timeline_name)
-
     rows: list[rrb.ContainerLike] = [
         non_empty_grid(
             "Videos",
@@ -3872,7 +3823,7 @@ def build_blueprint(
         )
     ]
     row_shares = [2.4]
-    signals_container = all_signals_container(config)
+    signals_container = sensors_container(config)
     if signals_container is not None:
         rows.append(signals_container)
         row_shares.append(3.6)
@@ -4026,12 +3977,6 @@ def parse_args() -> argparse.Namespace:
         "--layout-only",
         action="store_true",
         help="Only print the resolved layout and discovery result. Do not write an .rrd.",
-    )
-    parser.add_argument(
-        "--blueprint-preset",
-        choices=("default", "display"),
-        default="default",
-        help="Blueprint layout preset. display uses compact Robocap video/sensor rows and adds robowrist streams when enabled.",
     )
     parser.add_argument(
         "--gt-skeleton",
@@ -4354,7 +4299,6 @@ def main() -> None:
     blueprint = build_blueprint(
         config,
         gt_config,
-        args.blueprint_preset,
         timeline_name=timeline.primary_timeline,
     )
     name_parameters = ExportNameParameters(
@@ -4369,7 +4313,6 @@ def main() -> None:
         proxy_crf=args.proxy_crf,
         proxy_bitrate=args.proxy_bitrate,
         ffmpeg=args.ffmpeg or "auto",
-        blueprint_preset=args.blueprint_preset,
         max_sensor_points=args.max_sensor_points,
         trim_to_common_time=not args.no_trim_to_common_time,
         align_gt_to_robocap=not args.no_gt_align_to_robocap,

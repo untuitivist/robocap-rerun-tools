@@ -1597,7 +1597,6 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--use-proxy", action="store_true")
     parser.add_argument("--proxy-height", type=int, default=540)
-    parser.add_argument("--display", action="store_true", help="Use display blueprint preset.")
     parser.add_argument("--gt-dir", type=Path, default=None)
     parser.add_argument("--gt-file", type=Path, action="append", default=None)
     parser.add_argument("--gt-third-person-video", type=Path, default=None)
@@ -1680,8 +1679,6 @@ def command_export(args: argparse.Namespace) -> int:
         argv.extend(["--gt-frame-ratio", resolved_ratio])
     if args.use_proxy:
         argv.append("--use-proxy")
-    if args.display:
-        argv.extend(["--blueprint-preset", "display"])
     if args.no_robowrist:
         argv.append("--no-robowrist")
     if args.no_mag:

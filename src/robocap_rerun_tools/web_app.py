@@ -227,7 +227,6 @@ LANGUAGE_PACKS = {
         "robocap_end_frame": "Robocap end frame (0-based, inclusive)",
         "save_path": "Save path",
         "use_proxy": "Use compressed proxy video",
-        "display": "Display layout",
         "interpolate_dropped_frames": "Interpolate dropped NOKOV frames (240 FPS)",
         "scan_button": "Scan files",
         "gt_dir": "GT/NOKOV export dir",
@@ -303,7 +302,6 @@ LANGUAGE_PACKS = {
         "robocap_end_frame": "Robocap 结束帧（从 0 开始，包含）",
         "save_path": "RRD 保存路径",
         "use_proxy": "使用压缩视频",
-        "display": "展示版布局",
         "interpolate_dropped_frames": "插值补齐 NOKOV 丢帧（240 FPS）",
         "scan_button": "扫描文件",
         "gt_dir": "GT/NOKOV 导出目录",
@@ -1381,7 +1379,6 @@ def export_rrd(
     robocap_end_frame: object,
     save_path: str,
     use_proxy: bool,
-    display: bool,
     interpolate_dropped_frames: bool,
     gt_dir: str,
     selected_gt_files: list[str] | None,
@@ -1420,8 +1417,6 @@ def export_rrd(
         args.extend(["--gt-third-person-video", third_person_video.strip()])
     if use_proxy:
         args.append("--use-proxy")
-    if display:
-        args.append("--display")
     if interpolate_dropped_frames:
         args.append("--interpolate-dropped-frames")
     args.extend(["--retarget-model", "none"])
@@ -1481,7 +1476,6 @@ def language_updates(language: str):
         gr.update(label=labels["robocap_end_frame"]),
         gr.update(label=labels["save_path"]),
         gr.update(label=labels["use_proxy"]),
-        gr.update(label=labels["display"]),
         gr.update(label=labels["interpolate_dropped_frames"]),
         gr.update(value=labels["scan_button"]),
         gr.update(label=labels["gt_dir"]),
@@ -1722,7 +1716,6 @@ def build_app():
             )
             with gr.Row():
                 use_proxy = gr.Checkbox(label=labels["use_proxy"], value=True)
-                display = gr.Checkbox(label=labels["display"], value=False)
                 interpolate_dropped_frames = gr.Checkbox(
                     label=labels["interpolate_dropped_frames"], value=False
                 )
@@ -1755,7 +1748,6 @@ def build_app():
                     robocap_end_frame,
                     save_path,
                     use_proxy,
-                    display,
                     interpolate_dropped_frames,
                     gt_dir,
                     gt_files,
@@ -1861,7 +1853,6 @@ def build_app():
                 robocap_end_frame,
                 save_path,
                 use_proxy,
-                display,
                 interpolate_dropped_frames,
                 scan_button,
                 gt_dir,

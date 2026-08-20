@@ -271,16 +271,10 @@ third-person stream. It then intersects that range with the normal common-data w
 UI, enable `Limit Robocap frame range` before entering the two frame indexes; leave it disabled for
 the full recording.
 
-Use the display layout requested for visual checking:
+Every RRD uses one fixed layout:
 
-```bat
-robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mode frame --ratio 8 --offset 5 --use-proxy --display
-```
-
-The display layout keeps:
-
-- Top video row: `left/right`, `left_eye/right_eye`, `left_front/right_front`; when
-  robowrist is enabled and present, `left_wrist_down/right_wrist_down` is added.
+- Top video grid: Robocap views use four columns; detected robowrist videos are included when
+  enabled.
 - Middle sensor section: one multi-row, one-column grid. Its first row is the complete Robocap
   sensor block; optional second and third rows contain the left and right wrist MAG/IMU streams.
   Missing rows are omitted. Inside the Robocap block, `middle_mag` spans both IMU rows; left
@@ -387,8 +381,8 @@ Default outputs are written under:
 
 Typical files:
 
-- `*_time_aligned_fall_interp0_rt-none_raw_bp-default_data-..._cfg-....rrd`
-- `*_frame_aligned_r8_o5_ref-left_f100-500_interp1_rt-none_p540_bp-display_data-..._cfg-....rrd`
+- `*_time_aligned_fall_interp0_rt-none_raw_data-..._cfg-....rrd`
+- `*_frame_aligned_r8_o5_ref-left_f100-500_interp1_rt-none_p540_data-..._cfg-....rrd`
 - `time_alignment_report.tsv`
 - `timestamp_anomaly_detail_table.html`
 - `video_to_nokov_frame_alignment.tsv`
@@ -398,8 +392,8 @@ Generated `.rrd`, videos, raw captures, and MANO model files are ignored by Git.
 
 RRD names are parameterized to prevent accidental overwrites. Readable tags include frame-mode
 ratio (`r`), Robocap-frame offset (`o`), reference video (`ref`), frame range (`f`, or `fall`),
-interpolation (`interp`), retarget model (`rt`), raw/proxy video, blueprint (`bp`), and stream switches. The final stable
-`cfg-<10 hex>` fingerprint also covers exact proxy settings, sensor limits, trim/alignment options,
+interpolation (`interp`), retarget model (`rt`), raw/proxy video, and stream switches. The final
+stable `cfg-<10 hex>` fingerprint also covers exact proxy settings, sensor limits, trim/alignment options,
 coordinate scales, GT inputs, MANO directory, and other content-affecting export arguments.
 An explicit `--save` path receives the same suffix; supplying the already parameterized result does
 not duplicate it.
