@@ -58,37 +58,30 @@ Login with a web browser
 
 ## 安装环境
 
-需要先准备：
-
-- `uv`
-- Python 3.11
-- `ffmpeg` 和 `ffprobe`
-
-在仓库目录里创建虚拟环境：
+只需先安装 `uv`。Git 只在克隆或更新仓库时需要。进入仓库后执行：
 
 ```bat
-uv venv .venv --python 3.11
-.venv\Scripts\activate.bat
-uv pip install -e .
+uv sync --extra web
 ```
 
-如果要跑测试或开发：
+这一条命令会创建 `.venv`，在需要时下载兼容的 Python 3.11+，并安装 CLI、Web UI、
+`ffmpeg` 和 `ffprobe`。FFmpeg 来自 `ffmpeg-binaries-compat` 的平台 wheel，不需要管理员权限，
+也不需要手工加入系统 `PATH`。目前支持 Windows x64、Linux x64 和 macOS universal wheel。
+
+如果要跑测试或开发，同时同步 Web 和开发依赖：
 
 ```bat
-uv pip install -e ".[dev]"
+uv sync --extra web --extra dev
 ```
 
-如果要使用本地网页：
+无需激活虚拟环境即可检查 CLI：
 
 ```bat
-uv pip install -e ".[web]"
+uv run robocap-rerun --help
 ```
 
-检查 CLI 是否可用：
-
-```bat
-robocap-rerun --help
-```
+下文命令为了简洁直接写 `robocap-rerun`。可以先执行一次
+`.venv\Scripts\activate.bat`，也可以在每条命令前加 `uv run`。
 
 ## 常用命令
 
@@ -132,7 +125,7 @@ http://127.0.0.1:7860
 “环境 / Environment”页会检查 Python、Python 包、ffmpeg/ffprobe 和 Git 仓库状态，并显示分支、
 commit、HTTPS origin、upstream、本地改动及 ahead/behind 数量。“检查代码更新”会 fetch `origin`；
 “更新代码并重启”要求工作区干净，并执行 `git pull --ff-only`。代码更新和依赖更新都会在独立的
-`cmd` 窗口运行，通过预检后才关闭 Web，打印完整日志，同步 `.[web]` 依赖，最后通过
+`cmd` 窗口运行，通过预检后才关闭 Web，打印完整日志，执行 `uv sync --extra web`，最后通过
 `start_web.bat` 重启。程序不会自动 stash，也不会覆盖本地改动。
 
 Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式与 JavaScript 全部内嵌，可离线
@@ -423,21 +416,15 @@ RRD 文件名会纳入导出参数，避免不同配置互相覆盖。可读部�
 
 ```bat
 cd robocap-rerun-tools
-git pull
-uv pip install -e .
-```
-
-如果要用网页：
-
-```bat
-uv pip install -e ".[web]"
-robocap-rerun web --open
+git pull --ff-only
+uv sync --extra web
+start_web.bat
 ```
 
 如果依赖有变化，也可以重新同步开发依赖：
 
 ```bat
-uv pip install -e ".[dev]"
+uv sync --extra web --extra dev
 ```
 
 如果你在那台电脑也改了代码，流程是：

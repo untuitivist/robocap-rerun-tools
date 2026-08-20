@@ -9,21 +9,35 @@ set "no_proxy=%NO_PROXY%"
 
 cd /d "%REPO_DIR%"
 
+where uv >nul 2>&1
+if errorlevel 1 (
+  echo uv was not found on PATH.
+  echo Install uv first, then run start_web.bat again.
+  exit /b 1
+)
+
 echo ============================================================
 echo Robocap Rerun Tools web launcher
 echo Repo: %CD%
 echo Time: %DATE% %TIME%
+echo uv:
+uv --version
 echo Python:
 if exist "%REPO_DIR%.venv\Scripts\python.exe" "%REPO_DIR%.venv\Scripts\python.exe" --version
 echo CLI: %CLI%
 echo ============================================================
 
+if /i not "%ROBOCAP_SKIP_SYNC%"=="1" (
+  echo Synchronizing Python, Web, FFmpeg, and FFprobe dependencies with uv...
+  uv sync --extra web
+  if errorlevel 1 (
+    echo uv sync failed.
+    exit /b 1
+  )
+)
+
 if not exist "%CLI%" (
-  echo Local virtual environment was not found.
-  echo Run these commands first:
-  echo   uv venv .venv --python 3.11
-  echo   .venv\Scripts\activate.bat
-  echo   uv pip install -e ".[web]"
+  echo uv sync completed, but the CLI was not created: %CLI%
   exit /b 1
 )
 

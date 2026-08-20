@@ -354,6 +354,22 @@ wheels = [
 ]
 
 [[package]]
+name = "ffmpeg-binaries-compat"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "patool" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/32/69/6ed8091a3b0a120fe078c0fc3ae06954a308067cfbf3450e57be847e3fd1/ffmpeg_binaries_compat-1.1.0.tar.gz", hash = "sha256:552b2809e9c37f03985539e0be4e6c211964eff74803a27ec4a443ab05079011", size = 8058, upload-time = "2026-01-04T00:25:04.409Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/ac/2cff7293ae643afcef7bdae748d18b7ad9faf1b8a67e2291222815306cf3/ffmpeg_binaries_compat-1.1.0-py3-none-any.whl", hash = "sha256:9e44fe9ab87218c8ee62eff0bf6486cba96cc8f070d4bbb9a2272ccd0aa3afe7", size = 10770, upload-time = "2026-01-04T00:24:48.983Z" },
+    { url = "https://files.pythonhosted.org/packages/75/ea/bfd7532fc7793fcb018fc8aaf15c1daaebfcb096c7e7bf49837451098a94/ffmpeg_binaries_compat-1.1.0-py3-none-macosx_10_15_universal2.whl", hash = "sha256:e25e79fd87e0908d1d859fba977f457dbfeda9d1e31a8059976ef17ce06ac643", size = 50290281, upload-time = "2026-01-04T00:24:51.621Z" },
+    { url = "https://files.pythonhosted.org/packages/af/5a/07b97828d625de84a61457596e54e7aa160d0ff5df059bcae71e2385d286/ffmpeg_binaries_compat-1.1.0-py3-none-manylinux1_x86_64.whl", hash = "sha256:bfaa5e0a593a1604e404f91bafb41811b7e68e985bd5756f91246794bf95e895", size = 60258242, upload-time = "2026-01-04T00:24:55.551Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/8c/fd4ce27c9675872dfba87b80f34c1e4f9aab4273f1ad485f28b4271302de/ffmpeg_binaries_compat-1.1.0-py3-none-win_amd64.whl", hash = "sha256:07829e67ea484bb0eedf759c9c3a8de84aa132d9c8011aa272c7d7fa451dee3a", size = 91170670, upload-time = "2026-01-04T00:25:00.199Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.32.2"
 source = { registry = "https://pypi.org/simple" }
@@ -949,6 +965,15 @@ wheels = [
 ]
 
 [[package]]
+name = "patool"
+version = "4.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/e2/215c7d5efd40cf9b33b4943055b47c22cb0851383facdaedd919e30de90a/patool-4.0.5.tar.gz", hash = "sha256:1c8bbbbe1f421181bf7055ada975befb024c1677449e9d36f42bb45ac69f8b4c", size = 2011328, upload-time = "2026-05-18T08:56:14.929Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/50/cb792aaf25a8f42f5738dafb3030a1243d484ab366ff321ebcd45dfcfc12/patool-4.0.5-py2.py3-none-any.whl", hash = "sha256:9413a114c7aedf2263f151a56798055a593de671ef0a9ef94870284ad21818fb", size = 101399, upload-time = "2026-05-18T08:56:16.465Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1411,6 +1436,7 @@ name = "robocap-rerun-tools"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "ffmpeg-binaries-compat" },
     { name = "modelscope-hub" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1431,6 +1457,7 @@ web = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ffmpeg-binaries-compat", specifier = ">=1.1,<2" },
     { name = "gradio", marker = "extra == 'web'", specifier = ">=4.44" },
     { name = "modelscope-hub", specifier = ">=0.2,<0.3" },
     { name = "numpy", specifier = ">=1.24" },

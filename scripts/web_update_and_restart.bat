@@ -46,13 +46,15 @@ if /i "%UPDATE_MODE%"=="code" (
 )
 
 echo Installing/updating web dependencies...
-uv pip install -e ".[web]"
+uv sync --extra web
 if errorlevel 1 goto failed_and_restart
 
 echo Restarting web UI...
+set "ROBOCAP_SKIP_SYNC=1"
 call "%REPO_DIR%\start_web.bat"
+set "EXIT_CODE=%ERRORLEVEL%"
 popd
-exit /b 0
+exit /b %EXIT_CODE%
 
 :dirty_worktree
 echo Working tree is not clean. Commit or stash local changes before updating code.
@@ -74,6 +76,7 @@ exit /b 4
 :failed_and_restart
 echo Update failed with errorlevel %ERRORLEVEL%.
 echo Restarting the existing working tree so the web UI remains available...
+set "ROBOCAP_SKIP_SYNC=1"
 call "%REPO_DIR%\start_web.bat"
 popd
 exit /b 1

@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 
+from robocap_rerun_tools import MEDIA_TOOLS
+
 EN_DOC = """# Robocap Rerun Tools
 
 This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD export, and offset checks.
@@ -796,6 +798,7 @@ def check_environment() -> str:
         "gradio",
         "modelscope-hub",
         "python-dotenv",
+        "ffmpeg-binaries-compat",
     )
     lines = [
         "# Environment check",
@@ -807,6 +810,7 @@ def check_environment() -> str:
         f"- uv: `{shutil.which('uv') or 'not found'}`",
         f"- ffmpeg: `{shutil.which('ffmpeg') or 'not found'}`",
         f"- ffprobe: `{shutil.which('ffprobe') or 'not found'}`",
+        f"- ffmpeg_source: `{MEDIA_TOOLS.source}`",
         f"- git: `{shutil.which('git') or 'not found'}`",
         "",
         "## Tool versions",
@@ -933,7 +937,7 @@ def scan_files(
         import gradio as gr
     except ImportError as exc:
         raise RuntimeError(
-            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
         ) from exc
     robowrist_update = gr.update(
         value=bool(include_robowrist and has_robowrist),
@@ -1009,7 +1013,7 @@ def scan_rrd_files(session_dir: str) -> tuple[str, object]:
         import gradio as gr
     except ImportError as exc:
         raise RuntimeError(
-            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
         ) from exc
     return summary, gr.update(choices=choices, value=choices[0] if choices else None)
 
@@ -1032,7 +1036,7 @@ def scan_modelscope_rrd_files(session_dir: str, segment: str) -> tuple[str, obje
         import gradio as gr
     except ImportError as exc:
         raise RuntimeError(
-            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
         ) from exc
     return summary, gr.update(choices=choices, value=choices)
 
@@ -1066,7 +1070,7 @@ def scan_timestamp_reports(session_dir: str) -> tuple[str, object]:
         import gradio as gr
     except ImportError as exc:
         raise RuntimeError(
-            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
         ) from exc
     return summary, gr.update(choices=choices, value=choices[0] if choices else None)
 
@@ -1453,7 +1457,7 @@ def language_updates(language: str):
         import gradio as gr
     except ImportError as exc:
         raise RuntimeError(
-            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
         ) from exc
 
     labels = language_values(language)
@@ -1536,7 +1540,7 @@ def build_app():
         import gradio as gr
     except ImportError as exc:
         raise RuntimeError(
-            'Web UI requires Gradio. Install it with: uv pip install -e ".[web]"'
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
         ) from exc
 
     labels = language_values("中文")

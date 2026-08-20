@@ -28,38 +28,32 @@ archive tool and verified with its archive test command.
 
 ## Install With uv
 
-Install external tools first:
-
-- `uv`
-- `ffmpeg` and `ffprobe` on `PATH`
-- A Python 3.11 interpreter visible to `uv`
-
-Then create the local virtual environment:
+Install `uv` first. Git is only needed to clone or update the repository. Then run:
 
 ```bat
 cd /d Z:\DATASETS\Frodobots\robocap-rerun-tools
-uv venv .venv --python 3.11
-.venv\Scripts\activate.bat
-uv pip install -e .
+uv sync --extra web
 ```
 
-For development tools:
+This single command creates `.venv`, downloads a compatible Python 3.11+ interpreter when needed,
+and installs the CLI, Web UI, `ffmpeg`, and `ffprobe`. The FFmpeg executables come from the
+platform-specific `ffmpeg-binaries-compat` wheel and do not need administrator access or a system
+`PATH` entry. Windows x64, Linux x64, and macOS universal wheels are supported.
+
+For development and tests, include both extras:
 
 ```bat
-uv pip install -e ".[dev]"
+uv sync --extra web --extra dev
 ```
 
-For the local browser UI:
+Check the CLI without activating the virtual environment:
 
 ```bat
-uv pip install -e ".[web]"
+uv run robocap-rerun --help
 ```
 
-Check the CLI:
-
-```bat
-robocap-rerun --help
-```
+The command examples below use `robocap-rerun` directly. Either activate once with
+`.venv\Scripts\activate.bat` or prefix a command with `uv run`.
 
 ## Common Usage
 
@@ -97,7 +91,8 @@ tab checks Python/package/tool versions, ffmpeg/ffprobe, and Git repository stat
 commit, HTTPS origin, upstream, local changes, and ahead/behind counts. `Check code updates` fetches
 `origin`. `Update code and restart` requires a clean working tree and runs `git pull --ff-only`.
 Code and dependency updates use a separate `cmd` window, stop Web only after preflight, print logs,
-sync `.[web]`, and restart through `start_web.bat`. Local changes are never stashed or overwritten.
+run `uv sync --extra web`, and restart through `start_web.bat`. Local changes are never stashed or
+overwritten.
 The `Viewer` tab can scan generated `.rrd` files under the current session and open a selected file
 in Rerun Web Viewer. The newest RRD is selected by default. The viewer runs in a separate `cmd`
 window so its logs stay visible.

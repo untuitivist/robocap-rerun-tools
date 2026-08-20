@@ -13,6 +13,7 @@ authors = [
   { name = "Robocap Rerun Tools Contributors" }
 ]
 dependencies = [
+  "ffmpeg-binaries-compat>=1.1,<2",
   "modelscope-hub>=0.2,<0.3",
   "numpy>=1.24",
   "python-dotenv>=1.2,<2",

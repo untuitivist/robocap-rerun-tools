@@ -183,6 +183,8 @@ def test_check_environment_includes_repository_details(monkeypatch) -> None:
     assert "- remote_origin: `https://example`" in report
     assert "- ffmpeg:" in report
     assert "- ffprobe:" in report
+    assert "- ffmpeg_source:" in report
+    assert "ffmpeg-binaries-compat" in report
 
 
 def test_git_repository_report_fetches_and_reports_behind_state(tmp_path, monkeypatch) -> None:
@@ -259,11 +261,20 @@ def test_windows_update_script_preflights_before_stopping_and_fast_forward_pull(
     preflight = script.index("git status --porcelain")
     stop_web = script.index("taskkill /PID")
     pull = script.index("git pull --ff-only")
-    install = script.index('uv pip install -e ".[web]"')
+    install = script.index("uv sync --extra web")
 
     assert preflight < stop_web < pull < install
     assert "No process was stopped and no files were changed." in script
     assert 'call "%REPO_DIR%\\start_web.bat"' in script
+
+
+def test_windows_launcher_syncs_uv_managed_web_and_media_dependencies() -> None:
+    script = (web_app.PROJECT_ROOT / "start_web.bat").read_text(encoding="utf-8")
+
+    assert "uv sync --extra web" in script
+    assert "uv pip install" not in script
+    assert "ffmpeg" in script.lower()
+    assert "ffprobe" in script.lower()
 
 
 def test_scan_files_reflects_detected_robowrist_streams(tmp_path) -> None:
