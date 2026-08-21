@@ -715,6 +715,19 @@ def load_session_browser_settings(
     session_value = settings.get(SESSION_DIR_SETTING)
     root = root_value if isinstance(root_value, str) else ""
     session = session_value if isinstance(session_value, str) and session_value else None
+    if root:
+        try:
+            resolved_root = dataset_root_path(root)
+            sessions = discover_session_directories(resolved_root)
+        except (OSError, ValueError):
+            sessions = []
+        if sessions:
+            selected = _matching_session_value(session, sessions) or str(sessions[0])
+            return (
+                str(resolved_root),
+                session_dropdown_choices(resolved_root, sessions),
+                selected,
+            )
     if session is None:
         return root, [], None
     label = Path(session).name or session

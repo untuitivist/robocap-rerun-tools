@@ -112,13 +112,20 @@ def test_session_browser_settings_restore_selection_and_preserve_other_values(tm
         encoding="utf-8",
     )
     session = tmp_path / "P01" / "session01"
+    other_session = tmp_path / "P02" / "session02"
+    for directory in (session, other_session):
+        directory.mkdir(parents=True)
+        (directory / "robocap_segment1_video_left.mp4").write_bytes(b"")
 
     web_app.save_session_browser_settings(tmp_path, session, settings_path)
     root, choices, selected = web_app.load_session_browser_settings(settings_path)
 
-    assert root == str(tmp_path)
-    assert choices == [("session01", str(session))]
-    assert selected == str(session)
+    assert root == str(tmp_path.resolve())
+    assert choices == [
+        (str(session.relative_to(tmp_path)), str(session.resolve())),
+        (str(other_session.relative_to(tmp_path)), str(other_session.resolve())),
+    ]
+    assert selected == str(session.resolve())
     assert web_app.load_default_offset(settings_path) == 5
 
 
