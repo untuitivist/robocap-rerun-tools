@@ -31,9 +31,118 @@ def test_web_app_builds_with_report_viewer() -> None:
     config = json.dumps(app.get_config_file(), ensure_ascii=False)
 
     assert app is not None
+    assert "数据集根目录" in config
+    assert "扫描 Session" in config
     assert "参与上传的 RRD 文件" in config
     assert "保留原始视频" not in config
     assert "仓库不存在时创建" not in config
+
+
+def test_discover_session_directories_finds_direct_and_nested_sessions(tmp_path) -> None:
+    direct = tmp_path / "20260820_030527_session80"
+    nested = tmp_path / "EgoMotionActions" / "P03" / "20260821_040000_session81"
+    ordinary = tmp_path / "notes"
+    for directory in (direct, nested, ordinary):
+        directory.mkdir(parents=True)
+    (direct / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    (nested / "robocap_segment1_imu_left.db").write_bytes(b"")
+    (ordinary / "readme.txt").write_text("not a session", encoding="utf-8")
+
+    discovered = web_app.discover_session_directories(tmp_path)
+
+    assert discovered == sorted(
+        [direct.resolve(), nested.resolve()], key=lambda path: str(path).casefold()
+    )
+
+
+def test_discover_session_directories_excludes_generated_and_calibration_trees(tmp_path) -> None:
+    valid = tmp_path / "source" / "20260821_040000_session81"
+    ignored_roots = [
+        tmp_path / "_analysis",
+        tmp_path / "_artifacts",
+        tmp_path / "_modelscope_dataset",
+        tmp_path / "raw_calibration",
+    ]
+    valid.mkdir(parents=True)
+    (valid / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    for ignored_root in ignored_roots:
+        copied = ignored_root / "P01" / "copied_session"
+        copied.mkdir(parents=True)
+        (copied / "robocap_segment1_video_left.mp4").write_bytes(b"")
+
+    assert web_app.discover_session_directories(tmp_path) == [valid.resolve()]
+
+
+def test_session_dropdown_choices_use_relative_labels_and_absolute_values(tmp_path) -> None:
+    session = tmp_path / "EgoMotionActions" / "P03" / "session81"
+    session.mkdir(parents=True)
+
+    choices = web_app.session_dropdown_choices(tmp_path, [session])
+
+    assert choices == [(str(session.relative_to(tmp_path)), str(session.resolve()))]
+
+
+def test_scan_dataset_sessions_preserves_current_selection_and_settings(tmp_path) -> None:
+    first = tmp_path / "session01"
+    current = tmp_path / "session02"
+    settings_path = tmp_path / "settings" / "web.json"
+    for session in (first, current):
+        session.mkdir()
+        (session / "robocap_segment1_video_left.mp4").write_bytes(b"")
+
+    message, update = web_app.scan_dataset_sessions(
+        str(tmp_path), str(current), "中文", settings_path
+    )
+
+    assert "识别到 Session：2" in message
+    assert update["value"] == str(current.resolve())
+    assert update["choices"] == [
+        ("session01", str(first.resolve())),
+        ("session02", str(current.resolve())),
+    ]
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert settings["dataset_root"] == str(tmp_path.resolve())
+    assert settings["session_dir"] == str(current.resolve())
+
+
+def test_session_browser_settings_restore_selection_and_preserve_other_values(tmp_path) -> None:
+    settings_path = tmp_path / "web.json"
+    settings_path.write_text(
+        json.dumps({"default_offset": 5, "offset_unit": web_app.OFFSET_UNIT}),
+        encoding="utf-8",
+    )
+    session = tmp_path / "P01" / "session01"
+
+    web_app.save_session_browser_settings(tmp_path, session, settings_path)
+    root, choices, selected = web_app.load_session_browser_settings(settings_path)
+
+    assert root == str(tmp_path)
+    assert choices == [("session01", str(session))]
+    assert selected == str(session)
+    assert web_app.load_default_offset(settings_path) == 5
+
+
+def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None:
+    settings_path = tmp_path / "web.json"
+    updates = web_app.select_session(tmp_path, tmp_path / "session01", settings_path)
+
+    assert [update.get("value") for update in updates] == [
+        "",
+        [],
+        "",
+        None,
+        None,
+        [],
+        "",
+        True,
+    ]
+    assert updates[1]["choices"] == []
+    assert updates[3]["choices"] == []
+    assert updates[4]["choices"] == []
+    assert updates[5]["choices"] == []
+    assert updates[7]["interactive"] is True
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert settings["session_dir"] == str(tmp_path / "session01")
 
 
 def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:

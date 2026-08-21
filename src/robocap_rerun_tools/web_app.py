@@ -30,8 +30,8 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 
 ## Basic Workflow
 
-1. Enter a session directory, for example `C:\\Users\\Administrator\\Desktop\\20260803_032401_session29`.
-2. Enter the segment name, usually `segment1`.
+1. Enter a dataset root containing one or more sessions, then click `Scan sessions`.
+2. Select a detected session and enter the segment name, usually `segment1`.
 3. Run `Inspect` first to check FPS, frame/sample counts, and abnormal intervals.
 4. Use `Package Data` to create a zip for sharing. Videos are compressed by default.
 5. Use `Export RRD` to create time-aligned or frame-aligned Rerun files.
@@ -122,8 +122,8 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 
 ## 基本流程
 
-1. 输入 session 目录，例如 `C:\\Users\\Administrator\\Desktop\\20260803_032401_session29`。
-2. 输入 segment，通常是 `segment1`。
+1. 输入包含一个或多个 Session 的数据集根目录，然后点击“扫描 Session”。
+2. 从下拉框选择 Session，再输入 segment，通常是 `segment1`。
 3. 先运行“检查”，查看 FPS、帧/样本数和异常间隔。
 4. 用“打包数据”生成 zip 给别人使用。默认会压缩视频。
 5. 用“导出 RRD”生成时间对齐或帧对齐的 Rerun 文件。
@@ -201,7 +201,9 @@ LANGUAGE_PACKS = {
     "English": {
         "title": "# Robocap Rerun Tools",
         "language": "Language",
-        "session": "Session directory",
+        "dataset_root": "Dataset root directory",
+        "scan_sessions_button": "Scan sessions",
+        "session": "Session",
         "segment": "Segment",
         "output": "Output",
         "inspect_button": "Inspect",
@@ -278,7 +280,9 @@ LANGUAGE_PACKS = {
     "中文": {
         "title": "# Robocap Rerun Tools 中文界面",
         "language": "语言",
-        "session": "Session 目录",
+        "dataset_root": "数据集根目录",
+        "scan_sessions_button": "扫描 Session",
+        "session": "Session",
         "segment": "Segment",
         "output": "输出",
         "inspect_button": "检查",
@@ -359,6 +363,23 @@ DEFAULT_OFFSET = 5
 OFFSET_UNIT = "robocap_video_frames"
 LEGACY_OFFSET_RATIO = 8
 WEB_SETTINGS_ENV = "ROBOCAP_RERUN_WEB_SETTINGS"
+DATASET_ROOT_SETTING = "dataset_root"
+SESSION_DIR_SETTING = "session_dir"
+SESSION_SCAN_MAX_DEPTH = 6
+SESSION_SCAN_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".venv",
+        "__pycache__",
+        "_analysis",
+        "_artifacts",
+        "_modelscope_dataset",
+        "build",
+        "dist",
+        "node_modules",
+        "raw_calibration",
+    }
+)
 STREAM_REFRESH_SECONDS = 0.5
 STREAM_LOG_MAX_LINES = 1000
 STREAM_LOG_MAX_CHARS = 256 * 1024
@@ -566,6 +587,205 @@ def save_default_offset(offset: object, settings_path: Path | None = None) -> tu
     settings["default_offset"] = value
     settings["offset_unit"] = OFFSET_UNIT
     return value, save_web_settings(settings, settings_path)
+
+
+def _clean_directory_value(value: object) -> str:
+    return str(value or "").strip().strip('"')
+
+
+def dataset_root_path(value: object) -> Path:
+    raw_value = _clean_directory_value(value)
+    if not raw_value:
+        raise ValueError("Dataset root directory is required.")
+    path = Path(raw_value).expanduser()
+    if not path.exists():
+        raise ValueError(f"Dataset root does not exist: {path}")
+    if not path.is_dir():
+        raise ValueError(f"Dataset root is not a directory: {path}")
+    return path.resolve()
+
+
+def is_robocap_session_dir(path: Path) -> bool:
+    try:
+        return any(
+            child.is_file() and child.name.lower().startswith("robocap_")
+            for child in path.iterdir()
+        )
+    except OSError:
+        return False
+
+
+def discover_session_directories(
+    dataset_root: Path, *, max_depth: int = SESSION_SCAN_MAX_DEPTH
+) -> list[Path]:
+    root = dataset_root.expanduser().resolve()
+    if max_depth < 0:
+        raise ValueError("Session scan depth must be non-negative.")
+
+    sessions: list[Path] = []
+    visited: set[str] = set()
+
+    def visit(path: Path, depth: int) -> None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return
+        identity = os.path.normcase(str(resolved))
+        if identity in visited:
+            return
+        visited.add(identity)
+
+        if is_robocap_session_dir(resolved):
+            sessions.append(resolved)
+            return
+        if depth >= max_depth:
+            return
+
+        try:
+            children = sorted(
+                (
+                    child
+                    for child in resolved.iterdir()
+                    if child.name.lower() not in SESSION_SCAN_SKIP_DIRS
+                    and child.is_dir()
+                    and not child.is_symlink()
+                ),
+                key=lambda child: child.name.casefold(),
+            )
+        except OSError:
+            return
+        for child in children:
+            visit(child, depth + 1)
+
+    visit(root, 0)
+    return sorted(sessions, key=lambda path: str(path).casefold())
+
+
+def session_dropdown_choices(dataset_root: Path, sessions: list[Path]) -> list[tuple[str, str]]:
+    root = dataset_root.resolve()
+    choices: list[tuple[str, str]] = []
+    for session in sessions:
+        resolved = session.resolve()
+        try:
+            label = str(resolved.relative_to(root))
+        except ValueError:
+            label = resolved.name
+        if label == ".":
+            label = resolved.name
+        choices.append((label, str(resolved)))
+    return choices
+
+
+def _matching_session_value(value: object, sessions: list[Path]) -> str | None:
+    candidate = _clean_directory_value(value)
+    if not candidate:
+        return None
+    candidate_identity = os.path.normcase(os.path.abspath(candidate))
+    for session in sessions:
+        resolved = str(session.resolve())
+        if os.path.normcase(os.path.abspath(resolved)) == candidate_identity:
+            return resolved
+    return None
+
+
+def save_session_browser_settings(
+    dataset_root: object,
+    session_dir: object,
+    settings_path: Path | None = None,
+) -> Path:
+    settings = load_web_settings(settings_path)
+    root_value = _clean_directory_value(dataset_root)
+    session_value = _clean_directory_value(session_dir)
+    if root_value:
+        settings[DATASET_ROOT_SETTING] = root_value
+    else:
+        settings.pop(DATASET_ROOT_SETTING, None)
+    if session_value:
+        settings[SESSION_DIR_SETTING] = session_value
+    else:
+        settings.pop(SESSION_DIR_SETTING, None)
+    return save_web_settings(settings, settings_path)
+
+
+def load_session_browser_settings(
+    settings_path: Path | None = None,
+) -> tuple[str, list[tuple[str, str]], str | None]:
+    settings = load_web_settings(settings_path)
+    root_value = settings.get(DATASET_ROOT_SETTING)
+    session_value = settings.get(SESSION_DIR_SETTING)
+    root = root_value if isinstance(root_value, str) else ""
+    session = session_value if isinstance(session_value, str) and session_value else None
+    if session is None:
+        return root, [], None
+    label = Path(session).name or session
+    return root, [(label, session)], session
+
+
+def scan_dataset_sessions(
+    dataset_root: object,
+    current_session: object,
+    language: str = "中文",
+    settings_path: Path | None = None,
+) -> tuple[str, object]:
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError(
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
+        ) from exc
+
+    root = dataset_root_path(dataset_root)
+    sessions = discover_session_directories(root)
+    selected = _matching_session_value(current_session, sessions)
+    if selected is None and sessions:
+        selected = str(sessions[0])
+    settings_file = save_session_browser_settings(root, selected, settings_path)
+    choices = session_dropdown_choices(root, sessions)
+
+    if language == "中文":
+        message = (
+            f"数据集根目录：{root}\n"
+            f"识别到 Session：{len(sessions)}\n"
+            f"当前 Session：{selected or '无'}\n"
+            f"配置文件：{settings_file}"
+        )
+        if not sessions:
+            message += "\n未找到根目录直接包含 robocap_* 源文件的 Session。"
+    else:
+        message = (
+            f"Dataset root: {root}\n"
+            f"Detected sessions: {len(sessions)}\n"
+            f"Current session: {selected or 'none'}\n"
+            f"Settings: {settings_file}"
+        )
+        if not sessions:
+            message += "\nNo session containing direct robocap_* source files was found."
+    return message, gr.update(choices=choices, value=selected)
+
+
+def select_session(
+    dataset_root: object,
+    session_dir: object,
+    settings_path: Path | None = None,
+) -> tuple[object, object, object, object, object, object, object, object]:
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError(
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
+        ) from exc
+
+    save_session_browser_settings(dataset_root, session_dir, settings_path)
+    return (
+        gr.update(value=""),
+        gr.update(choices=[], value=[]),
+        gr.update(value=""),
+        gr.update(choices=[], value=None),
+        gr.update(choices=[], value=None),
+        gr.update(choices=[], value=[]),
+        gr.update(value=""),
+        gr.update(value=True, interactive=True),
+    )
 
 
 def run_process(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
@@ -1459,6 +1679,8 @@ def language_updates(language: str):
     return [
         gr.update(value=labels["title"]),
         gr.update(label=labels["language"]),
+        gr.update(label=labels["dataset_root"]),
+        gr.update(value=labels["scan_sessions_button"]),
         gr.update(label=labels["session"]),
         gr.update(label=labels["segment"]),
         gr.update(label=labels["output"]),
@@ -1539,6 +1761,9 @@ def build_app():
 
     labels = language_values("中文")
     default_offset = load_default_offset()
+    initial_dataset_root, initial_session_choices, initial_session = (
+        load_session_browser_settings()
+    )
     try:
         from robocap_rerun_tools.modelscope_publisher import load_modelscope_settings
 
@@ -1554,10 +1779,21 @@ def build_app():
             language = gr.Radio(
                 label=labels["language"], choices=["中文", "English"], value="中文", scale=1
             )
-            session_dir = gr.Textbox(
+            dataset_root = gr.Textbox(
+                label=labels["dataset_root"],
+                value=initial_dataset_root,
+                placeholder=r"Z:\DATASETS\Frodobots\nokov",
+                scale=4,
+            )
+            scan_sessions_button = gr.Button(labels["scan_sessions_button"], scale=1)
+        with gr.Row():
+            session_dir = gr.Dropdown(
                 label=labels["session"],
-                placeholder=r"Z:\DATASETS\Frodobots\nokov\20260707_083023_session48",
-                scale=3,
+                choices=initial_session_choices,
+                value=initial_session,
+                allow_custom_value=True,
+                filterable=True,
+                scale=4,
             )
             segment = gr.Textbox(label=labels["segment"], value="segment1", scale=1)
         output = gr.Textbox(label=labels["output"], lines=16)
@@ -1830,12 +2066,40 @@ def build_app():
         with gr.Tab("文档 / Docs"):
             docs = gr.Markdown(labels["doc"])
 
+        session_dependent_outputs = [
+            gt_dir,
+            gt_files,
+            third_person_video,
+            report_html_file,
+            viewer_rrd_file,
+            modelscope_rrd_files,
+            nokov_source,
+            include_robowrist,
+        ]
+        session_scan_event = scan_sessions_button.click(
+            scan_dataset_sessions,
+            inputs=[dataset_root, session_dir, language],
+            outputs=[output, session_dir],
+        )
+        session_scan_event.then(
+            select_session,
+            inputs=[dataset_root, session_dir],
+            outputs=session_dependent_outputs,
+        )
+        session_dir.input(
+            select_session,
+            inputs=[dataset_root, session_dir],
+            outputs=session_dependent_outputs,
+        )
+
         language.change(
             language_updates,
             inputs=[language],
             outputs=[
                 title,
                 language,
+                dataset_root,
+                scan_sessions_button,
                 session_dir,
                 segment,
                 output,

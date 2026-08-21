@@ -19,6 +19,7 @@ use `capture_time` as the primary timeline; frame-aligned exports use the intege
 - Include selectable third-person video, Robocap video/sensors, robowrist, MAG, and IMU streams.
 - Package sessions with compressed video and stage/upload the documented ModelScope dataset layout.
 - Open generated HTML reports and RRD recordings directly from the Web UI.
+- Scan a collection root recursively and select any detected session from one searchable dropdown.
 
 ## Session Layout
 
@@ -84,6 +85,14 @@ The command examples below use `robocap-rerun` directly. Either activate once wi
 
 The bilingual Web UI provides inspection, packaging, time/frame RRD export, offset inspection,
 ModelScope staging/upload, report opening, RRD viewing, environment checks, and code updates.
+
+At the top of the page, enter the directory that contains the recording collection and click
+`Scan sessions`. The scanner finds direct children and nested layouts such as
+`EgoMotionActions/PXX/<session_id>`, then fills a searchable Session dropdown with relative labels.
+A session is recognized when its root directly contains at least one `robocap_*` source file.
+Generated analysis/artifact/dataset trees, calibration data, virtual environments, and build trees
+are excluded. The collection root and last selected Session are restored after a Web UI restart.
+Changing Session clears file selections derived from the previous Session before any new operation.
 
 CLI-backed actions stream combined stdout/stderr into the Output box about twice per second. The
 box shows status, elapsed time, recent logs, and either parsed `[n/total]`/percentage progress or an

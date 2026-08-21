@@ -15,6 +15,7 @@
 - 可选择第三人称视频、Robocap 视频/传感器、robowrist、MAG 和 IMU 是否进入 RRD。
 - 使用压缩视频打包 session，并准备、上传约定的 ModelScope 数据集结构。
 - 直接从 Web 打开检查 HTML 和生成的 RRD。
+- 递归扫描一个数据集合根目录，并从可搜索下拉框选择识别到的 Session。
 
 ## 适用数据
 
@@ -97,6 +98,13 @@ start_web.bat
 - ModelScope 数据准备、上传和 Token 配置
 - 环境、依赖和 Git 更新检查
 - 内置中文文档
+
+页面顶部先填写包含多条录制数据的数据集根目录，再点击“扫描 Session”。扫描器兼容 Session
+直接位于根目录下，以及 `EgoMotionActions/PXX/<session_id>` 这类嵌套结构；下拉框使用相对路径
+区分同名 Session。Session 的判定标准是其根目录直接存在至少一个 `robocap_*` 源文件。
+扫描会排除分析结果、生成产物、ModelScope 暂存数据、标定目录、虚拟环境和构建目录。数据集根目录
+和最近选择的 Session 会在 Web 重启后恢复；切换 Session 时会清空上一条 Session 派生出的 GT、
+检查报告、RRD、第三人称视频和 Offset 参考文件选择，避免跨 Session 误用。
 
 两个 Offset 输入框旁都有“设为默认值”按钮。点击后会把当前整数 Robocap 视频帧偏移量同步到“导出 RRD”和
 “Offset”两个页面，并在 Web UI 重启后继续使用。Windows 配置保存在
