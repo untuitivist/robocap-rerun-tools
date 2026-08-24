@@ -115,7 +115,10 @@ the CLI. Scanning also detects standard robowrist video and sensor streams. If n
 robowrist checkbox is cleared and disabled, and the export is named with `rw0`. The `Environment`
 tab checks Python/package/tool versions, ffmpeg/ffprobe, and Git repository state. It shows branch,
 commit, HTTPS origin, upstream, local changes, and ahead/behind counts. `Check code updates` fetches
-`origin`. `Update code and restart` requires a clean working tree and runs `git pull --ff-only`.
+`origin`. If fetching fails, the remote status is reported as unknown instead of treating a cached
+`origin/master` as current. Untracked local files are listed separately and do not by themselves
+mean the local commit differs from GitHub. `Update code and restart` requires a clean working tree
+and runs `git pull --ff-only`.
 Code and dependency updates use a separate `cmd` window, stop Web only after preflight, print logs,
 run `uv sync --extra web`, and restart through `start_web.bat`. Local changes are never stashed or
 overwritten.

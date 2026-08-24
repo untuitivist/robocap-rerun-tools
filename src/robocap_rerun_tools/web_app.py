@@ -959,6 +959,7 @@ def git_repository_report(*, fetch: bool = False) -> str:
         return f"## Git repository\n\n- repository: `not found at {PROJECT_ROOT}`"
 
     lines = ["## Git repository", "", f"- root: `{PROJECT_ROOT}`"]
+    fetch_code: int | None = None
     if fetch:
         fetch_code, fetch_output = run_process(
             [git, "fetch", "--prune", "origin"], cwd=PROJECT_ROOT
@@ -996,23 +997,37 @@ def git_repository_report(*, fetch: bool = False) -> str:
             ahead_text, behind_text = counts.split()
             ahead, behind = int(ahead_text), int(behind_text)
         except (TypeError, ValueError):
-            lines.append("- update_status: `unavailable`")
-        else:
-            if ahead and behind:
-                update_status = "diverged; manual Git resolution required"
-            elif behind:
-                update_status = f"update available ({behind} commits behind)"
-            elif ahead:
-                update_status = f"local branch ahead by {ahead} commits"
-            else:
-                update_status = "up to date"
-            lines.extend(
-                [
-                    f"- ahead: `{ahead}`",
-                    f"- behind: `{behind}`",
-                    f"- update_status: `{update_status}`",
-                ]
+            status = (
+                "unknown (fetch failed; remote-tracking data may be stale)"
+                if fetch and fetch_code != 0
+                else "unavailable"
             )
+            lines.append(f"- update_status: `{status}`")
+        else:
+            if fetch and fetch_code != 0:
+                lines.extend(
+                    [
+                        f"- cached_ahead: `{ahead}`",
+                        f"- cached_behind: `{behind}`",
+                        "- update_status: `unknown (fetch failed; remote-tracking data may be stale)`",
+                    ]
+                )
+            else:
+                if ahead and behind:
+                    update_status = "diverged; manual Git resolution required"
+                elif behind:
+                    update_status = f"update available ({behind} commits behind)"
+                elif ahead:
+                    update_status = f"local branch ahead by {ahead} commits"
+                else:
+                    update_status = "up to date"
+                lines.extend(
+                    [
+                        f"- ahead: `{ahead}`",
+                        f"- behind: `{behind}`",
+                        f"- update_status: `{update_status}`",
+                    ]
+                )
     if status_lines:
         lines.extend(["", "### Local changes", "", "```text", *status_lines[:50], "```"])
         if len(status_lines) > 50:

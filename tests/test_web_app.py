@@ -338,6 +338,43 @@ def test_git_repository_report_fetches_and_reports_behind_state(tmp_path, monkey
     assert "- working_tree: `clean`" in report
 
 
+def test_git_repository_report_does_not_claim_fresh_status_after_fetch_failure(
+    tmp_path, monkeypatch
+) -> None:
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(web_app, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(web_app.shutil, "which", lambda name: "git.exe" if name == "git" else None)
+
+    def fake_run_process(command, cwd=None):
+        arguments = command[1:]
+        responses = {
+            ("fetch", "--prune", "origin"): (1, "network unavailable"),
+            ("branch", "--show-current"): (0, "master"),
+            ("rev-parse", "--short=12", "HEAD"): (0, "abc123"),
+            ("remote", "get-url", "origin"): (0, "https://github.com/example/repo.git"),
+            (
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ): (0, "origin/master"),
+            ("status", "--porcelain"): (0, "?? local.tmp"),
+            ("rev-list", "--left-right", "--count", "HEAD...origin/master"): (0, "0\t0"),
+        }
+        return responses[tuple(arguments)]
+
+    monkeypatch.setattr(web_app, "run_process", fake_run_process)
+
+    report = web_app.git_repository_report(fetch=True)
+
+    assert "- fetch_origin: `failed`" in report
+    assert "- cached_ahead: `0`" in report
+    assert "- cached_behind: `0`" in report
+    assert "- update_status: `unknown (fetch failed; remote-tracking data may be stale)`" in report
+    assert "- update_status: `up to date`" not in report
+    assert "- working_tree: `dirty (1 paths)`" in report
+
+
 def test_code_update_refuses_dirty_worktree_without_stopping_web(tmp_path, monkeypatch) -> None:
     (tmp_path / ".git").mkdir()
     monkeypatch.setattr(web_app, "PROJECT_ROOT", tmp_path)

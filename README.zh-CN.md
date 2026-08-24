@@ -118,7 +118,9 @@ start_web.bat
 
 “环境 / Environment”页会检查 Python、Python 包、ffmpeg/ffprobe 和 Git 仓库状态，并显示分支、
 commit、HTTPS origin、upstream、本地改动及 ahead/behind 数量。“检查代码更新”会 fetch `origin`；
-“更新代码并重启”要求工作区干净，并执行 `git pull --ff-only`。代码更新和依赖更新都会在独立的
+fetch 失败时会明确显示远端状态未知，不再使用可能过期的 `origin/master` 得出“已是最新”。未跟踪
+文件会作为本地工作区状态单独列出，本身不代表本地 commit 与 GitHub 不同。“更新代码并重启”要求
+工作区干净，并执行 `git pull --ff-only`。代码更新和依赖更新都会在独立的
 `cmd` 窗口运行，通过预检后才关闭 Web，打印完整日志，执行 `uv sync --extra web`，最后通过
 `start_web.bat` 重启。程序不会自动 stash，也不会覆盖本地改动。
 
