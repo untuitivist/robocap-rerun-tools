@@ -36,7 +36,7 @@ def write_inspection_report(session_dir: Path, segment: str = "segment1") -> Pat
 def stage_fixture(tmp_path: Path) -> publisher.StageResult:
     session = tmp_path / "20260803_081935_session39"
     session.mkdir()
-    mocap_dir = session / "mocap"
+    mocap_dir = session / "Mocap-NOKOV"
     mocap_dir.mkdir()
     (mocap_dir / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
     (session / "robocap_segment1_video_left.mp4").write_bytes(b"video")
@@ -104,11 +104,16 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
     )
     assert staged.session_dir == expected.resolve()
     assert (expected / "mocap" / "motion.trc").is_file()
+    assert not (expected / "Mocap-NOKOV").exists()
     assert (expected / "robocap_segment1_video_left.mp4").read_bytes() == b"video"
     assert not (expected / "_artifacts").exists()
     report_text = staged.inspection_html.read_text(encoding="utf-8")
     assert str(tmp_path.resolve()) not in report_text
     assert '"sessionPath":"20260803_081935_session39"' in report_text
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    motion_record = next(item for item in manifest["files"] if item["kind"] == "data")
+    assert motion_record["source"] == "Mocap-NOKOV/motion.trc"
+    assert motion_record["packaged_as"] == "mocap/motion.trc"
 
     metadata = [
         json.loads(line) for line in staged.metadata_path.read_text(encoding="utf-8").splitlines()
@@ -367,14 +372,32 @@ def test_stage_session_never_packages_dotenv_files(tmp_path: Path) -> None:
     assert "secret" not in staged.manifest_path.read_text(encoding="utf-8")
 
 
-def test_stage_session_requires_canonical_mocap_directory(tmp_path: Path) -> None:
+def test_stage_session_rejects_legacy_nokov_directory(tmp_path: Path) -> None:
     session = tmp_path / "session"
     legacy_dir = session / "nokov"
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "motion.bvh").write_text("HIERARCHY\n", encoding="utf-8")
     write_inspection_report(session)
 
-    with pytest.raises(publisher.ModelScopePublisherError, match=r"named mocap/"):
+    with pytest.raises(publisher.ModelScopePublisherError, match=r"must start with mocap"):
+        publisher.stage_session(
+            session,
+            "P03",
+            dataset_root=tmp_path / "dataset",
+            raw_video=True,
+            progress=None,
+        )
+
+
+def test_stage_session_rejects_multiple_mocap_prefix_directories(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    for name in ("mocap_take01", "Mocap-Backup"):
+        mocap_dir = session / name
+        mocap_dir.mkdir(parents=True)
+        (mocap_dir / "motion.bvh").write_text("HIERARCHY\n", encoding="utf-8")
+    write_inspection_report(session)
+
+    with pytest.raises(publisher.ModelScopePublisherError, match=r"multiple mocap\* directories"):
         publisher.stage_session(
             session,
             "P03",

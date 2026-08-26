@@ -114,8 +114,10 @@ from typing import Any, Iterable, Sequence
 
 if __package__:
     from .alignment import FrameAlignment, round_positive_ratio
+    from .session_layout import is_mocap_directory_name
 else:
     from alignment import FrameAlignment, round_positive_ratio
+    from session_layout import is_mocap_directory_name
 
 
 def ensure_third_party_packages() -> None:
@@ -2844,7 +2846,7 @@ def discover_gt_dir(session_dir: Path, explicit_gt_dir: Path | None) -> Path | N
     preferred = sorted(
         root
         for root in candidate_roots
-        if root.name.lower().startswith("test") or root.name.lower() == "mocap"
+        if root.name.lower().startswith("test") or is_mocap_directory_name(root.name)
     )
     choices = preferred or sorted(candidate_roots)
     if len(choices) > 1:
@@ -3992,7 +3994,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Optional GT export folder. If omitted, a single session child folder named mocap, test*, or another "
+            "Optional GT export folder. If omitted, a single session child folder named mocap*, test*, or another "
             "directory containing GT files is auto-discovered. "
             "For the current NOKOV export this reads *-1.mp4, *-Tracker0.trc, *-LHand.trc, and *-RHand.trc."
         ),

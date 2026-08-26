@@ -15,6 +15,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from .alignment import FrameAlignment, round_positive_ratio
+from .session_layout import discover_mocap_directories, is_mocap_directory_name
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 TEXT_SUFFIXES = {".csv", ".tsv", ".trc", ".bvh", ".xrs"}
@@ -1159,7 +1160,9 @@ def infer_fps_source(path: str | Path, kind: str) -> str:
     if kind.lower() in GT_FPS_KINDS:
         return "gt"
     if any(
-        part.startswith("test") or part in {"gt", "ground_truth", "ground-truth", "mocap"}
+        part.startswith("test")
+        or part in {"gt", "ground_truth", "ground-truth"}
+        or is_mocap_directory_name(part)
         for part in parts[:-1]
     ):
         return "gt"
@@ -1395,6 +1398,26 @@ def video_to_gt_frame(video_frame: int, ratio: float, video_frame_offset: int) -
 def find_nokov_source(session_dir: Path, explicit: Path | None) -> Path | None:
     if explicit is not None:
         return explicit
+    mocap_dirs = discover_mocap_directories(session_dir)
+    if len(mocap_dirs) > 1:
+        raise ValueError(
+            "Multiple mocap* directories found; pass --nokov-source explicitly: "
+            f"{list(mocap_dirs)}"
+        )
+    if mocap_dirs:
+        source = find_first(
+            mocap_dirs[0],
+            [
+                "*-hand.bvh",
+                "*-Body0_Left.bvh",
+                "*.bvh",
+                "*-Tracker0.trc",
+                "*-hand.trc",
+                "*.trc",
+            ],
+        )
+        if source is not None:
+            return source
     return find_first(
         session_dir,
         [

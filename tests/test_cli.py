@@ -3,6 +3,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 from robocap_rerun_tools import cli, web_app
 from robocap_rerun_tools.alignment import round_positive_ratio
 from robocap_rerun_tools.cli import (
@@ -225,6 +227,25 @@ def test_find_nokov_source_prefers_hand_bvh(tmp_path: Path) -> None:
     assert find_nokov_source(tmp_path, None) == hand_bvh
 
 
+def test_find_nokov_source_reads_single_mocap_prefix_directory(tmp_path: Path) -> None:
+    mocap_dir = tmp_path / "mocap_take01"
+    mocap_dir.mkdir()
+    hand_bvh = mocap_dir / "sample-hand.bvh"
+    hand_bvh.write_text("", encoding="utf-8")
+
+    assert find_nokov_source(tmp_path, None) == hand_bvh
+
+
+def test_find_nokov_source_rejects_multiple_mocap_prefix_directories(tmp_path: Path) -> None:
+    for name in ("mocap_left", "Mocap-Right"):
+        mocap_dir = tmp_path / name
+        mocap_dir.mkdir()
+        (mocap_dir / "sample-hand.bvh").write_text("", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"Multiple mocap\* directories"):
+        find_nokov_source(tmp_path, None)
+
+
 def test_package_parser_defaults_to_compressed_video() -> None:
     parser = build_parser()
     args = parser.parse_args(["package-data", "Z:/DATASETS/Frodobots/nokov/session"])
@@ -289,7 +310,7 @@ def test_c3d_summary_supplies_gt_fps_for_auto_ratio(tmp_path: Path, monkeypatch)
     assert summary.frame_count == 2400
     assert summary.fps == 240.0
     assert abs((summary.median_dt_ms or 0.0) - 1000 / 240) < 1e-12
-    assert cli.infer_fps_source(Path("mocap") / path.name, summary.kind) == "gt"
+    assert cli.infer_fps_source(Path("mocap_take01") / path.name, summary.kind) == "gt"
 
 
 def test_modelscope_stage_parser_accepts_selected_rrd_files() -> None:

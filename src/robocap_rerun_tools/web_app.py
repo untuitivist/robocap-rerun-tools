@@ -37,6 +37,10 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 5. Use `Export RRD` to create time-aligned or frame-aligned Rerun files.
 6. Use `Offset` when you need to inspect or sweep a video-to-NOKOV frame offset.
 
+Each Session may contain one direct child directory whose name starts with `mocap`, matched without
+case sensitivity, for example `mocap/`, `mocap_01/`, or `Mocap-NOKOV/`. Multiple `mocap*`
+directories are reported as ambiguous. ModelScope staging always publishes this source as `mocap/`.
+
 The export controls can independently include or exclude MAG, IMU, robowrist, and third-person video data.
 `Interpolate dropped NOKOV frames` linearly fills GT trajectory gaps at the fixed 240 FPS source
 rate before either time or frame alignment. Video and sensor samples are never synthesized.
@@ -131,6 +135,10 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 4. 用“打包数据”生成 zip 给别人使用。默认会压缩视频。
 5. 用“导出 RRD”生成时间对齐或帧对齐的 Rerun 文件。
 6. 如果需要检查视频帧和 NOKOV 帧的偏移关系，用“Offset 检查”。
+
+每个 Session 可包含一个直属子目录，其名称以 `mocap` 开头且大小写不敏感，例如 `mocap/`、
+`mocap_01/` 或 `Mocap-NOKOV/`。同时存在多个 `mocap*` 目录时会明确报歧义；ModelScope
+暂存时始终将该源目录规范化发布为 `mocap/`。
 
 导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。“插值补齐 NOKOV 丢帧”
 会在时间或帧对齐之前，按固定 240 FPS 对 GT 轨迹时间缺口做线性插值；视频与传感器不会伪造样本。
@@ -2027,7 +2035,7 @@ def build_app():
 
         with gr.Tab("导出 RRD / Export"):
             scan_button = gr.Button(labels["scan_button"])
-            gt_dir = gr.Textbox(label=labels["gt_dir"], placeholder=r"Z:\...\mocap")
+            gt_dir = gr.Textbox(label=labels["gt_dir"], placeholder=r"Z:\...\mocap_take01")
             gt_files = gr.CheckboxGroup(label=labels["gt_files"], choices=[], value=[])
             with gr.Row():
                 mode = gr.Radio(label=labels["mode"], choices=["time", "frame"], value="frame")
@@ -2061,7 +2069,8 @@ def build_app():
                 include_third_person = gr.Checkbox(label=labels["include_third_person"], value=True)
             with gr.Row():
                 third_person_video = gr.Textbox(
-                    label=labels["third_person_video"], placeholder=r"Z:\...\mocap\demo-1.mp4"
+                    label=labels["third_person_video"],
+                    placeholder=r"Z:\...\mocap_take01\demo-1.mp4",
                 )
             scan_button.click(
                 scan_files,

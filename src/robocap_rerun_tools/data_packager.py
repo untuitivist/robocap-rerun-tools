@@ -145,28 +145,31 @@ def copy_or_compress_file(
     proxy_height: int,
     proxy_crf: int,
     proxy_bitrate: str,
+    *,
+    package_relative: Path | None = None,
 ) -> PackagedFile:
-    relative = source.relative_to(session_dir)
+    source_relative = source.relative_to(session_dir)
+    target_relative = package_relative if package_relative is not None else source_relative
     original_size = source.stat().st_size
     if is_video(source) and not raw_video:
-        package_relative = relative.with_suffix(".mp4")
-        target = staging_root / package_relative
+        packaged_as = target_relative.with_suffix(".mp4")
+        target = staging_root / packaged_as
         compress_video(source, target, ffmpeg, proxy_height, proxy_crf, proxy_bitrate)
         return PackagedFile(
-            source=relative.as_posix(),
-            packaged_as=package_relative.as_posix(),
+            source=source_relative.as_posix(),
+            packaged_as=packaged_as.as_posix(),
             kind="video_proxy",
             original_bytes=original_size,
             packaged_bytes=target.stat().st_size,
             compressed_video=True,
         )
 
-    target = staging_root / relative
+    target = staging_root / target_relative
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return PackagedFile(
-        source=relative.as_posix(),
-        packaged_as=relative.as_posix(),
+        source=source_relative.as_posix(),
+        packaged_as=target_relative.as_posix(),
         kind="video_raw" if is_video(source) else "data",
         original_bytes=original_size,
         packaged_bytes=target.stat().st_size,

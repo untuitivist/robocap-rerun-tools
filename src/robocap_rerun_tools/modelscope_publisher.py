@@ -21,6 +21,11 @@ from .dataset_intersection import (
     build_aligned_intersection_plan,
     stage_aligned_file,
 )
+from .session_layout import (
+    CANONICAL_MOCAP_DIR_NAME,
+    canonical_mocap_relative_path,
+    discover_mocap_directories,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
@@ -33,7 +38,7 @@ METADATA_NAME = "metadata.jsonl"
 DATASET_README_NAME = "README.md"
 ACTIONS_DIR_NAME = "EgoMotionActions"
 CALIBRATION_DIR_NAME = "raw_calibration"
-MOCAP_DIR_NAME = "mocap"
+MOCAP_DIR_NAME = CANONICAL_MOCAP_DIR_NAME
 PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
 REPO_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -114,11 +119,17 @@ def validate_session_id(value: str) -> str:
 
 
 def require_mocap_directory(session_dir: Path) -> Path:
-    mocap_dir = session_dir / MOCAP_DIR_NAME
-    if not mocap_dir.is_dir():
+    mocap_dirs = discover_mocap_directories(session_dir)
+    if not mocap_dirs:
         raise ModelScopePublisherError(
-            f"Session motion-capture directory must be named {MOCAP_DIR_NAME}/: {mocap_dir}"
+            f"Session motion-capture directory name must start with {MOCAP_DIR_NAME}: {session_dir}"
         )
+    if len(mocap_dirs) > 1:
+        raise ModelScopePublisherError(
+            "Session contains multiple mocap* directories; keep one source directory per Session: "
+            f"{list(mocap_dirs)}"
+        )
+    mocap_dir = mocap_dirs[0]
     if not any(path.is_file() for path in mocap_dir.rglob("*")):
         raise ModelScopePublisherError(f"Session motion-capture directory is empty: {mocap_dir}")
     return mocap_dir
@@ -835,6 +846,7 @@ def stage_session(
     aligned_records: dict[str, dict[str, object]] = {}
     total_source_files = len(files) + len(rerun_files)
     for index, path in enumerate(files, start=1):
+        package_relative = canonical_mocap_relative_path(path, source)
         if progress is not None:
             if intersection_plan is not None:
                 operation = "crop"
@@ -853,6 +865,7 @@ def stage_session(
                     proxy_height=proxy_height,
                     proxy_crf=proxy_crf,
                     proxy_bitrate=proxy_bitrate,
+                    package_relative=package_relative,
                 )
             except (DatasetIntersectionError, subprocess.CalledProcessError) as exc:
                 relative = path.relative_to(source)
@@ -872,6 +885,7 @@ def stage_session(
                     proxy_height,
                     proxy_crf,
                     proxy_bitrate,
+                    package_relative=package_relative,
                 )
             )
     for index, path in enumerate(rerun_files, start=len(files) + 1):

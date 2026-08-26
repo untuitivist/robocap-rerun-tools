@@ -868,9 +868,11 @@ def test_discover_gt_file_sets_uses_all_supported_files(tmp_path: Path) -> None:
     assert sum(1 for file_set in file_sets if file_set.xrs is not None) == 2
 
 
-def test_discover_gt_dir_accepts_mocap_folder_and_ignores_robowrist(tmp_path: Path) -> None:
+def test_discover_gt_dir_accepts_mocap_prefix_folder_and_ignores_robowrist(
+    tmp_path: Path,
+) -> None:
     session_dir = tmp_path / "session"
-    mocap_dir = session_dir / "mocap"
+    mocap_dir = session_dir / "Mocap-NOKOV"
     robowrist_dir = session_dir / "robowrist_device_left"
     mocap_dir.mkdir(parents=True)
     robowrist_dir.mkdir()

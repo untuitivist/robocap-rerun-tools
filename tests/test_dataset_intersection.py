@@ -245,7 +245,7 @@ def test_third_person_crop_updates_numeric_capture_start_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     session = tmp_path / "session"
-    mocap_dir = session / "mocap"
+    mocap_dir = session / "Mocap-NOKOV"
     mocap_dir.mkdir(parents=True)
     reference = session / "robocap_segment1_video_left.mp4"
     other_robocap = session / "robocap_segment1_video_right.mp4"
@@ -274,10 +274,65 @@ def test_third_person_crop_updates_numeric_capture_start_metadata(
         ffprobe="ffprobe",
     )
 
-    selection = plan.video_slice("mocap/third.mp4")
+    selection = plan.video_slice("Mocap-NOKOV/third.mp4")
     assert slice_tuple(selection.frames) == (1, 3, 2)
     assert selection.source_capture_start_ns == 200_000_000
     assert selection.staged_capture_start_ns == 233_000_000
     other_selection = plan.video_slice(other_robocap.name)
     assert slice_tuple(other_selection.frames) == (0, 2, 2)
     assert other_selection.staged_capture_start_ns == 99_999_000
+
+
+def test_stage_aligned_mocap_file_keeps_source_path_and_uses_canonical_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "session"
+    source = session / "mocap_take01" / "motion.trc"
+    source.parent.mkdir(parents=True)
+    source.write_text("source motion", encoding="utf-8")
+    target_dir = tmp_path / "dataset_session"
+    selection = intersection.FileFrameSlice(
+        "mocap_take01/motion.trc",
+        "mocap_trc",
+        intersection.FrameSlice(0, 1, 1),
+    )
+    plan = intersection.AlignedIntersectionPlan(
+        ratio=8,
+        video_frame_offset=0,
+        gt_frame_offset=0,
+        reference_video="robocap_segment1_video_left.mp4",
+        robocap_frames=intersection.FrameSlice(0, 1, 1),
+        mocap_frames=intersection.FrameSlice(0, 1, 1),
+        third_person_frames=None,
+        capture_start_ns=None,
+        capture_end_ns_exclusive=None,
+        video_slices=(),
+        motion_slices=(selection,),
+    )
+
+    def fake_crop(_source: Path, target: Path, _frames: intersection.FrameSlice) -> int:
+        target.parent.mkdir(parents=True)
+        target.write_text("cropped motion", encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(intersection, "crop_mocap_text", fake_crop)
+
+    packaged, aligned = intersection.stage_aligned_file(
+        source,
+        session,
+        target_dir,
+        plan,
+        raw_video=True,
+        ffmpeg="ffmpeg",
+        proxy_height=540,
+        proxy_crf=28,
+        proxy_bitrate="1400k",
+        package_relative=Path("mocap", "motion.trc"),
+    )
+
+    assert packaged.source == "mocap_take01/motion.trc"
+    assert packaged.packaged_as == "mocap/motion.trc"
+    assert (target_dir / "mocap" / "motion.trc").read_text(encoding="utf-8") == (
+        "cropped motion"
+    )
+    assert aligned["source"] == "mocap_take01/motion.trc"

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from .alignment import FrameAlignment
 from .data_packager import PackagedFile, encoder_args, is_video
+from .session_layout import is_path_under_mocap
 
 TEXT_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".trc", ".xrs"})
 MOCAP_SUFFIXES = frozenset({*TEXT_MOCAP_SUFFIXES, ".c3d"})
@@ -403,11 +404,6 @@ def mocap_frame_count(path: Path) -> int:
     return count
 
 
-def _relative_is_under(path: Path, session_dir: Path, directory: str) -> bool:
-    relative = path.relative_to(session_dir)
-    return bool(relative.parts and relative.parts[0].casefold() == directory.casefold())
-
-
 def _reference_video(
     session_dir: Path,
     files: Sequence[Path],
@@ -418,7 +414,7 @@ def _reference_video(
         path
         for path in files
         if is_video(path)
-        and not _relative_is_under(path, session_dir, "mocap")
+        and not is_path_under_mocap(path, session_dir)
         and path.name.casefold().startswith("robocap_")
     ]
     if not candidates:
@@ -473,7 +469,7 @@ def build_aligned_intersection_plan(
     source = session_dir.resolve()
     reference = _reference_video(source, files, segment, reference_video_label)
     all_mocap_data_files = [
-        path for path in files if _relative_is_under(path, source, "mocap") and not is_video(path)
+        path for path in files if is_path_under_mocap(path, source) and not is_video(path)
     ]
     unsupported_mocap_files = [
         path for path in all_mocap_data_files if path.suffix.casefold() not in MOCAP_SUFFIXES
@@ -489,10 +485,11 @@ def build_aligned_intersection_plan(
     mocap_files = all_mocap_data_files
     if not mocap_files:
         raise DatasetIntersectionError(
-            "Aligned staging requires at least one BVH, TRC, CSV, XRS, or C3D file under mocap/."
+            "Aligned staging requires at least one BVH, TRC, CSV, XRS, or C3D file under a "
+            "mocap* directory."
         )
     third_videos = [
-        path for path in files if _relative_is_under(path, source, "mocap") and is_video(path)
+        path for path in files if is_path_under_mocap(path, source) and is_video(path)
     ]
 
     reference_timestamps = read_video_frame_timestamps_ns(reference)
@@ -998,14 +995,16 @@ def stage_aligned_file(
     proxy_height: int,
     proxy_crf: int,
     proxy_bitrate: str,
+    package_relative: Path | None = None,
 ) -> tuple[PackagedFile, dict[str, object]]:
-    relative = source.relative_to(session_dir)
-    relative_name = relative.as_posix()
+    source_relative = source.relative_to(session_dir)
+    target_relative = package_relative if package_relative is not None else source_relative
+    relative_name = source_relative.as_posix()
     original_size = source.stat().st_size
     if is_video(source):
         selection = plan.video_slice(relative_name)
-        package_relative = relative.with_suffix(".mp4")
-        target = target_dir / package_relative
+        packaged_as = target_relative.with_suffix(".mp4")
+        target = target_dir / packaged_as
         crop_video(
             source,
             target,
@@ -1020,7 +1019,7 @@ def stage_aligned_file(
         )
         packaged = PackagedFile(
             source=relative_name,
-            packaged_as=package_relative.as_posix(),
+            packaged_as=packaged_as.as_posix(),
             kind="video_aligned_lossless" if raw_video else "video_aligned_proxy",
             original_bytes=original_size,
             packaged_bytes=target.stat().st_size,
@@ -1028,10 +1027,8 @@ def stage_aligned_file(
         )
         return packaged, selection.as_manifest()
 
-    target = target_dir / relative
-    if source.suffix.casefold() in MOCAP_SUFFIXES and _relative_is_under(
-        source, session_dir, "mocap"
-    ):
+    target = target_dir / target_relative
+    if source.suffix.casefold() in MOCAP_SUFFIXES and is_path_under_mocap(source, session_dir):
         selection = plan.motion_slice(relative_name)
         if source.suffix.casefold() == ".c3d":
             crop_c3d(source, target, selection.frames)
@@ -1039,7 +1036,7 @@ def stage_aligned_file(
             crop_mocap_text(source, target, selection.frames)
         packaged = PackagedFile(
             source=relative_name,
-            packaged_as=relative_name,
+            packaged_as=target_relative.as_posix(),
             kind="mocap_aligned",
             original_bytes=original_size,
             packaged_bytes=target.stat().st_size,
@@ -1060,7 +1057,7 @@ def stage_aligned_file(
         )
         packaged = PackagedFile(
             source=relative_name,
-            packaged_as=relative_name,
+            packaged_as=target_relative.as_posix(),
             kind="sensor_aligned",
             original_bytes=original_size,
             packaged_bytes=target.stat().st_size,
@@ -1078,7 +1075,7 @@ def stage_aligned_file(
     shutil.copy2(source, target)
     packaged = PackagedFile(
         source=relative_name,
-        packaged_as=relative_name,
+        packaged_as=target_relative.as_posix(),
         kind="data",
         original_bytes=original_size,
         packaged_bytes=target.stat().st_size,

@@ -27,8 +27,10 @@ The tool targets session folders such as
 `Z:\DATASETS\Frodobots\nokov\2026..._session...` containing:
 
 - Robocap first-person, eye, front, and optional wrist videos plus sensor files.
-- A canonical `mocap/` directory, or a legacy `test*/`/other GT directory, containing third-person
-  video and BVH/TRC/CSV/XRS motion-capture exports.
+- One direct child directory whose name starts with `mocap` (case-insensitive), such as `mocap/`,
+  `mocap_01/`, or `Mocap-NOKOV/`, containing third-person video and BVH/TRC/CSV/XRS/C3D
+  motion-capture exports. Multiple `mocap*` directories are treated as ambiguous. Legacy `test*/`
+  and other GT directories remain supported by RRD export discovery.
 - Optional `robowrist_<device_id>_<side>/` directories.
 - Optional MANO model files for advanced CLI hand-mesh retargeting.
 
