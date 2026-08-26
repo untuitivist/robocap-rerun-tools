@@ -28,12 +28,16 @@ def fake_cli_stream(captured: list[str], output: str = "Done.", returncode: int 
 
 def test_web_app_builds_with_report_viewer() -> None:
     app = web_app.build_app()
-    config = json.dumps(app.get_config_file(), ensure_ascii=False)
+    config_data = app.get_config_file()
+    config = json.dumps(config_data, ensure_ascii=False)
+    api_names = [dependency["api_name"] for dependency in config_data["dependencies"]]
 
     assert app is not None
     assert "数据集根目录" in config
     assert "扫描 Session" in config
     assert "参与上传的 RRD 文件" in config
+    assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
+    assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
     assert "保留原始视频" not in config
     assert "仓库不存在时创建" not in config
 
@@ -623,6 +627,11 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
     assert "--aligned-intersection" in captured
     assert captured[captured.index("--ratio") + 1] == "auto"
     assert captured[captured.index("--offset") + 1] == "-2"
+
+
+def test_modelscope_intersection_defaults_follow_rrd_alignment() -> None:
+    assert web_app.rrd_alignment_defaults(" 8 ", -3.0) == ("8", -3)
+    assert web_app.rrd_alignment_defaults("", 5) == ("auto", 5)
 
 
 def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monkeypatch) -> None:

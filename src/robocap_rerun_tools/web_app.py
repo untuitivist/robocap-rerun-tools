@@ -113,6 +113,9 @@ preserves the current token.
 Use `Prepare session` before `Upload prepared dataset`. Upload sends every session referenced by
 `metadata.jsonl` and uses the official `modelscope-hub`
 client and its resumable upload cache by default. The target repository must already exist.
+When aligned-intersection staging is enabled, its ratio and Offset are prefilled from the RRD
+Export controls and continue to follow changes made there. Edit the ModelScope copies only to
+override alignment for that staging operation.
 """
 
 
@@ -194,6 +197,8 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 再执行“上传已准备数据集”。
 上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存；
 目标仓库必须已经存在。
+启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
+需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
 """
 
 
@@ -272,6 +277,8 @@ LANGUAGE_PACKS = {
         "modelscope_intersection_ratio": "Intersection ratio",
         "modelscope_intersection_offset": "Intersection offset (signed Robocap frames)",
         "modelscope_intersection_help": (
+            "The ratio and Offset are initially copied from the RRD Export tab and follow changes "
+            "made there; edit these fields only when staging needs an explicit override. "
             "When enabled, staging keeps only the shared Robocap/mocap/third-person interval. "
             "`+N` advances mocap and third-person video, so their leading `N*ratio` and `N` "
             "source frames are removed; `-N` removes the unmatched leading Robocap frames. "
@@ -360,6 +367,8 @@ LANGUAGE_PACKS = {
         "modelscope_intersection_ratio": "交集比例 ratio",
         "modelscope_intersection_offset": "交集 Offset（有符号 Robocap 帧）",
         "modelscope_intersection_help": (
+            "ratio 和 Offset 默认从“导出 RRD”页填入，并随该页参数变化自动同步；只有暂存需要"
+            "单独覆盖时才在这里修改。"
             "启用后只暂存 Robocap、动捕和第三人称视频共同有效的区间。`+N` 表示动捕和"
             "第三人称视频前移，因此会删除其开头 `N*ratio` 帧和 `N` 帧；`-N` 会删除没有"
             "对应数据的 Robocap 开头帧。其他视频和 SQLite 传感器也裁到最终 Robocap "
@@ -1164,6 +1173,11 @@ def session_path(value: str) -> str:
 def optional_text(value: str | None) -> str | None:
     value = (value or "").strip()
     return value or None
+
+
+def rrd_alignment_defaults(ratio: object, offset: object) -> tuple[str, int]:
+    ratio_text = "" if ratio is None else str(ratio)
+    return optional_text(ratio_text) or "auto", normalize_offset(offset)
 
 
 def default_gt_dir(path: Path) -> Path | None:
@@ -2079,6 +2093,16 @@ def build_app():
                     export_height,
                 ],
                 outputs=output,
+            )
+            ratio.change(
+                rrd_alignment_defaults,
+                inputs=[ratio, offset],
+                outputs=[modelscope_intersection_ratio, modelscope_intersection_offset],
+            )
+            offset.change(
+                rrd_alignment_defaults,
+                inputs=[ratio, offset],
+                outputs=[modelscope_intersection_ratio, modelscope_intersection_offset],
             )
 
         with gr.Tab("Offset"):

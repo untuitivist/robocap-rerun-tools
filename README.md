@@ -210,7 +210,9 @@ The staged files have zero residual Offset. `manifest.json` and `metadata.jsonl`
 ratio, signed Offset, GT-frame Offset, and half-open source frame ranges. Unknown Mocap timeline
 formats are rejected in this mode instead of being silently copied without cropping. Full-session
 staging remains the default; the Web ModelScope tab exposes the intersection choice, ratio, and
-signed Offset directly.
+signed Offset directly. Its ratio and Offset fields are prefilled from the RRD Export controls and
+track later changes made there; either field can still be edited in the ModelScope tab when staging
+requires an explicit override.
 
 The Web tab scans the selected Segment and lets each RRD file be selected independently. The CLI
 equivalent is a repeatable `--rrd-file` option with either a Session-relative or absolute path;
