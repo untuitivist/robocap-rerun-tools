@@ -605,6 +605,9 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
                 str(Path("_artifacts") / "segment1" / "inspection" / "frame.rrd"),
                 str(Path("_artifacts") / "segment1" / "inspection" / "time.rrd"),
             ],
+            True,
+            "auto",
+            -2,
         )
     )
 
@@ -617,6 +620,9 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
     assert "--dataset-root" not in captured
     assert "--proxy-height" not in captured
     assert "--proxy-crf" not in captured
+    assert "--aligned-intersection" in captured
+    assert captured[captured.index("--ratio") + 1] == "auto"
+    assert captured[captured.index("--offset") + 1] == "-2"
 
 
 def test_web_modelscope_upload_never_passes_token_on_command_line(tmp_path, monkeypatch) -> None:

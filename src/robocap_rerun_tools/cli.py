@@ -18,8 +18,9 @@ from .alignment import FrameAlignment, round_positive_ratio
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 TEXT_SUFFIXES = {".csv", ".tsv", ".trc", ".bvh", ".xrs"}
+MOCAP_SUFFIXES = TEXT_SUFFIXES | {".c3d"}
 DATABASE_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
-GT_FPS_KINDS = {"bvh", "csv", "trc", "tsv", "xrs"}
+GT_FPS_KINDS = {"bvh", "c3d", "csv", "trc", "tsv", "xrs"}
 
 
 @dataclass(frozen=True)
@@ -462,6 +463,35 @@ def bvh_summary(path: Path) -> StreamSummary:
         dt_ms,
         0,
         "",
+    )
+
+
+def c3d_summary(path: Path) -> StreamSummary:
+    from .dataset_intersection import DatasetIntersectionError, c3d_metadata
+
+    try:
+        frames, fps, first_frame = c3d_metadata(path)
+    except DatasetIntersectionError as exc:
+        return StreamSummary(
+            path, "c3d", None, None, None, None, None, None, None, 1, str(exc)
+        )
+    dt_ms = 1000.0 / fps
+    start_s = max(0, first_frame - 1) / fps
+    end_s = start_s + (frames - 1) / fps
+    return StreamSummary(
+        path,
+        "c3d",
+        frames,
+        fps,
+        start_s,
+        end_s,
+        dt_ms,
+        dt_ms,
+        dt_ms,
+        0,
+        "",
+        stream="mocap_points",
+        time_basis="C3D POINT:RATE",
     )
 
 
@@ -1083,7 +1113,7 @@ def discover_files(session_dir: Path) -> list[Path]:
         and "_artifacts" not in p.relative_to(session_dir).parts
         and (
             p.suffix.lower() in VIDEO_SUFFIXES
-            or p.suffix.lower() in TEXT_SUFFIXES
+            or p.suffix.lower() in MOCAP_SUFFIXES
             or p.suffix.lower() in DATABASE_SUFFIXES
         )
     )
@@ -1097,6 +1127,8 @@ def summarize_file(path: Path, ffprobe: str) -> StreamSummary:
         return trc_summary(path)
     if suffix == ".bvh":
         return bvh_summary(path)
+    if suffix == ".c3d":
+        return c3d_summary(path)
     if suffix == ".xrs":
         return xrs_summary(path)
     if suffix in {".csv", ".tsv"}:
@@ -1805,6 +1837,23 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
 
     try:
         refresh_modelscope_inspection(args)
+        resolved_ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
+        resolved_ratio: float | None = None
+        ratio_estimate = None
+        if args.aligned_intersection:
+            if args.ratio == "auto":
+                ratio_estimate = resolve_session_auto_ratio(
+                    args.session_dir, args.segment, resolved_ffprobe
+                )
+                if ratio_estimate is None:
+                    raise ValueError(
+                        "Automatic ratio could not be resolved. Run inspect or pass --ratio."
+                    )
+                resolved_ratio = float(ratio_estimate.ratio)
+            else:
+                resolved_ratio = float(args.ratio)
+                if not math.isfinite(resolved_ratio) or resolved_ratio <= 0:
+                    raise ValueError("ModelScope intersection ratio must be finite and positive.")
         staged = stage_session(
             args.session_dir,
             args.primitive_id,
@@ -1813,12 +1862,16 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
             segment=args.segment,
             raw_video=args.raw_video,
             ffmpeg=args.ffmpeg,
-            ffprobe=resolve_ffprobe(args.ffprobe, args.ffmpeg),
+            ffprobe=resolved_ffprobe,
             proxy_height=args.proxy_height,
             proxy_crf=args.proxy_crf,
             proxy_bitrate=args.proxy_bitrate,
             include_rrd=args.include_rrd,
             rrd_files=args.rrd_files,
+            aligned_intersection=args.aligned_intersection,
+            frame_ratio=resolved_ratio,
+            video_frame_offset=args.offset,
+            reference_video_label=args.reference_video,
             dry_run=args.dry_run,
         )
     except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
@@ -1834,6 +1887,16 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
     print(f"Left device ID: {staged.left_device_id or 'not detected'}")
     print(f"Right device ID: {staged.right_device_id or 'not detected'}")
     print(f"Inspection HTML: {staged.inspection_html}")
+    if staged.alignment is not None:
+        print(
+            "Aligned intersection: "
+            f"ratio={staged.alignment['ratio']}, "
+            f"Robocap offset={int(staged.alignment['video_frame_offset']):+d}, "
+            f"GT offset={int(staged.alignment['gt_frame_offset']):+d}, "
+            "staged residual offset=0"
+        )
+    if ratio_estimate is not None:
+        print(auto_ratio_console_summary(ratio_estimate))
     if not staged.dry_run:
         print(f"Metadata: {staged.metadata_path}")
     return 0
@@ -1979,6 +2042,36 @@ def build_parser() -> argparse.ArgumentParser:
     modelscope_stage_parser.add_argument("--proxy-bitrate", default="1400k")
     modelscope_stage_parser.add_argument("--ffmpeg", default="ffmpeg")
     modelscope_stage_parser.add_argument("--ffprobe", default="ffprobe")
+    modelscope_stage_parser.add_argument(
+        "--aligned-intersection",
+        action="store_true",
+        help=(
+            "Stage only the shared Robocap/mocap/third-person frame interval after applying "
+            "the signed offset; crop videos and SQLite sensors to the same Robocap window."
+        ),
+    )
+    modelscope_stage_parser.add_argument(
+        "--ratio",
+        default="auto",
+        help=(
+            "Mocap/Robocap frame ratio for --aligned-intersection. Default auto uses the "
+            "same rounded FPS estimate as frame-aligned RRD export."
+        ),
+    )
+    modelscope_stage_parser.add_argument(
+        "--offset",
+        type=int,
+        default=0,
+        help=(
+            "Signed Robocap-frame offset for --aligned-intersection. Positive advances mocap "
+            "and third-person video, so their leading frames are removed from the staged copy."
+        ),
+    )
+    modelscope_stage_parser.add_argument(
+        "--reference-video",
+        default="left",
+        help="Robocap video label used as the aligned-intersection reference.",
+    )
     modelscope_rrd_group = modelscope_stage_parser.add_mutually_exclusive_group()
     modelscope_rrd_group.add_argument(
         "--include-rrd",

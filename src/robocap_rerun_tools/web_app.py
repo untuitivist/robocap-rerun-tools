@@ -268,6 +268,17 @@ LANGUAGE_PACKS = {
         "modelscope_save_token": "Save ModelScope settings",
         "modelscope_clear_token": "Clear saved token",
         "modelscope_check_token": "Check authentication",
+        "modelscope_aligned_intersection": "Stage aligned intersection only",
+        "modelscope_intersection_ratio": "Intersection ratio",
+        "modelscope_intersection_offset": "Intersection offset (signed Robocap frames)",
+        "modelscope_intersection_help": (
+            "When enabled, staging keeps only the shared Robocap/mocap/third-person interval. "
+            "`+N` advances mocap and third-person video, so their leading `N*ratio` and `N` "
+            "source frames are removed; `-N` removes the unmatched leading Robocap frames. "
+            "All videos and SQLite sensors are clipped to the resulting Robocap time window. "
+            "The staged streams then have zero residual offset; source ranges remain in manifest.json. "
+            "Source Session files are never modified."
+        ),
         "modelscope_refresh_inspection": "Regenerate inspection HTML before preparing",
         "modelscope_scan_rrd": "Scan RRD files",
         "modelscope_rrd_files": "RRD files to upload",
@@ -345,6 +356,16 @@ LANGUAGE_PACKS = {
         "modelscope_save_token": "保存 ModelScope 配置",
         "modelscope_clear_token": "清除已保存 Token",
         "modelscope_check_token": "检查身份",
+        "modelscope_aligned_intersection": "仅暂存对齐后的交集",
+        "modelscope_intersection_ratio": "交集比例 ratio",
+        "modelscope_intersection_offset": "交集 Offset（有符号 Robocap 帧）",
+        "modelscope_intersection_help": (
+            "启用后只暂存 Robocap、动捕和第三人称视频共同有效的区间。`+N` 表示动捕和"
+            "第三人称视频前移，因此会删除其开头 `N*ratio` 帧和 `N` 帧；`-N` 会删除没有"
+            "对应数据的 Robocap 开头帧。其他视频和 SQLite 传感器也裁到最终 Robocap "
+            "时间窗。暂存副本的残余 offset 为 0，原始区间记录在 manifest.json；源 Session "
+            "永远不会被修改。"
+        ),
         "modelscope_refresh_inspection": "准备前重新生成检查 HTML",
         "modelscope_scan_rrd": "扫描 RRD 文件",
         "modelscope_rrd_files": "参与上传的 RRD 文件",
@@ -1533,6 +1554,9 @@ def stage_modelscope_data(
     primitive_id: str,
     refresh_inspection: bool,
     selected_rrd_files: list[str] | None,
+    aligned_intersection: bool,
+    intersection_ratio: str,
+    intersection_offset: float,
 ) -> Iterator[str]:
     args = [
         "modelscope-stage",
@@ -1544,6 +1568,16 @@ def stage_modelscope_data(
         args.extend(["--segment", segment.strip()])
     if refresh_inspection:
         args.append("--refresh-inspection")
+    if aligned_intersection:
+        args.extend(
+            [
+                "--aligned-intersection",
+                "--ratio",
+                optional_text(intersection_ratio) or "auto",
+                "--offset",
+                str(normalize_offset(intersection_offset)),
+            ]
+        )
     for rrd_file in selected_rrd_files or []:
         args.extend(["--rrd-file", str(rrd_file)])
     yield from stream_cli_command(args)
@@ -1768,6 +1802,10 @@ def language_updates(language: str):
         gr.update(value=labels["modelscope_save_token"]),
         gr.update(value=labels["modelscope_clear_token"]),
         gr.update(value=labels["modelscope_check_token"]),
+        gr.update(label=labels["modelscope_aligned_intersection"]),
+        gr.update(label=labels["modelscope_intersection_ratio"]),
+        gr.update(label=labels["modelscope_intersection_offset"]),
+        gr.update(value=labels["modelscope_intersection_help"]),
         gr.update(label=labels["modelscope_refresh_inspection"]),
         gr.update(value=labels["modelscope_scan_rrd"]),
         gr.update(label=labels["modelscope_rrd_files"]),
@@ -1913,6 +1951,21 @@ def build_app():
                 outputs=output,
             )
             with gr.Row():
+                modelscope_aligned_intersection = gr.Checkbox(
+                    label=labels["modelscope_aligned_intersection"], value=False
+                )
+                modelscope_intersection_ratio = gr.Textbox(
+                    label=labels["modelscope_intersection_ratio"], value="auto"
+                )
+                modelscope_intersection_offset = gr.Number(
+                    label=labels["modelscope_intersection_offset"],
+                    value=default_offset,
+                    precision=0,
+                )
+            modelscope_intersection_help = gr.Markdown(
+                labels["modelscope_intersection_help"]
+            )
+            with gr.Row():
                 modelscope_refresh_inspection = gr.Checkbox(
                     label=labels["modelscope_refresh_inspection"], value=True
                 )
@@ -1940,6 +1993,9 @@ def build_app():
                     modelscope_primitive,
                     modelscope_refresh_inspection,
                     modelscope_rrd_files,
+                    modelscope_aligned_intersection,
+                    modelscope_intersection_ratio,
+                    modelscope_intersection_offset,
                 ],
                 outputs=output,
             )
@@ -2187,6 +2243,10 @@ def build_app():
                 modelscope_save_token,
                 modelscope_clear_token,
                 modelscope_check_token,
+                modelscope_aligned_intersection,
+                modelscope_intersection_ratio,
+                modelscope_intersection_offset,
+                modelscope_intersection_help,
                 modelscope_refresh_inspection,
                 modelscope_scan_rrd,
                 modelscope_rrd_files,

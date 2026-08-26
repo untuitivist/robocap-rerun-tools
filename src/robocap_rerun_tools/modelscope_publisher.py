@@ -15,6 +15,12 @@ from urllib.parse import urlsplit
 from dotenv import dotenv_values, set_key
 
 from .data_packager import PackagedFile, copy_or_compress_file, discover_package_files, is_video
+from .dataset_intersection import (
+    AlignedIntersectionPlan,
+    DatasetIntersectionError,
+    build_aligned_intersection_plan,
+    stage_aligned_file,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
@@ -65,6 +71,7 @@ class StageResult:
     main_device_id: str | None = None
     left_device_id: str | None = None
     right_device_id: str | None = None
+    alignment: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -627,6 +634,15 @@ Raw calibration lives outside each action session under the dataset-level
 `raw_calibration/<device_id>/` tree. Session manifests and `metadata.jsonl` contain only explicit
 `main`, `left`, and `right` device IDs needed to resolve those records.
 
+## Alignment variants
+
+Session staging normally preserves the complete source recording. A session may instead contain
+only the frame-aligned intersection selected by its source Robocap-frame offset and Mocap/Robocap
+ratio. For an intersection session, `manifest.json` records the source half-open frame interval of
+every video and motion-capture file, the source offset, and the capture-time window applied to
+SQLite sensors. After cropping, all staged streams have zero residual offset. Original TRC/CSV/XRS
+frame and timestamp columns and the C3D first-frame identity remain unchanged for traceability.
+
 ## Complete dataset structure
 
 Only the concrete NOKOV motion-capture export format selection and explicitly selected RRD files
@@ -738,6 +754,10 @@ def stage_session(
     include_rrd: bool = False,
     rrd_files: Sequence[str | Path] | None = None,
     inspection_report: Path | None = None,
+    aligned_intersection: bool = False,
+    frame_ratio: float | None = None,
+    video_frame_offset: int = 0,
+    reference_video_label: str = "left",
     dry_run: bool = False,
     progress: Callable[[str], None] | None = print,
 ) -> StageResult:
@@ -766,6 +786,23 @@ def stage_session(
     )
     if not files:
         raise ModelScopePublisherError(f"No session files were discovered in {source}.")
+    intersection_plan: AlignedIntersectionPlan | None = None
+    if aligned_intersection:
+        if frame_ratio is None:
+            raise ValueError("Aligned-intersection staging requires a resolved frame ratio.")
+        try:
+            intersection_plan = build_aligned_intersection_plan(
+                source,
+                files,
+                segment=segment,
+                ratio=frame_ratio,
+                video_frame_offset=video_frame_offset,
+                ffprobe=ffprobe,
+                reference_video_label=reference_video_label,
+                progress=progress,
+            )
+        except DatasetIntersectionError as exc:
+            raise ModelScopePublisherError(str(exc)) from exc
 
     manifest_path = target / "manifest.json"
     metadata_path = root / METADATA_NAME
@@ -789,28 +826,54 @@ def stage_session(
             main_device_id=device_ids["main"],
             left_device_id=device_ids["left"],
             right_device_id=device_ids["right"],
+            alignment=(intersection_plan.as_manifest() if intersection_plan else None),
         )
 
     target.mkdir(parents=True, exist_ok=True)
     reset_staged_rerun_directory(target)
-    packaged = []
+    packaged: list[PackagedFile] = []
+    aligned_records: dict[str, dict[str, object]] = {}
     total_source_files = len(files) + len(rerun_files)
     for index, path in enumerate(files, start=1):
         if progress is not None:
-            operation = "compress" if is_video(path) and not raw_video else "copy"
+            if intersection_plan is not None:
+                operation = "crop"
+            else:
+                operation = "compress" if is_video(path) and not raw_video else "copy"
             progress(f"[{index}/{total_source_files}] {operation} {path.relative_to(source)}")
-        packaged.append(
-            copy_or_compress_file(
-                path,
-                source,
-                target,
-                raw_video,
-                ffmpeg,
-                proxy_height,
-                proxy_crf,
-                proxy_bitrate,
+        if intersection_plan is not None:
+            try:
+                item, aligned_record = stage_aligned_file(
+                    path,
+                    source,
+                    target,
+                    intersection_plan,
+                    raw_video=raw_video,
+                    ffmpeg=ffmpeg,
+                    proxy_height=proxy_height,
+                    proxy_crf=proxy_crf,
+                    proxy_bitrate=proxy_bitrate,
+                )
+            except (DatasetIntersectionError, subprocess.CalledProcessError) as exc:
+                relative = path.relative_to(source)
+                raise ModelScopePublisherError(
+                    f"Aligned-intersection staging failed for {relative}: {exc}"
+                ) from exc
+            packaged.append(item)
+            aligned_records[item.source] = aligned_record
+        else:
+            packaged.append(
+                copy_or_compress_file(
+                    path,
+                    source,
+                    target,
+                    raw_video,
+                    ffmpeg,
+                    proxy_height,
+                    proxy_crf,
+                    proxy_bitrate,
+                )
             )
-        )
     for index, path in enumerate(rerun_files, start=len(files) + 1):
         if progress is not None:
             progress(f"[{index}/{total_source_files}] copy {path.relative_to(source)}")
@@ -825,10 +888,16 @@ def stage_session(
         "packaged_bytes": inspection_target.stat().st_size,
         "compressed_video": False,
     }
-    file_records = [asdict(item) for item in packaged] + [report_record]
+    file_records = []
+    for item in packaged:
+        record = asdict(item)
+        if item.source in aligned_records:
+            record["aligned_selection"] = aligned_records[item.source]
+        file_records.append(record)
+    file_records.append(report_record)
     total_bytes = sum(int(item["packaged_bytes"]) for item in file_records)
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2 if intersection_plan is not None else 1,
         "created_at_utc": datetime.now(UTC).isoformat(),
         "primitive_id": primitive,
         "session_id": resolved_session_id,
@@ -841,29 +910,32 @@ def stage_session(
             "proxy_bitrate": proxy_bitrate,
             "include_rrd": bool(rerun_files),
             "rrd_files": [path.relative_to(source).as_posix() for path in rerun_files],
+            "aligned_intersection": intersection_plan is not None,
         },
         "files": file_records,
     }
+    if intersection_plan is not None:
+        manifest["alignment"] = intersection_plan.as_manifest()
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
         newline="\n",
     )
     relative_session = f"{ACTIONS_DIR_NAME}/{primitive}/{resolved_session_id}"
-    metadata_path = _update_metadata(
-        root,
-        {
-            "primitive_id": primitive,
-            "session_id": resolved_session_id,
-            "session_path": relative_session,
-            "manifest": f"{relative_session}/manifest.json",
-            "inspection_html": f"{relative_session}/{REPORT_NAME}",
-            "segment": segment or "auto/all",
-            "device_ids": device_ids,
-            "file_count": len(file_records),
-            "packaged_bytes": total_bytes,
-        },
-    )
+    metadata_record: dict[str, object] = {
+        "primitive_id": primitive,
+        "session_id": resolved_session_id,
+        "session_path": relative_session,
+        "manifest": f"{relative_session}/manifest.json",
+        "inspection_html": f"{relative_session}/{REPORT_NAME}",
+        "segment": segment or "auto/all",
+        "device_ids": device_ids,
+        "file_count": len(file_records),
+        "packaged_bytes": total_bytes,
+    }
+    if intersection_plan is not None:
+        metadata_record["alignment"] = intersection_plan.as_metadata()
+    metadata_path = _update_metadata(root, metadata_record)
     readme_path = _write_dataset_readme(root)
     return StageResult(
         dataset_root=root,
@@ -879,6 +951,7 @@ def stage_session(
         main_device_id=device_ids["main"],
         left_device_id=device_ids["left"],
         right_device_id=device_ids["right"],
+        alignment=(intersection_plan.as_manifest() if intersection_plan else None),
     )
 
 
@@ -905,6 +978,7 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
         )
     files = manifest.get("files") or []
     device_ids = manifest.get("device_ids") or {}
+    alignment = manifest.get("alignment")
     if not isinstance(device_ids, dict):
         raise ModelScopePublisherError("Staged manifest device_ids must be a JSON object.")
     total_bytes = sum(
@@ -924,6 +998,7 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
         main_device_id=_clean_device_id(device_ids.get("main")),
         left_device_id=_clean_device_id(device_ids.get("left")),
         right_device_id=_clean_device_id(device_ids.get("right")),
+        alignment=alignment if isinstance(alignment, dict) else None,
     )
 
 

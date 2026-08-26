@@ -7,6 +7,11 @@ from types import SimpleNamespace
 import pytest
 
 from robocap_rerun_tools import modelscope_publisher as publisher
+from robocap_rerun_tools.dataset_intersection import (
+    AlignedIntersectionPlan,
+    FileFrameSlice,
+    FrameSlice,
+)
 
 
 def write_inspection_report(session_dir: Path, segment: str = "segment1") -> Path:
@@ -152,6 +157,126 @@ def test_stage_session_uses_primitive_session_hierarchy_and_portable_report(
     assert "required third-person video" in dataset_readme
     assert "robowrist_<device_id>_left/" in dataset_readme
     assert "robowrist_<device_id>_right/" in dataset_readme
+
+
+def test_stage_session_records_applied_aligned_intersection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "session"
+    mocap_dir = session / "mocap"
+    mocap_dir.mkdir(parents=True)
+    video = session / "robocap_segment1_video_left.mp4"
+    motion = mocap_dir / "motion.trc"
+    video.write_bytes(b"video")
+    motion.write_text("motion", encoding="utf-8")
+    write_inspection_report(session)
+    plan = AlignedIntersectionPlan(
+        ratio=8,
+        video_frame_offset=1,
+        gt_frame_offset=8,
+        reference_video=video.name,
+        robocap_frames=FrameSlice(0, 2, 3),
+        mocap_frames=FrameSlice(8, 24, 24),
+        third_person_frames=None,
+        capture_start_ns=100,
+        capture_end_ns_exclusive=300,
+        video_slices=(
+            FileFrameSlice(video.name, "robocap_reference", FrameSlice(0, 2, 3)),
+        ),
+        motion_slices=(
+            FileFrameSlice("mocap/motion.trc", "mocap_trc", FrameSlice(8, 24, 24)),
+        ),
+    )
+    monkeypatch.setattr(publisher, "build_aligned_intersection_plan", lambda *args, **kwargs: plan)
+
+    def fake_stage_aligned_file(path: Path, source: Path, target: Path, *_args, **_kwargs):
+        packaged = publisher.copy_or_compress_file(
+            path,
+            source,
+            target,
+            True,
+            "ffmpeg",
+            540,
+            28,
+            "1400k",
+        )
+        return packaged, {"source": packaged.source, "role": "test_aligned"}
+
+    monkeypatch.setattr(publisher, "stage_aligned_file", fake_stage_aligned_file)
+
+    staged = publisher.stage_session(
+        session,
+        "P01",
+        dataset_root=tmp_path / "dataset",
+        segment="segment1",
+        raw_video=True,
+        aligned_intersection=True,
+        frame_ratio=8,
+        video_frame_offset=1,
+        progress=None,
+    )
+
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    metadata = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 2
+    assert manifest["options"]["aligned_intersection"] is True
+    assert manifest["alignment"]["video_frame_offset"] == 1
+    assert manifest["alignment"]["gt_frame_offset"] == 8
+    assert manifest["alignment"]["staged_video_frame_offset"] == 0
+    assert manifest["alignment"]["staged_gt_frame_offset"] == 0
+    assert all("aligned_selection" in item for item in manifest["files"][:-1])
+    assert metadata["alignment"]["video_frame_offset"] == 1
+    assert metadata["alignment"]["staged_video_frame_offset"] == 0
+    assert manifest["alignment"] == staged.alignment
+    assert publisher.load_staged_session(
+        staged.dataset_root, staged.primitive_id, staged.session_id
+    ).alignment == staged.alignment
+
+
+def test_stage_session_reports_aligned_file_failure_without_leaking_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "session"
+    mocap_dir = session / "mocap"
+    mocap_dir.mkdir(parents=True)
+    video = session / "robocap_segment1_video_left.mp4"
+    motion = mocap_dir / "motion.trc"
+    video.write_bytes(b"video")
+    motion.write_text("motion", encoding="utf-8")
+    write_inspection_report(session)
+    plan = AlignedIntersectionPlan(
+        ratio=8,
+        video_frame_offset=0,
+        gt_frame_offset=0,
+        reference_video=video.name,
+        robocap_frames=FrameSlice(0, 1, 1),
+        mocap_frames=FrameSlice(0, 8, 8),
+        third_person_frames=None,
+        capture_start_ns=100,
+        capture_end_ns_exclusive=200,
+        video_slices=(FileFrameSlice(video.name, "robocap_reference", FrameSlice(0, 1, 1)),),
+        motion_slices=(FileFrameSlice("mocap/motion.trc", "mocap_trc", FrameSlice(0, 8, 8)),),
+    )
+    monkeypatch.setattr(publisher, "build_aligned_intersection_plan", lambda *args, **kwargs: plan)
+
+    def fail_staging(*_args, **_kwargs):
+        raise publisher.DatasetIntersectionError("frame crop mismatch")
+
+    monkeypatch.setattr(publisher, "stage_aligned_file", fail_staging)
+
+    with pytest.raises(
+        publisher.ModelScopePublisherError,
+        match=r"motion\.trc: frame crop mismatch",
+    ):
+        publisher.stage_session(
+            session,
+            "P01",
+            dataset_root=tmp_path / "dataset",
+            aligned_intersection=True,
+            frame_ratio=8,
+            raw_video=True,
+            progress=None,
+        )
 
 
 def test_dataset_readme_contains_complete_action_task_catalog() -> None:

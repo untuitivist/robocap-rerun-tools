@@ -195,6 +195,23 @@ copied report, and updates the dataset-level metadata:
 robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection
 ```
 
+To stage only the frame-aligned intersection, add `--aligned-intersection` with the same signed
+Robocap-frame Offset used for RRD export. Positive Offset removes `offset * ratio` leading Mocap
+frames and `offset` leading third-person frames; negative Offset removes the unmatched leading
+Robocap interval. All first-person/Robowrist videos and SQLite sensors are cropped to the resulting
+Robocap capture-time window. BVH, TRC, CSV, XRS, and C3D are cropped frame-accurately. Source files
+are never modified:
+
+```bat
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --aligned-intersection --ratio auto --offset 1 --refresh-inspection
+```
+
+The staged files have zero residual Offset. `manifest.json` and `metadata.jsonl` retain the source
+ratio, signed Offset, GT-frame Offset, and half-open source frame ranges. Unknown Mocap timeline
+formats are rejected in this mode instead of being silently copied without cropping. Full-session
+staging remains the default; the Web ModelScope tab exposes the intersection choice, ratio, and
+signed Offset directly.
+
 The Web tab scans the selected Segment and lets each RRD file be selected independently. The CLI
 equivalent is a repeatable `--rrd-file` option with either a Session-relative or absolute path;
 `--include-rrd` remains available when every RRD in the Segment should be staged. Preparing the

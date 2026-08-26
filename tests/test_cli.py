@@ -246,6 +246,50 @@ def test_modelscope_stage_parser_defaults_to_compressed_video() -> None:
     assert args.proxy_height == 540
     assert args.refresh_inspection is False
     assert args.rrd_files is None
+    assert args.aligned_intersection is False
+    assert args.ratio == "auto"
+    assert args.offset == 0
+    assert args.reference_video == "left"
+
+
+def test_modelscope_stage_parser_accepts_aligned_intersection() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "modelscope-stage",
+            "Z:/DATASETS/Frodobots/nokov/session",
+            "--primitive-id",
+            "P01",
+            "--aligned-intersection",
+            "--ratio",
+            "8",
+            "--offset",
+            "-2",
+            "--reference-video",
+            "right",
+        ]
+    )
+
+    assert args.aligned_intersection is True
+    assert args.ratio == "8"
+    assert args.offset == -2
+    assert args.reference_video == "right"
+
+
+def test_c3d_summary_supplies_gt_fps_for_auto_ratio(tmp_path: Path, monkeypatch) -> None:
+    from robocap_rerun_tools import dataset_intersection
+
+    path = tmp_path / "motion.c3d"
+    path.write_bytes(b"c3d")
+    monkeypatch.setattr(dataset_intersection, "c3d_metadata", lambda _path: (2400, 240.0, 1))
+
+    summary = cli.c3d_summary(path)
+
+    assert summary.kind == "c3d"
+    assert summary.frame_count == 2400
+    assert summary.fps == 240.0
+    assert abs((summary.median_dt_ms or 0.0) - 1000 / 240) < 1e-12
+    assert cli.infer_fps_source(Path("mocap") / path.name, summary.kind) == "gt"
 
 
 def test_modelscope_stage_parser_accepts_selected_rrd_files() -> None:
