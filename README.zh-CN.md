@@ -191,7 +191,8 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 ```
 
 采集数据与动捕内容本身必需。只有具体采用哪些 NOKOV 导出格式和是否包含 RRD 是可选项；动捕格式
-至少存在一种。
+至少存在一种。Web 的 ModelScope 页会扫描 Session 直属的唯一 `mocap*` 目录，并像选择 RRD 一样
+逐文件显示复选框。扫描后默认全选；取消勾选的杂项不会进入暂存，且至少要保留一个 Mocap 文件。
 
 原始标定数据位于每个动作 session 之外，统一放在
 `<dataset_root>/raw_calibration/<device_id>/`。Session 准备命令不会复制源 session 内的本地
@@ -218,6 +219,14 @@ robocap-rerun modelscope-auth
 
 ```bat
 robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection
+```
+
+CLI 可重复使用 `--mocap-file`，参数可以是 Session 相对路径或绝对路径；不传该参数时，为兼容旧用法，
+会暂存全部可打包 Mocap 文件。重新准备同一 Session 会按本次选择同步目标 `mocap/`，此前勾选但本次
+取消的文件不会残留。RRD 使用相同的逐文件逻辑，但允许一个都不选：
+
+```bat
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --mocap-file mocap\motion.trc --mocap-file mocap\third_person.mp4 --rrd-file _artifacts\segment1\inspection\frame.rrd
 ```
 
 再上传 `metadata.jsonl` 引用的全部已准备 session。可恢复上传缓存会跳过未变化的文件：

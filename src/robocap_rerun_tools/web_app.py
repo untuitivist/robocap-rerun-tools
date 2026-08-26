@@ -111,6 +111,10 @@ compressed-video defaults, and a standalone timestamp inspection HTML is require
 files and select only the recordings that should be included. The generated dataset `README.md` is
 the canonical description of the complete dataset structure and file requirements.
 
+Scan the Session Mocap files before staging. The list includes every packageable file under the
+single `mocap*` source directory and is initially fully selected, like the RRD list. Uncheck
+unwanted files; only checked Mocap files are staged, and at least one must remain selected.
+
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
 preserves the current token.
@@ -199,6 +203,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 “ModelScope”页用于准备和上传当前 Session。网页准备流程固定使用 CLI 的压缩视频默认值，并强制要求
 已有独立的时间戳检查 HTML。扫描 RRD 后可逐项勾选需要加入数据集的文件。生成的数据集 `README.md`
 是完整数据集结构与文件要求的唯一说明位置。
+
+准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件，并像
+RRD 列表一样默认全选；取消不需要的杂项后，只有仍勾选的 Mocap 文件会进入暂存，且至少保留一个。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
@@ -295,6 +302,8 @@ LANGUAGE_PACKS = {
             "Source Session files are never modified."
         ),
         "modelscope_refresh_inspection": "Regenerate inspection HTML before preparing",
+        "modelscope_scan_mocap": "Scan Mocap files",
+        "modelscope_mocap_files": "Mocap files to upload",
         "modelscope_scan_rrd": "Scan RRD files",
         "modelscope_rrd_files": "RRD files to upload",
         "modelscope_use_cache": "Use resumable upload cache",
@@ -384,6 +393,8 @@ LANGUAGE_PACKS = {
             "永远不会被修改。"
         ),
         "modelscope_refresh_inspection": "准备前重新生成检查 HTML",
+        "modelscope_scan_mocap": "扫描 Mocap 文件",
+        "modelscope_mocap_files": "参与上传的 Mocap 文件",
         "modelscope_scan_rrd": "扫描 RRD 文件",
         "modelscope_rrd_files": "参与上传的 RRD 文件",
         "modelscope_use_cache": "使用可恢复上传缓存",
@@ -818,7 +829,7 @@ def select_session(
     dataset_root: object,
     session_dir: object,
     settings_path: Path | None = None,
-) -> tuple[object, object, object, object, object, object, object, object]:
+) -> tuple[object, object, object, object, object, object, object, object, object]:
     try:
         import gradio as gr
     except ImportError as exc:
@@ -833,6 +844,7 @@ def select_session(
         gr.update(value=""),
         gr.update(choices=[], value=None),
         gr.update(choices=[], value=None),
+        gr.update(choices=[], value=[]),
         gr.update(choices=[], value=[]),
         gr.update(value=""),
         gr.update(value=True, interactive=True),
@@ -1330,6 +1342,28 @@ def scan_modelscope_rrd_files(session_dir: str, segment: str) -> tuple[str, obje
     return summary, gr.update(choices=choices, value=choices)
 
 
+def scan_modelscope_mocap_files(session_dir: str) -> tuple[str, object]:
+    from robocap_rerun_tools.modelscope_publisher import find_mocap_files
+
+    path = Path(session_path(session_dir)).resolve()
+    mocap_files = find_mocap_files(path)
+    choices = [str(file.relative_to(path)) for file in mocap_files]
+    summary = "\n".join(
+        [
+            f"Session: {path}",
+            f"Selectable Mocap files: {len(choices)}",
+            *(f"- {choice}" for choice in choices),
+        ]
+    )
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError(
+            "Web UI requires Gradio. Install it with: uv sync --extra web"
+        ) from exc
+    return summary, gr.update(choices=choices, value=choices)
+
+
 def timestamp_report_path(session_dir: Path, segment: str | None) -> Path:
     return session_dir / "_artifacts" / (segment or "all") / "inspection" / TIMESTAMP_REPORT_NAME
 
@@ -1575,11 +1609,18 @@ def stage_modelscope_data(
     segment: str,
     primitive_id: str,
     refresh_inspection: bool,
+    selected_mocap_files: list[str] | None,
     selected_rrd_files: list[str] | None,
     aligned_intersection: bool,
     intersection_ratio: str,
     intersection_offset: float,
 ) -> Iterator[str]:
+    if not selected_mocap_files:
+        yield (
+            "No Mocap files selected. Scan Mocap files and keep at least one selection. / "
+            "未选择 Mocap 文件，请先扫描并至少勾选一个文件。"
+        )
+        return
     args = [
         "modelscope-stage",
         session_path(session_dir),
@@ -1600,6 +1641,8 @@ def stage_modelscope_data(
                 str(normalize_offset(intersection_offset)),
             ]
         )
+    for mocap_file in selected_mocap_files:
+        args.extend(["--mocap-file", str(mocap_file)])
     for rrd_file in selected_rrd_files or []:
         args.extend(["--rrd-file", str(rrd_file)])
     yield from stream_cli_command(args)
@@ -1829,6 +1872,8 @@ def language_updates(language: str):
         gr.update(label=labels["modelscope_intersection_offset"]),
         gr.update(value=labels["modelscope_intersection_help"]),
         gr.update(label=labels["modelscope_refresh_inspection"]),
+        gr.update(value=labels["modelscope_scan_mocap"]),
+        gr.update(label=labels["modelscope_mocap_files"]),
         gr.update(value=labels["modelscope_scan_rrd"]),
         gr.update(label=labels["modelscope_rrd_files"]),
         gr.update(label=labels["modelscope_use_cache"]),
@@ -1995,9 +2040,19 @@ def build_app():
                 modelscope_max_workers = gr.Number(
                     label=labels["modelscope_max_workers"], value=4, precision=0
                 )
-            modelscope_scan_rrd = gr.Button(labels["modelscope_scan_rrd"])
+            with gr.Row():
+                modelscope_scan_mocap = gr.Button(labels["modelscope_scan_mocap"])
+                modelscope_scan_rrd = gr.Button(labels["modelscope_scan_rrd"])
+            modelscope_mocap_files = gr.CheckboxGroup(
+                label=labels["modelscope_mocap_files"], choices=[], value=[]
+            )
             modelscope_rrd_files = gr.CheckboxGroup(
                 label=labels["modelscope_rrd_files"], choices=[], value=[]
+            )
+            modelscope_scan_mocap.click(
+                scan_modelscope_mocap_files,
+                inputs=[session_dir],
+                outputs=[output, modelscope_mocap_files],
             )
             modelscope_scan_rrd.click(
                 scan_modelscope_rrd_files,
@@ -2014,6 +2069,7 @@ def build_app():
                     segment,
                     modelscope_primitive,
                     modelscope_refresh_inspection,
+                    modelscope_mocap_files,
                     modelscope_rrd_files,
                     modelscope_aligned_intersection,
                     modelscope_intersection_ratio,
@@ -2189,6 +2245,7 @@ def build_app():
             third_person_video,
             report_html_file,
             viewer_rrd_file,
+            modelscope_mocap_files,
             modelscope_rrd_files,
             nokov_source,
             include_robowrist,
@@ -2281,6 +2338,8 @@ def build_app():
                 modelscope_intersection_offset,
                 modelscope_intersection_help,
                 modelscope_refresh_inspection,
+                modelscope_scan_mocap,
+                modelscope_mocap_files,
                 modelscope_scan_rrd,
                 modelscope_rrd_files,
                 modelscope_use_cache,

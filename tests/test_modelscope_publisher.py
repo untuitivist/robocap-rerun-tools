@@ -407,6 +407,94 @@ def test_stage_session_rejects_multiple_mocap_prefix_directories(tmp_path: Path)
         )
 
 
+def test_find_mocap_files_discovers_only_packageable_files_in_prefixed_directory(
+    tmp_path: Path,
+) -> None:
+    session = tmp_path / "session"
+    mocap_dir = session / "Mocap-NOKOV"
+    nested = mocap_dir / "take01"
+    nested.mkdir(parents=True)
+    motion = nested / "motion.trc"
+    rigid_body = mocap_dir / "rigid-body.csv"
+    motion.write_text("Frame#\tTime\n", encoding="utf-8")
+    rigid_body.write_text("frame,x,y,z\n", encoding="utf-8")
+    (mocap_dir / ".env").write_text("SECRET=value\n", encoding="utf-8")
+    (mocap_dir / "preview.rrd").write_bytes(b"rrd")
+    (session / "outside.txt").write_text("outside\n", encoding="utf-8")
+
+    assert publisher.find_mocap_files(session) == [rigid_body, motion]
+
+
+def test_resolve_mocap_files_accepts_relative_and_absolute_paths_and_deduplicates(
+    tmp_path: Path,
+) -> None:
+    session = tmp_path / "session"
+    mocap_dir = session / "mocap_take01"
+    mocap_dir.mkdir(parents=True)
+    motion = mocap_dir / "motion.trc"
+    rigid_body = mocap_dir / "rigid-body.csv"
+    motion.write_text("Frame#\tTime\n", encoding="utf-8")
+    rigid_body.write_text("frame,x,y,z\n", encoding="utf-8")
+
+    resolved = publisher.resolve_mocap_files(
+        session,
+        [motion.relative_to(session), rigid_body, motion.resolve()],
+    )
+
+    assert resolved == [motion, rigid_body]
+
+
+def test_resolve_mocap_files_rejects_empty_or_unavailable_selection(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    mocap_dir = session / "mocap"
+    mocap_dir.mkdir(parents=True)
+    (mocap_dir / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    outside = session / "outside.csv"
+    outside.write_text("frame,x,y,z\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="at least one Mocap file"):
+        publisher.resolve_mocap_files(session, [])
+    with pytest.raises(ValueError, match=r"not available under the Session mocap\*"):
+        publisher.resolve_mocap_files(session, [outside])
+
+
+def test_stage_session_synchronizes_explicit_mocap_selection(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    mocap_dir = session / "Mocap-NOKOV"
+    mocap_dir.mkdir(parents=True)
+    selected = mocap_dir / "motion.trc"
+    omitted = mocap_dir / "rigid-body.csv"
+    selected.write_text("Frame#\tTime\n", encoding="utf-8")
+    omitted.write_text("frame,x,y,z\n", encoding="utf-8")
+    write_inspection_report(session)
+
+    initial = publisher.stage_session(
+        session,
+        "P05",
+        dataset_root=tmp_path / "dataset",
+        raw_video=True,
+        progress=None,
+    )
+    assert (initial.session_dir / "mocap" / "motion.trc").is_file()
+    assert (initial.session_dir / "mocap" / "rigid-body.csv").is_file()
+
+    staged = publisher.stage_session(
+        session,
+        "P05",
+        dataset_root=tmp_path / "dataset",
+        mocap_files=[selected.relative_to(session)],
+        raw_video=True,
+        progress=None,
+    )
+
+    assert (staged.session_dir / "mocap" / "motion.trc").is_file()
+    assert not (staged.session_dir / "mocap" / "rigid-body.csv").exists()
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["options"]["mocap_selection"] == "explicit"
+    assert manifest["options"]["mocap_files"] == ["Mocap-NOKOV/motion.trc"]
+    assert not any(item["source"] == "Mocap-NOKOV/rigid-body.csv" for item in manifest["files"])
+
+
 def test_stage_records_device_ids_without_packaging_calibration(tmp_path: Path) -> None:
     session = tmp_path / "session"
     calibration = session / "raw_calibration"

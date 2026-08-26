@@ -266,6 +266,7 @@ def test_modelscope_stage_parser_defaults_to_compressed_video() -> None:
     assert args.raw_video is False
     assert args.proxy_height == 540
     assert args.refresh_inspection is False
+    assert args.mocap_files is None
     assert args.rrd_files is None
     assert args.aligned_intersection is False
     assert args.ratio == "auto"
@@ -332,6 +333,27 @@ def test_modelscope_stage_parser_accepts_selected_rrd_files() -> None:
     assert args.rrd_files == [
         Path("_artifacts/segment1/inspection/frame.rrd"),
         Path("_artifacts/segment1/inspection/time.rrd"),
+    ]
+
+
+def test_modelscope_stage_parser_accepts_selected_mocap_files() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "modelscope-stage",
+            "Z:/DATASETS/Frodobots/nokov/session",
+            "--primitive-id",
+            "P01",
+            "--mocap-file",
+            "Mocap-NOKOV/motion.trc",
+            "--mocap-file",
+            "Mocap-NOKOV/rigid-body.csv",
+        ]
+    )
+
+    assert args.mocap_files == [
+        Path("Mocap-NOKOV/motion.trc"),
+        Path("Mocap-NOKOV/rigid-body.csv"),
     ]
 
 

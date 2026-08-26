@@ -25,6 +25,8 @@ from .session_layout import (
     CANONICAL_MOCAP_DIR_NAME,
     canonical_mocap_relative_path,
     discover_mocap_directories,
+    is_mocap_directory_name,
+    is_path_under_mocap,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -133,6 +135,60 @@ def require_mocap_directory(session_dir: Path) -> Path:
     if not any(path.is_file() for path in mocap_dir.rglob("*")):
         raise ModelScopePublisherError(f"Session motion-capture directory is empty: {mocap_dir}")
     return mocap_dir
+
+
+def find_mocap_files(session_dir: Path) -> list[Path]:
+    source = session_dir.expanduser().resolve()
+    mocap_dir = require_mocap_directory(source)
+    mocap_root = mocap_dir.resolve()
+    files = discover_package_files(
+        source,
+        segment=None,
+        include_artifacts=False,
+        include_rrd=False,
+    )
+    selectable = [
+        path
+        for path in files
+        if path.is_relative_to(mocap_dir)
+        and not path.is_symlink()
+        and path.resolve().is_relative_to(mocap_root)
+    ]
+    if not selectable:
+        raise ModelScopePublisherError(
+            f"Session mocap* directory contains no packageable files: {mocap_dir}"
+        )
+    return selectable
+
+
+def resolve_mocap_files(
+    session_dir: Path,
+    selected_files: Sequence[str | Path] | None,
+) -> list[Path]:
+    available = find_mocap_files(session_dir)
+    if selected_files is None:
+        return available
+    if not selected_files:
+        raise ValueError("Select at least one Mocap file for ModelScope staging.")
+
+    available_by_path = {path.resolve(): path for path in available}
+    resolved: list[Path] = []
+    seen: set[Path] = set()
+    for value in selected_files:
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = session_dir / candidate
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        source = available_by_path.get(candidate)
+        if source is None:
+            raise ValueError(
+                f"Selected Mocap file is not available under the Session mocap* directory: {value}"
+            )
+        seen.add(candidate)
+        resolved.append(source)
+    return resolved
 
 
 def validate_endpoint(value: str | None) -> str:
@@ -445,6 +501,22 @@ def reset_staged_rerun_directory(target_dir: Path) -> None:
     shutil.rmtree(rerun_dir)
 
 
+def reset_staged_mocap_directories(
+    target_dir: Path,
+    progress: Callable[[str], None] | None,
+) -> None:
+    for path in sorted(target_dir.iterdir(), key=lambda item: item.name.casefold()):
+        if not is_mocap_directory_name(path.name):
+            continue
+        if path.is_symlink() or not path.is_dir():
+            raise ModelScopePublisherError(
+                f"Staged Mocap path is not a regular directory: {path}"
+            )
+        if progress is not None:
+            progress(f"Removing previously staged Mocap directory: {path}")
+        shutil.rmtree(path)
+
+
 def _portable_inspection_document(document: str, session_id: str) -> str:
     prefix = "const report="
     suffix = "; const eventTypes="
@@ -635,9 +707,10 @@ inspection report. Paths inside manifests and reports are dataset-relative.
 
 - Required capture streams: six `robocap_<segment>_video_*.mp4` first-person cameras, Robocap
   IMU/MAG databases, third-person videos, and Robowrist left/right video and sensor streams.
-- Required motion-capture content: all available NOKOV body and rigid-body data under `mocap/`.
-  The concrete BVH, CSV, TRC, XRS, C3D, or other export formats are optional choices, but at
-  least one motion-capture format must be present.
+- Required motion-capture content: the explicitly selected NOKOV body, rigid-body, and third-person
+  files under `mocap/`. The concrete BVH, CSV, TRC, XRS, C3D, or other export formats are optional
+  choices, but at least one motion-capture format must be present. Files not selected during
+  staging are not published.
 - Optional artifact: RRD files, only when explicitly selected.
 - Generated: `manifest.json` and `timestamp_anomaly_detail_table.html`.
 
@@ -762,6 +835,7 @@ def stage_session(
     proxy_height: int = 540,
     proxy_crf: int = 28,
     proxy_bitrate: str = "1400k",
+    mocap_files: Sequence[str | Path] | None = None,
     include_rrd: bool = False,
     rrd_files: Sequence[str | Path] | None = None,
     inspection_report: Path | None = None,
@@ -775,7 +849,6 @@ def stage_session(
     source = session_dir.expanduser().resolve()
     if not source.is_dir():
         raise FileNotFoundError(source)
-    require_mocap_directory(source)
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id or source.name)
     root = (dataset_root or default_dataset_root(source)).expanduser().resolve()
@@ -788,7 +861,18 @@ def stage_session(
         raise FileNotFoundError(
             f"Required inspection report not found: run inspect for {source} before staging."
         )
-    files = discover_package_files(source, segment, include_artifacts=False, include_rrd=False)
+    discovered_files = discover_package_files(
+        source,
+        segment,
+        include_artifacts=False,
+        include_rrd=False,
+    )
+    resolved_mocap_files = resolve_mocap_files(source, mocap_files)
+    files = sorted(
+        [path for path in discovered_files if not is_path_under_mocap(path, source)]
+        + resolved_mocap_files,
+        key=lambda path: path.as_posix().casefold(),
+    )
     rerun_files = resolve_rerun_files(
         source,
         segment,
@@ -841,6 +925,7 @@ def stage_session(
         )
 
     target.mkdir(parents=True, exist_ok=True)
+    reset_staged_mocap_directories(target, progress)
     reset_staged_rerun_directory(target)
     packaged: list[PackagedFile] = []
     aligned_records: dict[str, dict[str, object]] = {}
@@ -922,6 +1007,10 @@ def stage_session(
             "proxy_height": proxy_height,
             "proxy_crf": proxy_crf,
             "proxy_bitrate": proxy_bitrate,
+            "mocap_selection": "all" if mocap_files is None else "explicit",
+            "mocap_files": [
+                path.relative_to(source).as_posix() for path in resolved_mocap_files
+            ],
             "include_rrd": bool(rerun_files),
             "rrd_files": [path.relative_to(source).as_posix() for path in rerun_files],
             "aligned_intersection": intersection_plan is not None,

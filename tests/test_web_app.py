@@ -144,6 +144,7 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
         None,
         None,
         [],
+        [],
         "",
         True,
     ]
@@ -151,7 +152,8 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
     assert updates[3]["choices"] == []
     assert updates[4]["choices"] == []
     assert updates[5]["choices"] == []
-    assert updates[7]["interactive"] is True
+    assert updates[6]["choices"] == []
+    assert updates[8]["interactive"] is True
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert settings["session_dir"] == str(tmp_path / "session01")
 
@@ -492,6 +494,26 @@ def test_scan_modelscope_rrd_files_selects_current_segment_only(tmp_path) -> Non
     assert update["value"] == expected
 
 
+def test_scan_modelscope_mocap_files_selects_all_packageable_files(tmp_path) -> None:
+    mocap_dir = tmp_path / "Mocap-NOKOV"
+    nested = mocap_dir / "take01"
+    nested.mkdir(parents=True)
+    (mocap_dir / "rigid-body.csv").write_text("frame,x,y,z\n", encoding="utf-8")
+    (nested / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    (mocap_dir / ".env").write_text("SECRET=value\n", encoding="utf-8")
+    (mocap_dir / "preview.rrd").write_bytes(b"")
+
+    summary, update = web_app.scan_modelscope_mocap_files(str(tmp_path))
+
+    expected = [
+        str(Path("Mocap-NOKOV") / "rigid-body.csv"),
+        str(Path("Mocap-NOKOV") / "take01" / "motion.trc"),
+    ]
+    assert "Selectable Mocap files: 2" in summary
+    assert update["choices"] == expected
+    assert update["value"] == expected
+
+
 def test_scan_timestamp_reports_selects_newest_report(tmp_path) -> None:
     old_report = tmp_path / "a" / "timestamp_anomaly_detail_table.html"
     new_report = tmp_path / "b" / "timestamp_anomaly_detail_table.html"
@@ -606,6 +628,10 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
             "P03",
             True,
             [
+                str(Path("Mocap-NOKOV") / "motion.trc"),
+                str(Path("Mocap-NOKOV") / "rigid-body.csv"),
+            ],
+            [
                 str(Path("_artifacts") / "segment1" / "inspection" / "frame.rrd"),
                 str(Path("_artifacts") / "segment1" / "inspection" / "time.rrd"),
             ],
@@ -618,6 +644,7 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
     assert output == "Done."
     assert captured[:4] == ["modelscope-stage", str(tmp_path), "--primitive-id", "P03"]
     assert "--refresh-inspection" in captured
+    assert captured.count("--mocap-file") == 2
     assert captured.count("--rrd-file") == 2
     assert "--include-rrd" not in captured
     assert "--raw-video" not in captured
@@ -627,6 +654,29 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
     assert "--aligned-intersection" in captured
     assert captured[captured.index("--ratio") + 1] == "auto"
     assert captured[captured.index("--offset") + 1] == "-2"
+
+
+def test_web_modelscope_stage_requires_mocap_selection(tmp_path, monkeypatch) -> None:
+    captured: list[str] = []
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_cli_stream(captured))
+
+    output = collect_stream(
+        web_app.stage_modelscope_data(
+            str(tmp_path),
+            "segment1",
+            "P03",
+            False,
+            [],
+            [],
+            False,
+            "auto",
+            0,
+        )
+    )
+
+    assert "No Mocap files selected" in output
+    assert "未选择 Mocap 文件" in output
+    assert captured == []
 
 
 def test_modelscope_intersection_defaults_follow_rrd_alignment() -> None:

@@ -1889,6 +1889,7 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
             proxy_height=args.proxy_height,
             proxy_crf=args.proxy_crf,
             proxy_bitrate=args.proxy_bitrate,
+            mocap_files=args.mocap_files,
             include_rrd=args.include_rrd,
             rrd_files=args.rrd_files,
             aligned_intersection=args.aligned_intersection,
@@ -2065,6 +2066,16 @@ def build_parser() -> argparse.ArgumentParser:
     modelscope_stage_parser.add_argument("--proxy-bitrate", default="1400k")
     modelscope_stage_parser.add_argument("--ffmpeg", default="ffmpeg")
     modelscope_stage_parser.add_argument("--ffprobe", default="ffprobe")
+    modelscope_stage_parser.add_argument(
+        "--mocap-file",
+        dest="mocap_files",
+        action="append",
+        type=Path,
+        help=(
+            "Include one file from the Session mocap* directory; use a Session-relative or "
+            "absolute path and repeat as needed. Omit to include every packageable Mocap file."
+        ),
+    )
     modelscope_stage_parser.add_argument(
         "--aligned-intersection",
         action="store_true",

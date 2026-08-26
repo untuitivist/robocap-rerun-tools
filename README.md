@@ -216,13 +216,20 @@ signed Offset directly. Its ratio and Offset fields are prefilled from the RRD E
 track later changes made there; either field can still be edited in the ModelScope tab when staging
 requires an explicit override.
 
-The Web tab scans the selected Segment and lets each RRD file be selected independently. The CLI
-equivalent is a repeatable `--rrd-file` option with either a Session-relative or absolute path;
-`--include-rrd` remains available when every RRD in the Segment should be staged. Preparing the
-same Session again synchronizes its generated `rerun/` directory with the current selection:
+The Web ModelScope tab scans the unique direct `mocap*` directory and lists every packageable file
+as an independent checkbox. The initial scan selects all files; uncheck unrelated exports before
+staging. At least one Mocap file must remain selected, and files not selected are not copied into
+the prepared dataset. The repeatable CLI equivalent is `--mocap-file`, accepting a Session-relative
+or absolute path. Omitting it in the CLI preserves the compatibility behavior of staging every
+packageable Mocap file. Preparing the same Session again synchronizes the canonical staged `mocap/`
+directory with the current selection, so a previously selected file does not remain.
+
+RRD selection works the same way but allows an empty selection. The Web tab scans the selected
+Segment, and the repeatable CLI option is `--rrd-file`; `--include-rrd` remains available when every
+RRD in that Segment should be staged. Re-staging also synchronizes the generated `rerun/` directory:
 
 ```bat
-robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --rrd-file _artifacts\segment1\inspection\frame.rrd
+robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --mocap-file mocap\motion.trc --mocap-file mocap\third_person.mp4 --rrd-file _artifacts\segment1\inspection\frame.rrd
 ```
 
 Upload every session referenced by the prepared `metadata.jsonl`. The resumable cache skips files
