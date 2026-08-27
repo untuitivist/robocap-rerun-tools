@@ -240,6 +240,10 @@ or absolute path. Omitting it in the CLI preserves the compatibility behavior of
 packageable Mocap file. Preparing the same Session again synchronizes the canonical staged `mocap/`
 directory with the current selection, so a previously selected file does not remain.
 
+Selecting a Session auto-matches its action primitive from a standalone `PXX` token in the direct
+`mocap*` directory name. For example, `mocap-P03-St-user` selects `P03`. The dropdown remains editable
+and accepts a manual override; a missing or conflicting match leaves its current value unchanged.
+
 RRD selection works the same way but allows an empty selection. The Web tab scans the selected
 Segment, and the repeatable CLI option is `--rrd-file`; `--include-rrd` remains available when every
 RRD in that Segment should be staged. Re-staging also synchronizes the generated `rerun/` directory:

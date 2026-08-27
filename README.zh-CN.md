@@ -210,6 +210,10 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 逐文件显示复选框。扫描后默认只勾选 BVH、CSV、TRC 与 MP4；相对路径中含 `unnamed` 的文件不区分
 大小写，默认不勾选。其他文件仍可手动勾选；未勾选的杂项不会进入暂存，且至少保留一个 Mocap 文件。
 
+选择 Session 时，ModelScope 页会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动匹配动作基元。例如
+`mocap-P03-St-user` 会自动选择 `P03`。下拉框保持可编辑，用户可以手动覆盖；没有匹配或存在冲突匹配
+时保留当前值。
+
 原始标定数据位于每个动作 session 之外，统一放在
 `<dataset_root>/raw_calibration/<device_id>/`。Session 准备命令不会复制源 session 内的本地
 `raw_calibration/`，根级标定数据由独立流程维护。Session 的 `manifest.json` 与 `metadata.jsonl`

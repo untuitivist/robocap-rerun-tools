@@ -23,8 +23,10 @@ from pathlib import Path
 from typing import TextIO
 
 from robocap_rerun_tools import MEDIA_TOOLS
+from robocap_rerun_tools.session_layout import discover_mocap_directories
 
 DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
+MOCAP_PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d{2})(?![A-Z0-9])", re.IGNORECASE)
 
 EN_DOC = """# Robocap Rerun Tools
 
@@ -120,6 +122,9 @@ Scan the Session Mocap files before staging. The list includes every packageable
 single `mocap*` source directory. Only BVH, CSV, TRC, and MP4 files are selected by default, and any
 relative path containing `unnamed` is left unselected regardless of case. Other detected files stay
 available for manual selection; only checked Mocap files are staged, and at least one must remain.
+When a Session is selected, the action primitive is auto-matched from a standalone `PXX` token in
+the direct `mocap*` directory name, such as `mocap-P03-St-user`. The dropdown remains editable, so
+the detected value can be overridden. No match or conflicting matches preserve the current value.
 
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
@@ -215,6 +220,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件；默认只
 勾选 BVH、CSV、TRC 与 MP4，并对相对路径中包含 `unnamed` 的文件取消默认勾选（不区分大小写）。其他
 文件仍保留在列表中供手动选择；只有勾选的 Mocap 文件会进入暂存，且至少保留一个。
+选择 Session 时，工具会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动匹配动作基元，例如
+`mocap-P03-St-user` 会填入 `P03`。下拉框仍可编辑，用户可以覆盖自动结果；没有匹配或出现冲突匹配时
+保留当前值。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
@@ -289,7 +297,7 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "Open web viewer",
         "viewer_rrd_file": "RRD file",
         "viewer_port": "Web viewer port (0 = auto)",
-        "modelscope_primitive": "Action primitive (PXX)",
+        "modelscope_primitive": "Action primitive PXX (auto-matched from mocap*; editable)",
         "modelscope_repo_id": "ModelScope dataset repo (owner/name; blank keeps saved value)",
         "modelscope_endpoint": "ModelScope endpoint",
         "modelscope_revision": "Revision",
@@ -382,7 +390,7 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "打开 Web Viewer",
         "viewer_rrd_file": "RRD 文件",
         "viewer_port": "Web Viewer 端口（0 = 自动）",
-        "modelscope_primitive": "动作基元（PXX）",
+        "modelscope_primitive": "动作基元 PXX（从 mocap* 自动匹配，可覆盖）",
         "modelscope_repo_id": "ModelScope 数据集仓库（owner/name；留空保留已保存值）",
         "modelscope_endpoint": "ModelScope 站点",
         "modelscope_revision": "分支 / Revision",
@@ -836,11 +844,23 @@ def scan_dataset_sessions(
     return message, gr.update(choices=choices, value=selected)
 
 
+def infer_modelscope_primitive(session_dir: object) -> str | None:
+    candidate = Path(str(session_dir).strip().strip('"')).expanduser()
+    if not candidate.is_dir():
+        return None
+    matches = {
+        match.group(1).upper()
+        for mocap_dir in discover_mocap_directories(candidate)
+        if (match := MOCAP_PRIMITIVE_PATTERN.search(mocap_dir.name)) is not None
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
 def select_session(
     dataset_root: object,
     session_dir: object,
     settings_path: Path | None = None,
-) -> tuple[object, object, object, object, object, object, object, object, object]:
+) -> tuple[object, ...]:
     try:
         import gradio as gr
     except ImportError as exc:
@@ -849,6 +869,7 @@ def select_session(
         ) from exc
 
     save_session_browser_settings(dataset_root, session_dir, settings_path)
+    inferred_primitive = infer_modelscope_primitive(session_dir)
     return (
         gr.update(value=""),
         gr.update(choices=[], value=[]),
@@ -859,6 +880,7 @@ def select_session(
         gr.update(choices=[], value=[]),
         gr.update(value=""),
         gr.update(value=True, interactive=True),
+        gr.update(value=inferred_primitive) if inferred_primitive else gr.update(),
     )
 
 
@@ -1921,6 +1943,7 @@ def build_app():
     initial_dataset_root, initial_session_choices, initial_session = (
         load_session_browser_settings()
     )
+    initial_modelscope_primitive = infer_modelscope_primitive(initial_session) or "P01"
     try:
         from robocap_rerun_tools.modelscope_publisher import load_modelscope_settings
 
@@ -2009,7 +2032,7 @@ def build_app():
                 modelscope_primitive = gr.Dropdown(
                     label=labels["modelscope_primitive"],
                     choices=[f"P{index:02d}" for index in range(1, 30)],
-                    value="P01",
+                    value=initial_modelscope_primitive,
                     allow_custom_value=True,
                     scale=1,
                 )
@@ -2285,6 +2308,7 @@ def build_app():
             modelscope_rrd_files,
             nokov_source,
             include_robowrist,
+            modelscope_primitive,
         ]
         session_scan_event = scan_sessions_button.click(
             scan_dataset_sessions,

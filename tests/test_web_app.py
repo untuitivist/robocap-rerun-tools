@@ -36,11 +36,36 @@ def test_web_app_builds_with_report_viewer() -> None:
     assert "数据集根目录" in config
     assert "扫描 Session" in config
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
+    assert "动作基元 PXX（从 mocap* 自动匹配，可覆盖）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
     assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
     assert "保留原始视频" not in config
     assert "仓库不存在时创建" not in config
+
+
+def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypatch) -> None:
+    session = tmp_path / "session08"
+    (session / "mocap-P08-St-user").mkdir(parents=True)
+    monkeypatch.setattr(
+        web_app,
+        "load_session_browser_settings",
+        lambda: (
+            str(tmp_path),
+            [(session.name, str(session))],
+            str(session),
+        ),
+    )
+
+    config = web_app.build_app().get_config_file()
+    primitive = next(
+        component
+        for component in config["components"]
+        if component["props"].get("label") == "动作基元 PXX（从 mocap* 自动匹配，可覆盖）"
+    )
+
+    assert primitive["props"]["value"] == "P08"
+    assert primitive["props"]["allow_custom_value"] is True
 
 
 def test_discover_session_directories_finds_direct_and_nested_sessions(tmp_path) -> None:
@@ -136,7 +161,9 @@ def test_session_browser_settings_restore_selection_and_preserve_other_values(tm
 
 def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None:
     settings_path = tmp_path / "web.json"
-    updates = web_app.select_session(tmp_path, tmp_path / "session01", settings_path)
+    session = tmp_path / "session01"
+    (session / "mocap-p03-St-wangyang1").mkdir(parents=True)
+    updates = web_app.select_session(tmp_path, session, settings_path)
 
     assert [update.get("value") for update in updates] == [
         "",
@@ -148,6 +175,7 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
         [],
         "",
         True,
+        "P03",
     ]
     assert updates[1]["choices"] == []
     assert updates[3]["choices"] == []
@@ -155,8 +183,23 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
     assert updates[5]["choices"] == []
     assert updates[6]["choices"] == []
     assert updates[8]["interactive"] is True
+    assert updates[9]["value"] == "P03"
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    assert settings["session_dir"] == str(tmp_path / "session01")
+    assert settings["session_dir"] == str(session)
+
+
+def test_modelscope_primitive_inference_ignores_missing_or_ambiguous_matches(tmp_path) -> None:
+    no_match = tmp_path / "no_match"
+    (no_match / "mocap-take01").mkdir(parents=True)
+    assert web_app.infer_modelscope_primitive(no_match) is None
+
+    ambiguous = tmp_path / "ambiguous"
+    (ambiguous / "mocap-P01-take01").mkdir(parents=True)
+    (ambiguous / "mocap-P02-take02").mkdir()
+    assert web_app.infer_modelscope_primitive(ambiguous) is None
+
+    updates = web_app.select_session(tmp_path, no_match, tmp_path / "web.json")
+    assert "value" not in updates[-1]
 
 
 def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
