@@ -232,9 +232,10 @@ track later changes made there; either field can still be edited in the ModelSco
 requires an explicit override.
 
 The Web ModelScope tab scans the unique direct `mocap*` directory and lists every packageable file
-as an independent checkbox. The initial scan selects all files; uncheck unrelated exports before
-staging. At least one Mocap file must remain selected, and files not selected are not copied into
-the prepared dataset. The repeatable CLI equivalent is `--mocap-file`, accepting a Session-relative
+as an independent checkbox. The initial scan selects only BVH, CSV, TRC, and MP4 files; any relative
+path containing `unnamed` is left unselected regardless of case. Other files remain available for
+manual selection. At least one Mocap file must remain selected, and files not selected are not copied
+into the prepared dataset. The repeatable CLI equivalent is `--mocap-file`, accepting a Session-relative
 or absolute path. Omitting it in the CLI preserves the compatibility behavior of staging every
 packageable Mocap file. Preparing the same Session again synchronizes the canonical staged `mocap/`
 directory with the current selection, so a previously selected file does not remain.

@@ -207,7 +207,8 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 
 采集数据与动捕内容本身必需。只有具体采用哪些 NOKOV 导出格式和是否包含 RRD 是可选项；动捕格式
 至少存在一种。Web 的 ModelScope 页会扫描 Session 直属的唯一 `mocap*` 目录，并像选择 RRD 一样
-逐文件显示复选框。扫描后默认全选；取消勾选的杂项不会进入暂存，且至少要保留一个 Mocap 文件。
+逐文件显示复选框。扫描后默认只勾选 BVH、CSV、TRC 与 MP4；相对路径中含 `unnamed` 的文件不区分
+大小写，默认不勾选。其他文件仍可手动勾选；未勾选的杂项不会进入暂存，且至少保留一个 Mocap 文件。
 
 原始标定数据位于每个动作 session 之外，统一放在
 `<dataset_root>/raw_calibration/<device_id>/`。Session 准备命令不会复制源 session 内的本地

@@ -502,24 +502,41 @@ def test_scan_modelscope_rrd_files_selects_current_segment_only(tmp_path) -> Non
     assert update["value"] == expected
 
 
-def test_scan_modelscope_mocap_files_selects_all_packageable_files(tmp_path) -> None:
+def test_scan_modelscope_mocap_files_uses_curated_default_selection(tmp_path) -> None:
     mocap_dir = tmp_path / "Mocap-NOKOV"
     nested = mocap_dir / "take01"
+    unnamed_dir = mocap_dir / "UnnamedTake"
     nested.mkdir(parents=True)
+    unnamed_dir.mkdir()
     (mocap_dir / "rigid-body.csv").write_text("frame,x,y,z\n", encoding="utf-8")
     (nested / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    (mocap_dir / "skeleton.bvh").write_text("HIERARCHY\n", encoding="utf-8")
+    (mocap_dir / "third-person.MP4").write_bytes(b"")
+    (mocap_dir / "motion.xrs").write_text("motion\n", encoding="utf-8")
+    (mocap_dir / "points.c3d").write_bytes(b"")
+    (mocap_dir / "notes.txt").write_text("notes\n", encoding="utf-8")
+    (mocap_dir / "unnamed.csv").write_text("frame,x,y,z\n", encoding="utf-8")
+    (unnamed_dir / "camera.mp4").write_bytes(b"")
     (mocap_dir / ".env").write_text("SECRET=value\n", encoding="utf-8")
     (mocap_dir / "preview.rrd").write_bytes(b"")
 
     summary, update = web_app.scan_modelscope_mocap_files(str(tmp_path))
 
-    expected = [
+    expected_selected = {
         str(Path("Mocap-NOKOV") / "rigid-body.csv"),
         str(Path("Mocap-NOKOV") / "take01" / "motion.trc"),
-    ]
-    assert "Selectable Mocap files: 2" in summary
-    assert update["choices"] == expected
-    assert update["value"] == expected
+        str(Path("Mocap-NOKOV") / "skeleton.bvh"),
+        str(Path("Mocap-NOKOV") / "third-person.MP4"),
+    }
+    assert "Selectable Mocap files: 9" in summary
+    assert "Default-selected Mocap files: 4" in summary
+    assert len(update["choices"]) == 9
+    assert set(update["value"]) == expected_selected
+    assert str(Path("Mocap-NOKOV") / "motion.xrs") not in update["value"]
+    assert str(Path("Mocap-NOKOV") / "points.c3d") not in update["value"]
+    assert str(Path("Mocap-NOKOV") / "notes.txt") not in update["value"]
+    assert str(Path("Mocap-NOKOV") / "unnamed.csv") not in update["value"]
+    assert str(Path("Mocap-NOKOV") / "UnnamedTake" / "camera.mp4") not in update["value"]
 
 
 def test_scan_timestamp_reports_selects_newest_report(tmp_path) -> None:

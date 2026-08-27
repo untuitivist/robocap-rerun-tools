@@ -24,6 +24,8 @@ from typing import TextIO
 
 from robocap_rerun_tools import MEDIA_TOOLS
 
+DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
+
 EN_DOC = """# Robocap Rerun Tools
 
 This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD export, and offset checks.
@@ -115,8 +117,9 @@ files and select only the recordings that should be included. The generated data
 the canonical description of the complete dataset structure and file requirements.
 
 Scan the Session Mocap files before staging. The list includes every packageable file under the
-single `mocap*` source directory and is initially fully selected, like the RRD list. Uncheck
-unwanted files; only checked Mocap files are staged, and at least one must remain selected.
+single `mocap*` source directory. Only BVH, CSV, TRC, and MP4 files are selected by default, and any
+relative path containing `unnamed` is left unselected regardless of case. Other detected files stay
+available for manual selection; only checked Mocap files are staged, and at least one must remain.
 
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
@@ -209,8 +212,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 已有独立的时间戳检查 HTML。扫描 RRD 后可逐项勾选需要加入数据集的文件。生成的数据集 `README.md`
 是完整数据集结构与文件要求的唯一说明位置。
 
-准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件，并像
-RRD 列表一样默认全选；取消不需要的杂项后，只有仍勾选的 Mocap 文件会进入暂存，且至少保留一个。
+准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件；默认只
+勾选 BVH、CSV、TRC 与 MP4，并对相对路径中包含 `unnamed` 的文件取消默认勾选（不区分大小写）。其他
+文件仍保留在列表中供手动选择；只有勾选的 Mocap 文件会进入暂存，且至少保留一个。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
@@ -1354,11 +1358,19 @@ def scan_modelscope_mocap_files(session_dir: str) -> tuple[str, object]:
 
     path = Path(session_path(session_dir)).resolve()
     mocap_files = find_mocap_files(path)
-    choices = [str(file.relative_to(path)) for file in mocap_files]
+    relative_files = [file.relative_to(path) for file in mocap_files]
+    choices = [str(file) for file in relative_files]
+    default_selection = [
+        choice
+        for relative, choice in zip(relative_files, choices, strict=True)
+        if relative.suffix.casefold() in DEFAULT_SELECTED_MOCAP_SUFFIXES
+        and "unnamed" not in relative.as_posix().casefold()
+    ]
     summary = "\n".join(
         [
             f"Session: {path}",
             f"Selectable Mocap files: {len(choices)}",
+            f"Default-selected Mocap files: {len(default_selection)}",
             *(f"- {choice}" for choice in choices),
         ]
     )
@@ -1368,7 +1380,7 @@ def scan_modelscope_mocap_files(session_dir: str) -> tuple[str, object]:
         raise RuntimeError(
             "Web UI requires Gradio. Install it with: uv sync --extra web"
         ) from exc
-    return summary, gr.update(choices=choices, value=choices)
+    return summary, gr.update(choices=choices, value=default_selection)
 
 
 def timestamp_report_path(session_dir: Path, segment: str | None) -> Path:
