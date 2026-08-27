@@ -58,6 +58,21 @@ The bundled binaries are preferred for reproducible processing. A complete syste
 pair is only used as a fallback on platforms without a bundled wheel. Current bundled wheels cover
 Windows x64, Linux x64, and macOS universal.
 
+## Quick Start On Linux And macOS
+
+Clone over HTTPS and run the POSIX launcher:
+
+```sh
+git clone https://github.com/untuitivist/robocap-rerun-tools.git
+cd robocap-rerun-tools
+./start_web.sh
+```
+
+`start_web.sh` performs the same dependency synchronization as the Windows launcher, uses
+`.venv/bin/robocap-rerun`, and keeps the Web process attached so logs remain visible. Set
+`ROBOCAP_SKIP_SYNC=1` only when the environment is already synchronized. A Git clone preserves the
+script's executable bit; for a source archive that does not, run `chmod +x start_web.sh` once.
+
 ## CLI And Development
 
 For CLI-only use:
@@ -446,6 +461,13 @@ dependencies automatically:
 ```bat
 git pull --ff-only
 start_web.bat
+```
+
+On Linux or macOS:
+
+```sh
+git pull --ff-only
+./start_web.sh
 ```
 
 The Web UI offers the same clean-worktree update flow in its `Environment` tab. It never stashes or

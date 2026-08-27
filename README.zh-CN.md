@@ -55,6 +55,21 @@ FFmpeg 和 FFprobe 的 `ffmpeg-binaries-compat` wheel。因此不需要单独安
 工具默认优先使用 uv 锁定的 FFmpeg/FFprobe，保证不同电脑处理一致；仅当当前平台没有可用 wheel 时，
 才回退到系统中的完整 FFmpeg/FFprobe。目前 wheel 支持 Windows x64、Linux x64 和 macOS universal。
 
+## Linux 与 macOS 快速开始
+
+使用 HTTPS 克隆后运行 POSIX 启动脚本：
+
+```sh
+git clone https://github.com/untuitivist/robocap-rerun-tools.git
+cd robocap-rerun-tools
+./start_web.sh
+```
+
+`start_web.sh` 与 Windows 启动器一样会执行 `uv sync --extra web`，随后使用
+`.venv/bin/robocap-rerun` 启动 Web，并保持前台运行以打印日志。只有确认环境已经同步时才使用
+`ROBOCAP_SKIP_SYNC=1 ./start_web.sh`。通过 Git clone 会保留可执行权限；如果使用不保留权限的源码
+压缩包，首次运行前执行一次 `chmod +x start_web.sh`。
+
 ## CLI 与开发
 
 只使用 CLI：
@@ -425,6 +440,13 @@ RRD 文件名会纳入导出参数，避免不同配置互相覆盖。可读部�
 ```bat
 git pull --ff-only
 start_web.bat
+```
+
+Linux 或 macOS 使用：
+
+```sh
+git pull --ff-only
+./start_web.sh
 ```
 
 Web“环境 / Environment”页提供相同的干净工作区更新流程，不会自动 stash 或覆盖本地修改。
