@@ -2061,10 +2061,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     modelscope_stage_parser = sub.add_parser(
         "modelscope-stage",
-        help="Prepare one session in a PXX/session_id ModelScope dataset tree.",
+        help="Prepare one session in a primitive_id/session_id ModelScope dataset tree.",
     )
     modelscope_stage_parser.add_argument("session_dir", type=Path)
-    modelscope_stage_parser.add_argument("--primitive-id", required=True)
+    modelscope_stage_parser.add_argument(
+        "--primitive-id",
+        required=True,
+        help="Action directory name; PXX is the built-in convention, not a required format.",
+    )
     modelscope_stage_parser.add_argument("--dataset-root", type=Path, default=None)
     modelscope_stage_parser.add_argument("--session-id", default=None)
     modelscope_stage_parser.add_argument("--segment", default=None)

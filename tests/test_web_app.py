@@ -36,7 +36,7 @@ def test_web_app_builds_with_report_viewer() -> None:
     assert "数据集根目录" in config
     assert "扫描 Session" in config
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
-    assert "动作基元 PXX（从 mocap* 自动匹配，可覆盖）" in config
+    assert "动作基元（从 mocap* 自动建议 PXX，可任意自定义）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
     assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
@@ -61,7 +61,7 @@ def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypat
     primitive = next(
         component
         for component in config["components"]
-        if component["props"].get("label") == "动作基元 PXX（从 mocap* 自动匹配，可覆盖）"
+        if component["props"].get("label") == "动作基元（从 mocap* 自动建议 PXX，可任意自定义）"
     )
 
     assert primitive["props"]["value"] == "P08"

@@ -105,7 +105,8 @@ ModelScope staging/upload, report opening, RRD viewing, environment checks, and 
 
 At the top of the page, enter the directory that contains the recording collection and click
 `Scan sessions`. The scanner finds direct children and nested layouts such as
-`EgoMotionActions/PXX/<session_id>`, then fills a searchable Session dropdown with relative labels.
+`EgoMotionActions/<primitive_id>/<session_id>`, then fills a searchable Session dropdown with
+relative labels.
 A session is recognized when its root directly contains at least one `robocap_*` source file.
 Generated analysis/artifact/dataset trees, calibration data, virtual environments, and build trees
 are excluded. The collection root and last selected Session are restored after a Web UI restart.
@@ -165,7 +166,7 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
   raw_calibration/                       # required: maintained by calibration workflow
     <device_id>/                         # files are resolved by explicit device ID
   EgoMotionActions/                      # generated action data
-    PXX/                                 # P01-P29 action primitive
+    <primitive_id>/                      # P01-P29 convention or a custom action name
       <session_id>/
         robocap_<segment>_video_*.mp4       # required: six first-person cameras
         robocap_<segment>_imu_*.db          # required: Robocap IMU
@@ -241,8 +242,9 @@ packageable Mocap file. Preparing the same Session again synchronizes the canoni
 directory with the current selection, so a previously selected file does not remain.
 
 Selecting a Session auto-matches its action primitive from a standalone `PXX` token in the direct
-`mocap*` directory name. For example, `mocap-P03-St-user` selects `P03`. The dropdown remains editable
-and accepts a manual override; a missing or conflicting match leaves its current value unchanged.
+`mocap*` directory name. For example, `mocap-P03-St-user` suggests `P03`. This is only a default:
+the editable dropdown accepts any safe single-directory name, and a manual value takes precedence.
+A missing or conflicting match leaves its current value unchanged.
 
 RRD selection works the same way but allows an empty selection. The Web tab scans the selected
 Segment, and the repeatable CLI option is `--rrd-file`; `--include-rrd` remains available when every

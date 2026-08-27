@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import json
 import os
 import re
@@ -42,6 +43,15 @@ ACTIONS_DIR_NAME = "EgoMotionActions"
 CALIBRATION_DIR_NAME = "raw_calibration"
 MOCAP_DIR_NAME = CANONICAL_MOCAP_DIR_NAME
 PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
+PRIMITIVE_ID_INVALID_CHAR_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+}
 REPO_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 ROBOWRIST_DIR_PATTERN = re.compile(
@@ -100,9 +110,24 @@ class UploadResult:
 
 
 def validate_primitive_id(value: str) -> str:
-    primitive_id = value.strip().upper()
-    if not PRIMITIVE_ID_PATTERN.fullmatch(primitive_id):
-        raise ValueError("Primitive ID must use the PXX form, for example P01.")
+    primitive_id = value.strip()
+    if not primitive_id or primitive_id in {".", ".."}:
+        raise ValueError("Primitive ID must be a non-empty directory name.")
+    if len(primitive_id) > 255:
+        raise ValueError("Primitive ID must not exceed 255 characters.")
+    if primitive_id.endswith("."):
+        raise ValueError("Primitive ID must not end with a period.")
+    if PRIMITIVE_ID_INVALID_CHAR_PATTERN.search(primitive_id):
+        raise ValueError(
+            "Primitive ID must be one directory name without path separators, control "
+            'characters, or Windows-invalid characters <>:"/\\|?*.'
+        )
+    if primitive_id.split(".", 1)[0].upper() in WINDOWS_RESERVED_NAMES:
+        raise ValueError("Primitive ID must not use a reserved Windows device name.")
+
+    canonical_id = primitive_id.upper()
+    if PRIMITIVE_ID_PATTERN.fullmatch(canonical_id):
+        return canonical_id
     return primitive_id
 
 
@@ -695,7 +720,8 @@ configs:
 # EgoMocap Dataset
 
 Each row in `metadata.jsonl` describes one recording. Session files use the stable
-`EgoMotionActions/PXX/<session_id>/` hierarchy, where `PXX` is an action primitive ID.
+`EgoMotionActions/<primitive_id>/<session_id>/` hierarchy. The built-in task catalog uses
+`P01` through `P29`, but a safe custom single-directory name is also accepted.
 
 Every session directory includes a self-contained `timestamp_anomaly_detail_table.html`
 inspection report. Paths inside manifests and reports are dataset-relative.
@@ -739,7 +765,7 @@ are optional. All other listed capture streams and generated records are require
   raw_calibration/                              # required, maintained separately
     <device_id>/
   EgoMotionActions/                             # required action recordings
-    PXX/
+    <primitive_id>/                              # P01-P29 convention or a custom name
       <session_id>/
         robocap_<segment>_video_*.mp4            # required six first-person videos
         robocap_<segment>_imu_*.db               # required Robocap IMU
@@ -1217,7 +1243,7 @@ def upload_staged_dataset(
                 visibility=visibility,
                 license=license_name or None,
             )
-        allow_patterns = [f"{path}/**" for path in staged.session_paths]
+        allow_patterns = [f"{glob.escape(path)}/**" for path in staged.session_paths]
         if (staged.dataset_root / CALIBRATION_DIR_NAME).is_dir():
             allow_patterns.append(f"{CALIBRATION_DIR_NAME}/**")
         allow_patterns.extend([METADATA_NAME, DATASET_README_NAME])

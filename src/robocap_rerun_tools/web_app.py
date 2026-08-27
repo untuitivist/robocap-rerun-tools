@@ -123,8 +123,9 @@ single `mocap*` source directory. Only BVH, CSV, TRC, and MP4 files are selected
 relative path containing `unnamed` is left unselected regardless of case. Other detected files stay
 available for manual selection; only checked Mocap files are staged, and at least one must remain.
 When a Session is selected, the action primitive is auto-matched from a standalone `PXX` token in
-the direct `mocap*` directory name, such as `mocap-P03-St-user`. The dropdown remains editable, so
-the detected value can be overridden. No match or conflicting matches preserve the current value.
+the direct `mocap*` directory name, such as `mocap-P03-St-user`. This is only a suggestion. The
+dropdown accepts any safe custom single-directory name, and the manual value takes precedence. No
+match or conflicting matches preserve the current value.
 
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
@@ -220,9 +221,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件；默认只
 勾选 BVH、CSV、TRC 与 MP4，并对相对路径中包含 `unnamed` 的文件取消默认勾选（不区分大小写）。其他
 文件仍保留在列表中供手动选择；只有勾选的 Mocap 文件会进入暂存，且至少保留一个。
-选择 Session 时，工具会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动匹配动作基元，例如
-`mocap-P03-St-user` 会填入 `P03`。下拉框仍可编辑，用户可以覆盖自动结果；没有匹配或出现冲突匹配时
-保留当前值。
+选择 Session 时，工具会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动建议动作基元，例如
+`mocap-P03-St-user` 会填入 `P03`。这只是建议值；下拉框允许任意安全的单级目录名，手动输入具有最终
+优先级。没有匹配或出现冲突匹配时保留当前值。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
@@ -297,7 +298,7 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "Open web viewer",
         "viewer_rrd_file": "RRD file",
         "viewer_port": "Web viewer port (0 = auto)",
-        "modelscope_primitive": "Action primitive PXX (auto-matched from mocap*; editable)",
+        "modelscope_primitive": "Action primitive (PXX auto-suggestion; custom value allowed)",
         "modelscope_repo_id": "ModelScope dataset repo (owner/name; blank keeps saved value)",
         "modelscope_endpoint": "ModelScope endpoint",
         "modelscope_revision": "Revision",
@@ -390,7 +391,7 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "打开 Web Viewer",
         "viewer_rrd_file": "RRD 文件",
         "viewer_port": "Web Viewer 端口（0 = 自动）",
-        "modelscope_primitive": "动作基元 PXX（从 mocap* 自动匹配，可覆盖）",
+        "modelscope_primitive": "动作基元（从 mocap* 自动建议 PXX，可任意自定义）",
         "modelscope_repo_id": "ModelScope 数据集仓库（owner/name；留空保留已保存值）",
         "modelscope_endpoint": "ModelScope 站点",
         "modelscope_revision": "分支 / Revision",

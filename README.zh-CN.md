@@ -115,7 +115,7 @@ start_web.bat
 - 内置中文文档
 
 页面顶部先填写包含多条录制数据的数据集根目录，再点击“扫描 Session”。扫描器兼容 Session
-直接位于根目录下，以及 `EgoMotionActions/PXX/<session_id>` 这类嵌套结构；下拉框使用相对路径
+直接位于根目录下，以及 `EgoMotionActions/<primitive_id>/<session_id>` 这类嵌套结构；下拉框使用相对路径
 区分同名 Session。Session 的判定标准是其根目录直接存在至少一个 `robocap_*` 源文件。
 扫描会排除分析结果、生成产物、ModelScope 暂存数据、标定目录、虚拟环境和构建目录。数据集根目录
 和最近选择的 Session 会在 Web 重启后恢复；切换 Session 时会清空上一条 Session 派生出的 GT、
@@ -190,7 +190,7 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
   raw_calibration/                       # 必需：由独立标定流程维护
     <device_id>/                         # 通过明确的 device ID 查找
   EgoMotionActions/                      # 工具生成的动作数据
-    PXX/                                 # P01-P29 动作基元
+    <primitive_id>/                      # P01-P29 惯例或自定义动作名称
       <session_id>/
         robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
         robocap_<segment>_imu_*.db          # 必需：Robocap IMU
@@ -210,9 +210,9 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 逐文件显示复选框。扫描后默认只勾选 BVH、CSV、TRC 与 MP4；相对路径中含 `unnamed` 的文件不区分
 大小写，默认不勾选。其他文件仍可手动勾选；未勾选的杂项不会进入暂存，且至少保留一个 Mocap 文件。
 
-选择 Session 时，ModelScope 页会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动匹配动作基元。例如
-`mocap-P03-St-user` 会自动选择 `P03`。下拉框保持可编辑，用户可以手动覆盖；没有匹配或存在冲突匹配
-时保留当前值。
+选择 Session 时，ModelScope 页会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动建议动作基元。例如
+`mocap-P03-St-user` 会建议 `P03`。这只是默认值；下拉框允许任意安全的单级目录名，手动输入具有最终
+优先级。没有匹配或存在冲突匹配时保留当前值。
 
 原始标定数据位于每个动作 session 之外，统一放在
 `<dataset_root>/raw_calibration/<device_id>/`。Session 准备命令不会复制源 session 内的本地
