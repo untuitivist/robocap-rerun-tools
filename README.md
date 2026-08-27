@@ -273,10 +273,16 @@ tables in IMU/MAG SQLite databases. ACC, gyro, and MAG tables are reported as se
 Video `fps` is the full-stream average reported by ffprobe, while median/min/max interval and abnormal
 counts come from the actual frame timestamps. When an MP4 has a numeric `comment` capture timestamp,
 its start/end values are placed on that capture-time axis; otherwise the report marks them as media-relative.
-Timestamp anomaly thresholds are fixed at 30 FPS for video and 240 FPS for motion capture. Thus normal
-integer-millisecond diffs are 33/34 ms and 4/5 ms. Diffs are computed only for adjacent rows whose two
-timestamps are valid; missing rows are listed but never bridged. The frame-count baseline is
-`mocap = 8*(n+1)` and `third-person video = n+1` for `n` Robocap frames.
+Choose the inspection Mocap ratio in the Web UI or with `--mocap-ratio`. The default `8` checks
+motion capture at 240 FPS and expects `mocap = 8*(n+1)`; `4` checks 120 FPS and expects
+`mocap = 4*(n+1)`. Video remains fixed at 30 FPS and third-person video remains `n+1` for `n`
+Robocap frames. Normal integer-millisecond Mocap diffs are therefore 4/5 ms at ratio 8 and 8/9 ms
+at ratio 4. Diffs are computed only for adjacent rows whose two timestamps are valid; missing rows
+are listed but never bridged:
+
+```bat
+robocap-rerun inspect Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mocap-ratio 4
+```
 
 Export a time-aligned RRD:
 

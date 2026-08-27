@@ -2,10 +2,11 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from robocap_rerun_tools import cli
 from robocap_rerun_tools.cli import StreamSummary
 from robocap_rerun_tools.timestamp_anomaly import (
-    MOCAP_EXPECTED_FPS,
     TimestampSample,
     delimited_samples,
     inspect_samples,
@@ -84,6 +85,18 @@ def test_mocap_12ms_interval_estimates_two_dropped_frames() -> None:
     assert result.events[0].estimated_dropped_frames == 2
 
 
+def test_120fps_mocap_16ms_interval_estimates_one_dropped_frame() -> None:
+    samples = [
+        TimestampSample(1, 1, "1.000", 1.000),
+        TimestampSample(2, 2, "1.016", 1.016),
+    ]
+
+    result = inspect_samples(Path("motion.csv"), "motion.csv", "csv", "Body", 2, 120, samples)
+
+    assert result.abnormal_diff_count == 1
+    assert result.events[0].estimated_dropped_frames == 1
+
+
 def test_nokov_integer_timestamp_is_milliseconds_and_missing_row_is_not_bridged(
     tmp_path: Path,
 ) -> None:
@@ -125,8 +138,16 @@ def test_sqlite_sensor_samples_preserve_null_rows(tmp_path: Path) -> None:
     assert [sample.frame_index for sample in samples] == [1, 2, 3, 4]
 
 
-def test_report_is_one_standalone_html_with_fixed_240fps_mocap_baseline(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize(
+    ("mocap_ratio", "mocap_fps", "expected_mocap"),
+    [(8, 240.0, 408), (4, 120.0, 204)],
+)
+def test_report_uses_selected_mocap_ratio_and_is_one_standalone_html(
+    tmp_path: Path,
+    monkeypatch,
+    mocap_ratio: int,
+    mocap_fps: float,
+    expected_mocap: int,
 ) -> None:
     session = tmp_path / "session"
     mocap_dir = session / "test1"
@@ -160,7 +181,9 @@ def test_report_is_one_standalone_html_with_fixed_240fps_mocap_baseline(
     )
     out_dir = tmp_path / "inspection"
 
-    output = write_timestamp_anomaly_report(session, "segment1", summaries, out_dir, None)
+    output = write_timestamp_anomaly_report(
+        session, "segment1", summaries, out_dir, None, mocap_ratio
+    )
 
     assert output.name == "timestamp_anomaly_detail_table.html"
     assert [path.name for path in out_dir.iterdir()] == [output.name]
@@ -169,11 +192,14 @@ def test_report_is_one_standalone_html_with_fixed_240fps_mocap_baseline(
     document = raw.decode("utf-8")
     assert "<script src=" not in document
     assert "frame_rate_report" not in document
-    assert "固定基线：动捕 240 FPS、视频 30 FPS" in document
+    assert "检查基线：动捕 ${number(report.mocapExpectedFps)} FPS、视频 30 FPS" in document
+    assert "帧数关系 ${report.ratio}*(n+1)" in document
     report = embedded_report(document)
-    assert report["ratio"] == 8
-    assert report["expectedMocap"] == 408
-    assert report["mocapExpectedFps"] == MOCAP_EXPECTED_FPS
+    assert report["ratio"] == mocap_ratio
+    assert report["expectedMocap"] == expected_mocap
+    assert report["mocapExpectedFps"] == mocap_fps
+    mocap_file = next(file for file in report["files"] if file["kind"] == "csv")
+    assert mocap_file["expectedFps"] == mocap_fps
     assert {file["kind"] for file in report["files"]} == {
         "robocap_video",
         "csv",
@@ -195,9 +221,23 @@ def test_inspect_command_writes_no_legacy_markdown_or_tsv(tmp_path: Path, monkey
     monkeypatch.setattr(cli, "summarize_path", lambda *_args: [summary])
     output_dir = tmp_path / "inspection"
     args = cli.build_parser().parse_args(
-        ["inspect", str(session), "--segment", "segment1", "--output", str(output_dir)]
+        [
+            "inspect",
+            str(session),
+            "--segment",
+            "segment1",
+            "--output",
+            str(output_dir),
+            "--mocap-ratio",
+            "4",
+        ]
     )
 
     assert args.func(args) == 0
 
     assert [path.name for path in output_dir.iterdir()] == ["timestamp_anomaly_detail_table.html"]
+    report = embedded_report(
+        (output_dir / "timestamp_anomaly_detail_table.html").read_text(encoding="utf-8")
+    )
+    assert report["ratio"] == 4
+    assert report["mocapExpectedFps"] == 120.0

@@ -266,9 +266,14 @@ robocap-rerun inspect Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --se
 带时间戳的数据表。ACC、GYRO、MAG 会作为独立数据流分别报告。视频 `fps` 使用 ffprobe 给出的全程
 平均值；中位/最小/最大帧间隔和异常数量使用真实逐帧时间戳计算。MP4 存在数值型 `comment` 捕获时间时，
 起终时间会落在该 capture-time 轴上；缺少该 metadata 时，报告会明确标记为相对媒体时间。
-异常检测固定以视频 30 FPS、动捕 240 FPS 为基线，因此整数毫秒时间戳的正常 diff 分别为 33/34 ms
-与 4/5 ms。diff 只计算时间戳都有效的相邻数据行；缺失行会列为异常，但绝不跨过缺失行相减。
-帧数基线固定为：Robocap 为 `n`、动捕为 `8*(n+1)`、第三人称视频为 `n+1`。
+检查页或 CLI 的 `--mocap-ratio` 可以手动选择动捕比例。默认 `8` 按动捕 240 FPS 检查，期望帧数为
+`8*(n+1)`；选择 `4` 时按动捕 120 FPS 检查，期望帧数为 `4*(n+1)`。视频始终按 30 FPS，第三人称
+视频始终为 `n+1`。所以动捕整数毫秒时间戳的正常 diff 在比例 8 时为 4/5 ms，在比例 4 时为
+8/9 ms。diff 只计算时间戳都有效的相邻数据行；缺失行会列为异常，但绝不跨过缺失行相减：
+
+```bat
+robocap-rerun inspect Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --mocap-ratio 4
+```
 
 生成时间对齐版 RRD：
 

@@ -54,6 +54,9 @@ table as a separate stream. Video average FPS comes from ffprobe; interval stati
 Inspection writes one standalone `timestamp_anomaly_detail_table.html`. Its data, styles, and
 JavaScript are embedded, so the file can be shared and opened offline. The report only computes
 diffs between adjacent valid rows and lists every timestamp/frame-index anomaly with neighboring rows.
+Choose the Mocap/Robocap inspection ratio before running it: `8` checks Mocap at 240 FPS with
+`8*(n+1)` expected frames, while `4` checks 120 FPS with `4*(n+1)`. Video remains 30 FPS and
+third-person video remains `n+1` in both modes.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
 control is turned off and disabled instead of pretending that wrist data can be exported.
 Only GT formats that are present create views. BVH/TRC/CSV/XRS skeleton views are arranged from left
@@ -155,6 +158,8 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 检查只生成一个独立的 `timestamp_anomaly_detail_table.html`。数据、样式和 JavaScript 都内嵌在
 文件中，可以离线打开并直接分享。报告只计算时间戳均有效的相邻数据行，并逐点列出时间戳与
 frame_index 异常及其上下行。
+执行检查前选择动捕与 Robocap 的帧率比例：选择 `8` 时按动捕 240 FPS 和 `8*(n+1)` 检查；选择
+`4` 时按动捕 120 FPS 和 `4*(n+1)` 检查。两种模式下视频仍按 30 FPS，第三人称视频仍为 `n+1`。
 “扫描文件”会检测标准 robowrist 目录和数据流；没有检测到时会自动取消并禁用 robowrist 选项，
 不会继续显示一个实际无数据可导出的开启状态。
 只有实际存在的 GT 格式才会生成视图。BVH/TRC/CSV/XRS 骨骼视图在左下角从左到右并列；同一 CSV/XRS
@@ -226,6 +231,7 @@ LANGUAGE_PACKS = {
         "session": "Session",
         "segment": "Segment",
         "output": "Output",
+        "inspect_mocap_ratio": "Inspection Mocap ratio (8: 240 FPS, 4: 120 FPS)",
         "inspect_button": "Inspect",
         "package_output": "Output zip",
         "package_height": "Proxy height",
@@ -320,6 +326,7 @@ LANGUAGE_PACKS = {
         "session": "Session",
         "segment": "Segment",
         "output": "输出",
+        "inspect_mocap_ratio": "检查动捕比例（8：240 FPS，4：120 FPS）",
         "inspect_button": "检查",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
@@ -1487,12 +1494,13 @@ def open_rerun_webviewer(rrd_file: str, viewer_port: int) -> tuple[str, int]:
     )
 
 
-def inspect_session(session_dir: str, segment: str) -> Iterator[str]:
+def inspect_session(session_dir: str, segment: str, mocap_ratio: int = 8) -> Iterator[str]:
     resolved_session = Path(session_path(session_dir))
     resolved_segment = optional_text(segment)
     args = ["inspect", str(resolved_session)]
     if resolved_segment:
         args.extend(["--segment", resolved_segment])
+    args.extend(["--mocap-ratio", str(int(mocap_ratio))])
     result = yield from stream_cli_command(args)
     if result.returncode != 0:
         return
@@ -1614,6 +1622,7 @@ def stage_modelscope_data(
     aligned_intersection: bool,
     intersection_ratio: str,
     intersection_offset: float,
+    inspection_mocap_ratio: int = 8,
 ) -> Iterator[str]:
     if not selected_mocap_files:
         yield (
@@ -1626,6 +1635,8 @@ def stage_modelscope_data(
         session_path(session_dir),
         "--primitive-id",
         primitive_id,
+        "--inspection-mocap-ratio",
+        str(int(inspection_mocap_ratio)),
     ]
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
@@ -1811,6 +1822,7 @@ def language_updates(language: str):
         gr.update(label=labels["session"]),
         gr.update(label=labels["segment"]),
         gr.update(label=labels["output"]),
+        gr.update(label=labels["inspect_mocap_ratio"]),
         gr.update(value=labels["inspect_button"]),
         gr.update(label=labels["package_output"]),
         gr.update(label=labels["package_height"]),
@@ -1932,9 +1944,20 @@ def build_app():
         output = gr.Textbox(label=labels["output"], lines=16)
 
         with gr.Tab("检查 / Inspect"):
-            inspect_button = gr.Button(labels["inspect_button"], variant="primary")
+            with gr.Row():
+                inspect_mocap_ratio = gr.Radio(
+                    label=labels["inspect_mocap_ratio"],
+                    choices=[8, 4],
+                    value=8,
+                    scale=2,
+                )
+                inspect_button = gr.Button(
+                    labels["inspect_button"], variant="primary", scale=1
+                )
             inspect_event = inspect_button.click(
-                inspect_session, inputs=[session_dir, segment], outputs=output
+                inspect_session,
+                inputs=[session_dir, segment, inspect_mocap_ratio],
+                outputs=output,
             )
 
         with gr.Tab("检查报告 / Reports"):
@@ -2074,6 +2097,7 @@ def build_app():
                     modelscope_aligned_intersection,
                     modelscope_intersection_ratio,
                     modelscope_intersection_offset,
+                    inspect_mocap_ratio,
                 ],
                 outputs=output,
             )
@@ -2277,6 +2301,7 @@ def build_app():
                 session_dir,
                 segment,
                 output,
+                inspect_mocap_ratio,
                 inspect_button,
                 package_output,
                 package_height,

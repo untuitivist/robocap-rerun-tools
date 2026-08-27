@@ -114,6 +114,14 @@ def test_frame_alignment_ratio_defaults_to_auto() -> None:
     )
 
 
+def test_inspection_mocap_ratio_defaults_to_8_and_accepts_4() -> None:
+    parser = build_parser()
+    session = "Z:/DATASETS/Frodobots/nokov/session"
+
+    assert parser.parse_args(["inspect", session]).mocap_ratio == 8
+    assert parser.parse_args(["inspect", session, "--mocap-ratio", "4"]).mocap_ratio == 4
+
+
 def test_nearest_multiple_of_ten_uses_half_up_rounding() -> None:
     assert nearest_multiple_of_ten(234.9) == 230
     assert nearest_multiple_of_ten(235.0) == 240
@@ -266,6 +274,7 @@ def test_modelscope_stage_parser_defaults_to_compressed_video() -> None:
     assert args.raw_video is False
     assert args.proxy_height == 540
     assert args.refresh_inspection is False
+    assert args.inspection_mocap_ratio == 8
     assert args.mocap_files is None
     assert args.rrd_files is None
     assert args.aligned_intersection is False
@@ -828,6 +837,7 @@ def test_expected_frame_counts_use_reference_robocap_n(tmp_path: Path) -> None:
     assert n == 50
     assert cli.expected_frame_count("robocap", "video", "robocap_video", n) == 50
     assert cli.expected_frame_count("gt", "trc", "", n) == 408
+    assert cli.expected_frame_count("gt", "trc", "", n, ratio=4) == 204
     assert cli.expected_frame_count("gt", "video", "third_person_video", n) == 51
 
 

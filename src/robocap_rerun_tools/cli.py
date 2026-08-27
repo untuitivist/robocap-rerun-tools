@@ -1786,6 +1786,7 @@ def command_inspect(args: argparse.Namespace) -> int:
         summaries,
         out_dir,
         ratio_estimate,
+        args.mocap_ratio,
     )
     print(f"Wrote timestamp anomaly inspection to {anomaly_report}")
     return 0
@@ -1848,6 +1849,7 @@ def refresh_modelscope_inspection(args: argparse.Namespace) -> None:
             output=None,
             ffprobe=args.ffprobe,
             ffmpeg=args.ffmpeg,
+            mocap_ratio=args.inspection_mocap_ratio,
         )
     )
 
@@ -2000,6 +2002,16 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--output", type=Path, default=None)
     inspect_parser.add_argument("--ffprobe", default="ffprobe")
     inspect_parser.add_argument("--ffmpeg", default="ffmpeg")
+    inspect_parser.add_argument(
+        "--mocap-ratio",
+        type=int,
+        choices=(4, 8),
+        default=8,
+        help=(
+            "Mocap/Robocap frame ratio used by inspection: 8 means 240 FPS and 8*(n+1); "
+            "4 means 120 FPS and 4*(n+1)."
+        ),
+    )
     inspect_parser.set_defaults(func=command_inspect)
 
     offset_parser = sub.add_parser(
@@ -2123,6 +2135,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--refresh-inspection",
         action="store_true",
         help="Regenerate the timestamp inspection HTML before staging.",
+    )
+    modelscope_stage_parser.add_argument(
+        "--inspection-mocap-ratio",
+        type=int,
+        choices=(4, 8),
+        default=8,
+        help="Mocap/Robocap ratio used when --refresh-inspection regenerates the report.",
     )
     modelscope_stage_parser.add_argument("--dry-run", action="store_true")
     modelscope_stage_parser.set_defaults(func=command_modelscope_stage)

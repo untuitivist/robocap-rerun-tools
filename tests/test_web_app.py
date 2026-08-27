@@ -35,6 +35,7 @@ def test_web_app_builds_with_report_viewer() -> None:
     assert app is not None
     assert "数据集根目录" in config
     assert "扫描 Session" in config
+    assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
     assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
@@ -252,9 +253,16 @@ def test_web_inspect_prints_generated_html_report_path(tmp_path, monkeypatch) ->
         ),
     )
 
-    output = collect_stream(web_app.inspect_session(str(tmp_path), "segment1"))
+    output = collect_stream(web_app.inspect_session(str(tmp_path), "segment1", 4))
 
-    assert captured == ["inspect", str(tmp_path), "--segment", "segment1"]
+    assert captured == [
+        "inspect",
+        str(tmp_path),
+        "--segment",
+        "segment1",
+        "--mocap-ratio",
+        "4",
+    ]
     assert "Wrote timestamp anomaly inspection" in output
     assert f"Timestamp anomaly HTML: `{report_path}`" in output
     assert "<!doctype html>" not in output
@@ -638,6 +646,7 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
             True,
             "auto",
             -2,
+            4,
         )
     )
 
@@ -654,6 +663,7 @@ def test_web_modelscope_stage_builds_compressed_cli_command(tmp_path, monkeypatc
     assert "--aligned-intersection" in captured
     assert captured[captured.index("--ratio") + 1] == "auto"
     assert captured[captured.index("--offset") + 1] == "-2"
+    assert captured[captured.index("--inspection-mocap-ratio") + 1] == "4"
 
 
 def test_web_modelscope_stage_requires_mocap_selection(tmp_path, monkeypatch) -> None:

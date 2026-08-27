@@ -20,9 +20,10 @@ if TYPE_CHECKING:
 
 MOCAP_KINDS = {"bvh", "csv", "trc", "tsv", "xrs"}
 SENSOR_KINDS = {"imu_acc", "imu_gyro", "mag", "sensor"}
-MOCAP_EXPECTED_FPS = 240.0
 VIDEO_EXPECTED_FPS = 30.0
 FRAME_COUNT_RATIO = 8
+SUPPORTED_FRAME_COUNT_RATIOS = (4, 8)
+MOCAP_EXPECTED_FPS = VIDEO_EXPECTED_FPS * FRAME_COUNT_RATIO
 EVENT_TYPES = [
     "timestamp_missing",
     "timestamp_too_short",
@@ -151,6 +152,18 @@ def neighboring(
 def expected_interval_range(fps: float) -> tuple[float, float, float]:
     period_ms = 1000.0 / fps
     return period_ms, max(0.0, math.floor(period_ms) - 0.5), math.ceil(period_ms) + 0.5
+
+
+def validate_mocap_ratio(value: int) -> int:
+    ratio = int(value)
+    if ratio not in SUPPORTED_FRAME_COUNT_RATIOS:
+        supported = ", ".join(str(item) for item in SUPPORTED_FRAME_COUNT_RATIOS)
+        raise ValueError(f"Mocap inspection ratio must be one of: {supported}.")
+    return ratio
+
+
+def mocap_expected_fps(mocap_ratio: int) -> float:
+    return VIDEO_EXPECTED_FPS * validate_mocap_ratio(mocap_ratio)
 
 
 def round_half_up(value: float) -> int:
@@ -529,12 +542,12 @@ def target_summary(summary: StreamSummary) -> bool:
 
 
 def expected_fps_for_summary(
-    summary: StreamSummary, _ratio_estimate: FrameRatioEstimate | None
+    summary: StreamSummary, mocap_ratio: int = FRAME_COUNT_RATIO
 ) -> float:
     if summary.kind == "video":
         return VIDEO_EXPECTED_FPS
     if summary.kind.lower() in MOCAP_KINDS:
-        return MOCAP_EXPECTED_FPS
+        return mocap_expected_fps(mocap_ratio)
     if summary.fps is not None and math.isfinite(summary.fps) and summary.fps > 0:
         return float(max(1, round(summary.fps)))
     return VIDEO_EXPECTED_FPS
@@ -543,7 +556,7 @@ def expected_fps_for_summary(
 def inspect_summary(
     session_dir: Path,
     summary: StreamSummary,
-    ratio_estimate: FrameRatioEstimate | None,
+    mocap_ratio: int = FRAME_COUNT_RATIO,
 ) -> TimestampSourceResult:
     path = summary.path
     kind = summary.kind.lower()
@@ -574,7 +587,7 @@ def inspect_summary(
         report_kind,
         summary.stream or path.stem,
         summary.frame_count,
-        expected_fps_for_summary(summary, ratio_estimate),
+        expected_fps_for_summary(summary, mocap_ratio),
         samples,
     )
 
@@ -664,9 +677,10 @@ def report_payload(
     summaries: list[StreamSummary],
     results: list[TimestampSourceResult],
     ratio_estimate: FrameRatioEstimate | None,
+    mocap_ratio: int = FRAME_COUNT_RATIO,
 ) -> dict[str, object]:
     reference_n = reference_robocap_frames(summaries)
-    ratio = FRAME_COUNT_RATIO
+    ratio = validate_mocap_ratio(mocap_ratio)
     mocap_summaries = [item for item in summaries if item.kind.lower() in MOCAP_KINDS]
     third_summaries = [
         item for item in summaries if item.kind == "video" and item.stream == "third_person_video"
@@ -686,7 +700,7 @@ def report_payload(
         else None
     )
     primary = primary_mocap_result(results, mocap_frames)
-    mocap_expected_fps = MOCAP_EXPECTED_FPS
+    expected_mocap_fps = mocap_expected_fps(ratio)
     estimated_dropped = estimated_dropped_frames(primary)
     expected_dropped = max(-mocap_delta, 0) if mocap_delta is not None else None
     dropped_match = (
@@ -732,7 +746,7 @@ def report_payload(
         "expectedDropped": expected_dropped,
         "droppedMatch": dropped_match,
         "timingSource": primary.relative_path if primary is not None else None,
-        "mocapExpectedFps": mocap_expected_fps,
+        "mocapExpectedFps": expected_mocap_fps,
         "thirdFrames": third_frames,
         "expectedThird": expected_third,
         "thirdDelta": third_delta,
@@ -782,7 +796,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="stats" id="stats"></div>
   </header>
   <main>
-    <div class="summary table-wrap"><table><thead><tr><th>Session</th><th>Robocap n</th><th>动捕实际</th><th>ratio*(n+1)</th><th>动捕差异</th><th>异常 diff 推算丢帧</th><th>动捕缺少帧数</th><th>是否对上</th><th>第三人称实际</th><th>n+1</th><th>第三人称差异</th></tr></thead><tbody id="summaryRow"></tbody></table></div>
+    <div class="summary table-wrap"><table><thead><tr><th>Session</th><th>Robocap n</th><th>动捕实际</th><th id="expectedMocapHeader">ratio*(n+1)</th><th>动捕差异</th><th>异常 diff 推算丢帧</th><th>动捕缺少帧数</th><th>是否对上</th><th>第三人称实际</th><th>n+1</th><th>第三人称差异</th></tr></thead><tbody id="summaryRow"></tbody></table></div>
     <h2>数据流 / Streams</h2>
     <div class="table-wrap"><table class="file-table"><thead><tr><th>文件</th><th>格式</th><th>流</th><th>帧/行</th><th>期望 FPS</th><th>有效 diff</th><th>跳过 diff</th><th>异常 diff</th><th>缺失 Timestamp</th><th>frame_index 问题</th><th>diff 范围</th></tr></thead><tbody id="fileRows"></tbody></table></div>
     <h2>逐点异常 / Point-level anomalies</h2>
@@ -797,7 +811,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     const el=(tag,cls,text)=>{const node=document.createElement(tag);if(cls)node.className=cls;if(text!=null)node.textContent=text;return node;};
     const number=value=>value==null?'-':nf.format(value); const fixed=(value,digits=6)=>value==null?'-':Number(value).toFixed(digits); const delta=value=>value==null?'-':`${value>0?'+':''}${number(value)}`;
     const position=(row,frame)=>`${row==null?'row -':`row ${row}`} / ${frame==null?'frame -':`frame ${frame}`}`; const timestamp=value=>value==null?'-':`${Number(value).toFixed(9)} s`;
-    function renderHeader(){document.getElementById('subtitle').textContent=`${report.sessionPath} / ${report.segment}。固定基线：动捕 240 FPS、视频 30 FPS、帧数关系 8*(n+1)。diff 只计算相邻且 Timestamp 均有效的数据行；缺失行前后不会跨行相减。动捕推算丢帧 = max(round(diff / ${(1000/report.mocapExpectedFps).toFixed(6)} ms) - 1, 0)，仅累计主 Body 时间戳流 ${report.timingSource||'-'}。`; const stats=[['异常 diff',report.abnormalDiffs],['跳过 diff',report.skippedDiffs],['缺失 Timestamp',report.missingTimestamps],['frame_index 问题',report.frameIssues],['逐点事件',report.events.length]]; const root=document.getElementById('stats');stats.forEach(([label,value])=>{const span=el('span');span.append(document.createTextNode(`${label}: `),el('strong','',number(value)));root.appendChild(span);});}
+    function renderHeader(){document.getElementById('subtitle').textContent=`${report.sessionPath} / ${report.segment}。检查基线：动捕 ${number(report.mocapExpectedFps)} FPS、视频 30 FPS、帧数关系 ${report.ratio}*(n+1)。diff 只计算相邻且 Timestamp 均有效的数据行；缺失行前后不会跨行相减。动捕推算丢帧 = max(round(diff / ${(1000/report.mocapExpectedFps).toFixed(6)} ms) - 1, 0)，仅累计主 Body 时间戳流 ${report.timingSource||'-'}。`;document.getElementById('expectedMocapHeader').textContent=`${report.ratio}*(n+1)`; const stats=[['异常 diff',report.abnormalDiffs],['跳过 diff',report.skippedDiffs],['缺失 Timestamp',report.missingTimestamps],['frame_index 问题',report.frameIssues],['逐点事件',report.events.length]]; const root=document.getElementById('stats');stats.forEach(([label,value])=>{const span=el('span');span.append(document.createTextNode(`${label}: `),el('strong','',number(value)));root.appendChild(span);});}
     function renderSummary(){const tr=document.createElement('tr');const match=report.droppedMatch==null?'-':report.droppedMatch?'是':'否';const cells=[[report.session,''],[number(report.referenceFrames),''],[number(report.mocapFrames),''],[number(report.expectedMocap),''],[delta(report.mocapDelta),report.mocapDelta?'alert':''],[number(report.estimatedDropped),''],[number(report.expectedDropped),''],[match,report.droppedMatch==null?'':report.droppedMatch?'match':'mismatch'],[number(report.thirdFrames),''],[number(report.expectedThird),''],[delta(report.thirdDelta),report.thirdDelta?'alert':'']];cells.forEach(([value,cls])=>tr.appendChild(el('td',cls,value)));document.getElementById('summaryRow').appendChild(tr);}
     function renderFiles(){const root=document.getElementById('fileRows');report.files.forEach(file=>{const tr=document.createElement('tr');const range=file.minDiffMs==null?'-':`${fixed(file.minDiffMs,3)} - ${fixed(file.maxDiffMs,3)} ms`;[file.path,file.kind,file.stream,number(file.frames),fixed(file.expectedFps,3),number(file.diffs),number(file.skipped),number(file.abnormal),number(file.missing),number(file.frameIssues),range].forEach((value,index)=>tr.appendChild(el('td',index>=6&&index<=9&&value!=='0'?'alert':'',value)));root.appendChild(tr);});}
     function eventType(event){return eventTypes[event[2]];} function eventFile(event){return report.files[event[1]];}
@@ -818,13 +832,15 @@ def write_timestamp_anomaly_report(
     summaries: list[StreamSummary],
     out_dir: Path,
     ratio_estimate: FrameRatioEstimate | None,
+    mocap_ratio: int = FRAME_COUNT_RATIO,
 ) -> Path:
     session_dir = session_dir.resolve()
+    ratio = validate_mocap_ratio(mocap_ratio)
     selected = [summary for summary in summaries if target_summary(summary)]
     results: list[TimestampSourceResult] = []
     for summary in selected:
         try:
-            results.append(inspect_summary(session_dir, summary, ratio_estimate))
+            results.append(inspect_summary(session_dir, summary, ratio))
         except Exception as exc:  # noqa: BLE001 - keep one bad stream from hiding the report
             results.append(
                 TimestampSourceResult(
@@ -833,7 +849,7 @@ def write_timestamp_anomaly_report(
                     kind=summary.kind,
                     stream=summary.stream or summary.path.stem,
                     frame_count=summary.frame_count,
-                    expected_fps=expected_fps_for_summary(summary, ratio_estimate),
+                    expected_fps=expected_fps_for_summary(summary, ratio),
                     samples=[],
                     diff_count=0,
                     skipped_diff_count=0,
@@ -847,7 +863,7 @@ def write_timestamp_anomaly_report(
             )
             results[-1].stream = f"{results[-1].stream} (parse error: {exc})"
     results.sort(key=lambda result: (result.kind, result.relative_path.lower()))
-    payload = report_payload(session_dir, segment, summaries, results, ratio_estimate)
+    payload = report_payload(session_dir, segment, summaries, results, ratio_estimate, ratio)
     document = HTML_TEMPLATE.replace(
         "__REPORT__",
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/"),
