@@ -36,12 +36,55 @@ def test_web_app_builds_with_report_viewer() -> None:
     assert "数据集根目录" in config
     assert "扫描 Session" in config
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
+    assert "补做缺失的检查报告" in config
+    assert "统计根目录" in config
     assert "动作基元（从 mocap* 自动建议 PXX，可任意自定义）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
     assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
     assert "保留原始视频" not in config
     assert "仓库不存在时创建" not in config
+
+
+def test_statistics_can_create_missing_report(tmp_path, monkeypatch) -> None:
+    from robocap_rerun_tools import dataset_statistics
+
+    session = tmp_path / "20260827_062420_session146"
+    (session / "mocap-P01-St-user").mkdir(parents=True)
+    (session / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    report = dataset_statistics.timestamp_report_path(session, "segment1")
+    captured: list[list[str]] = []
+
+    def fake_stream(args):
+        captured.append(args)
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            '<script>const report={"mocapDelta":0,"thirdDelta":0,'
+            '"estimatedDropped":0,"expectedDropped":0,"droppedMatch":true,'
+            '"abnormalDiffs":0,"missingTimestamps":0,"frameIssues":0,"files":[]}; '
+            "const eventTypes=[];</script>",
+            encoding="utf-8",
+        )
+        yield "inspection running"
+        return web_app.StreamCommandResult(0, "inspection done", "inspection done")
+
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_stream)
+    monkeypatch.setattr(
+        dataset_statistics,
+        "probe_video_duration",
+        lambda path, ffprobe: (12.5, None),
+    )
+
+    snapshots = list(web_app.calculate_dataset_statistics(tmp_path, 8, True, "中文"))
+    final_output, final_markdown = snapshots[-1]
+
+    assert captured == [
+        ["inspect", str(session.resolve()), "--segment", "segment1", "--mocap-ratio", "8"]
+    ]
+    assert report.is_file()
+    assert "统计完成" in final_output
+    assert "P01" in final_markdown
+    assert "00:00:12.500" in final_markdown
 
 
 def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypatch) -> None:

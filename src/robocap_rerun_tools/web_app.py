@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import inspect
 import json
 import math
 import os
@@ -246,6 +247,9 @@ LANGUAGE_PACKS = {
         "output": "Output",
         "inspect_mocap_ratio": "Inspection Mocap ratio (8: 240 FPS, 4: 120 FPS)",
         "inspect_button": "Inspect",
+        "statistics_mocap_ratio": "Mocap ratio for missing inspections",
+        "statistics_fill_missing": "Create missing inspection reports",
+        "statistics_button": "Calculate statistics",
         "package_output": "Output zip",
         "package_height": "Proxy height",
         "package_crf": "Proxy CRF",
@@ -341,6 +345,9 @@ LANGUAGE_PACKS = {
         "output": "输出",
         "inspect_mocap_ratio": "检查动捕比例（8：240 FPS，4：120 FPS）",
         "inspect_button": "检查",
+        "statistics_mocap_ratio": "补做检查使用的动捕比例",
+        "statistics_fill_missing": "补做缺失的检查报告",
+        "statistics_button": "统计根目录",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
         "package_crf": "压缩 CRF",
@@ -452,6 +459,19 @@ SESSION_SCAN_SKIP_DIRS = frozenset(
 STREAM_REFRESH_SECONDS = 0.5
 STREAM_LOG_MAX_LINES = 1000
 STREAM_LOG_MAX_CHARS = 256 * 1024
+WEB_CSS = """
+#statistics-result {
+    max-width: 100%;
+    overflow-x: auto;
+}
+#statistics-result table {
+    min-width: 900px;
+}
+#statistics-result th,
+#statistics-result td {
+    white-space: nowrap;
+}
+"""
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 FRACTION_PROGRESS_PATTERN = re.compile(r"\[(\d+)\s*/\s*(\d+)\]")
 PERCENT_PROGRESS_PATTERN = re.compile(r"(?<![\d.])(100(?:\.0+)?|\d{1,2}(?:\.\d+)?)%")
@@ -1550,6 +1570,140 @@ def inspect_session(session_dir: str, segment: str, mocap_ratio: int = 8) -> Ite
     yield f"{result.rendered}\n\nTimestamp anomaly HTML: `{report_path}`"
 
 
+def calculate_dataset_statistics(
+    dataset_root: object,
+    mocap_ratio: int,
+    fill_missing_reports: bool,
+    language: str = "中文",
+) -> Iterator[tuple[str, str]]:
+    from robocap_rerun_tools.cli import resolve_ffprobe
+    from robocap_rerun_tools.dataset_statistics import (
+        aggregate_by_primitive,
+        discover_segment_references,
+        render_statistics_markdown,
+        summarize_session,
+    )
+
+    root = dataset_root_path(dataset_root)
+    sessions = discover_session_directories(root)
+    try:
+        ratio = int(mocap_ratio)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Statistics Mocap ratio must be 4 or 8.") from exc
+    if ratio not in {4, 8}:
+        raise ValueError("Statistics Mocap ratio must be 4 or 8.")
+
+    is_chinese = language == "中文"
+    history: deque[str] = deque(maxlen=STREAM_LOG_MAX_LINES)
+
+    def add(message: str) -> None:
+        history.extend(line for line in message.splitlines() if line.strip())
+
+    def output(current: str = "") -> str:
+        rendered = "\n".join(history)
+        if current:
+            rendered = f"{rendered}\n\n{current}" if rendered else current
+        if len(rendered) > STREAM_LOG_MAX_CHARS:
+            rendered = (
+                "... earlier statistics logs omitted ...\n" + rendered[-STREAM_LOG_MAX_CHARS:]
+            )
+        return rendered
+
+    if is_chinese:
+        add(f"统计根目录：{root}")
+        add(f"识别到 Session：{len(sessions)}")
+    else:
+        add(f"Statistics root: {root}")
+        add(f"Detected sessions: {len(sessions)}")
+    if not sessions:
+        add("未发现 Session。" if is_chinese else "No sessions were discovered.")
+        yield output(), ""
+        return
+
+    references = [
+        reference for session in sessions for reference in discover_segment_references(session)
+    ]
+    missing = [reference for reference in references if not reference.report_path.is_file()]
+    if is_chinese:
+        add(f"参考视频 Segment：{len(references)}")
+        add(f"缺少检查报告：{len(missing)}")
+    else:
+        add(f"Reference-video segments: {len(references)}")
+        add(f"Missing inspection reports: {len(missing)}")
+    yield output(), ""
+
+    if fill_missing_reports:
+        for index, reference in enumerate(missing, start=1):
+            label = f"{reference.session_dir.name}/{reference.segment}"
+            prefix = (
+                f"[{index}/{len(missing)}] 补做检查：{label}"
+                if is_chinese
+                else f"[{index}/{len(missing)}] Create inspection: {label}"
+            )
+            command = stream_cli_command(
+                [
+                    "inspect",
+                    str(reference.session_dir),
+                    "--segment",
+                    reference.segment,
+                    "--mocap-ratio",
+                    str(ratio),
+                ]
+            )
+            result: StreamCommandResult | None = None
+            try:
+                while True:
+                    try:
+                        current = next(command)
+                    except StopIteration as stop:
+                        result = stop.value
+                        break
+                    yield output(f"{prefix}\n\n{current}"), ""
+            except OSError as exc:
+                add(f"{prefix}: {exc}")
+                continue
+
+            if result is not None and result.returncode == 0 and reference.report_path.is_file():
+                add(f"{prefix}: OK")
+            else:
+                returncode = result.returncode if result is not None else "unknown"
+                add(f"{prefix}: failed (exit {returncode})")
+            yield output(), ""
+
+    ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
+    session_statistics = []
+    for index, session in enumerate(sessions, start=1):
+        progress = (
+            f"[{index}/{len(sessions)}] 统计时长：{session.name}"
+            if is_chinese
+            else f"[{index}/{len(sessions)}] Measure duration: {session.name}"
+        )
+        add(progress)
+        statistic = summarize_session(root, session, ffprobe)
+        session_statistics.append(statistic)
+        partial = render_statistics_markdown(
+            root,
+            aggregate_by_primitive(session_statistics),
+            language=language,
+        )
+        yield output(), partial
+
+    primitives = aggregate_by_primitive(session_statistics)
+    markdown = render_statistics_markdown(root, primitives, language=language)
+    error_count = sum(len(item.errors) for item in session_statistics)
+    if error_count:
+        add(
+            f"统计警告：{error_count} 项；对应时长可能为 0 或被计入未检查。"
+            if is_chinese
+            else f"Statistics warnings: {error_count}; affected durations may be zero or unchecked."
+        )
+        for statistic in session_statistics:
+            for error in statistic.errors:
+                add(f"- {statistic.session_dir.name}: {error}")
+    add("统计完成。" if is_chinese else "Statistics complete.")
+    yield output(), markdown
+
+
 def package_data(
     session_dir: str, segment: str, output_zip: str, proxy_height: int, proxy_crf: int
 ) -> Iterator[str]:
@@ -1859,6 +2013,9 @@ def language_updates(language: str):
         gr.update(label=labels["output"]),
         gr.update(label=labels["inspect_mocap_ratio"]),
         gr.update(value=labels["inspect_button"]),
+        gr.update(label=labels["statistics_mocap_ratio"]),
+        gr.update(label=labels["statistics_fill_missing"]),
+        gr.update(value=labels["statistics_button"]),
         gr.update(label=labels["package_output"]),
         gr.update(label=labels["package_height"]),
         gr.update(label=labels["package_crf"]),
@@ -1954,7 +2111,10 @@ def build_app():
     except (OSError, ValueError):
         initial_modelscope_endpoint = "https://modelscope.cn"
         initial_modelscope_repo_id = ""
-    with gr.Blocks(title="Robocap Rerun Tools") as app:
+    blocks_options: dict[str, object] = {"title": "Robocap Rerun Tools"}
+    if "css" not in inspect.signature(gr.Blocks.launch).parameters:
+        blocks_options["css"] = WEB_CSS
+    with gr.Blocks(**blocks_options) as app:
         title = gr.Markdown(labels["title"])
         with gr.Row():
             language = gr.Radio(
@@ -2012,6 +2172,32 @@ def build_app():
             )
             inspect_event.then(
                 timestamp_report_choices, inputs=[session_dir], outputs=[report_html_file]
+            )
+
+        with gr.Tab("统计 / Statistics"):
+            with gr.Row():
+                statistics_mocap_ratio = gr.Radio(
+                    label=labels["statistics_mocap_ratio"],
+                    choices=[8, 4],
+                    value=8,
+                    scale=2,
+                )
+                statistics_fill_missing = gr.Checkbox(
+                    label=labels["statistics_fill_missing"], value=True, scale=2
+                )
+                statistics_button = gr.Button(
+                    labels["statistics_button"], variant="primary", scale=1
+                )
+            statistics_result = gr.Markdown(elem_id="statistics-result")
+            statistics_button.click(
+                calculate_dataset_statistics,
+                inputs=[
+                    dataset_root,
+                    statistics_mocap_ratio,
+                    statistics_fill_missing,
+                    language,
+                ],
+                outputs=[output, statistics_result],
             )
 
         with gr.Tab("打包 / Package"):
@@ -2340,6 +2526,9 @@ def build_app():
                 output,
                 inspect_mocap_ratio,
                 inspect_button,
+                statistics_mocap_ratio,
+                statistics_fill_missing,
+                statistics_button,
                 package_output,
                 package_height,
                 package_crf,
@@ -2421,5 +2610,12 @@ def main(args: argparse.Namespace) -> int:
     ensure_localhost_no_proxy()
     ensure_env_file()
     app = build_app()
-    app.launch(server_name=args.host, server_port=args.port, inbrowser=args.open)
+    launch_options: dict[str, object] = {
+        "server_name": args.host,
+        "server_port": args.port,
+        "inbrowser": args.open,
+    }
+    if "css" in inspect.signature(app.launch).parameters:
+        launch_options["css"] = WEB_CSS
+    app.launch(**launch_options)
     return 0

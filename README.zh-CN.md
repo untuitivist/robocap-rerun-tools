@@ -16,6 +16,7 @@
 - 使用压缩视频打包 session，并准备、上传约定的 ModelScope 数据集结构。
 - 直接从 Web 打开检查 HTML 和生成的 RRD。
 - 递归扫描一个数据集合根目录，并从可搜索下拉框选择识别到的 Session。
+- 按 `PXX` 汇总录制时长；每个 Segment 只计算一个 Robocap 参考视频，并可先补做缺失的检查报告。
 
 ## 适用数据
 
@@ -107,6 +108,7 @@ start_web.bat
 
 - 中文/英文切换
 - 检查帧率、漏帧和异常时间戳，并快捷打开独立 HTML 报告
+- 按 `PXX` 统计未检查/差帧时长、总时长和 Session 数
 - 默认压缩视频的数据打包
 - time/frame RRD 导出、offset 检查和 offset sweep
 - RRD Web Viewer
@@ -141,6 +143,12 @@ fetch 失败时会明确显示远端状态未知，不再使用可能过期的 `
 
 Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式与 JavaScript 全部内嵌，可离线
 打开并直接分享。“检查报告 / Reports”页可以扫描报告并用默认浏览器打开，顶部输出框只打印生成路径。
+
+“统计 / Statistics”页会扫描根目录下识别到的全部 Session，并从 Session 路径或直属 `mocap*`
+目录中的唯一 `PXX` 归类。每个 Segment 只选择一个 Robocap 参考视频计算时长，不会把多摄像头重复
+相加。默认会按选择的 8/4 倍比例串行补做缺失检查，再输出每个动作的未检查/差帧时长、总时长、
+Session 数和 `{Session: Session 时长}`。缺失或无法读取报告、帧数差异、推算丢帧、异常时间戳和
+frame_index 问题都会计入未检查/差帧时长。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`

@@ -20,6 +20,8 @@ use `capture_time` as the primary timeline; frame-aligned exports use the intege
 - Package sessions with compressed video and stage/upload the documented ModelScope dataset layout.
 - Open generated HTML reports and RRD recordings directly from the Web UI.
 - Scan a collection root recursively and select any detected session from one searchable dropdown.
+- Summarize recording duration by `PXX`, using one Robocap reference video per Segment, and
+  optionally create inspection reports that are missing before calculating unchecked/problem time.
 
 ## Session Layout
 
@@ -100,8 +102,9 @@ The command examples below use `robocap-rerun` directly. Either activate once wi
 
 ## Web UI
 
-The bilingual Web UI provides inspection, packaging, time/frame RRD export, offset inspection,
-ModelScope staging/upload, report opening, RRD viewing, environment checks, and code updates.
+The bilingual Web UI provides inspection, collection statistics, packaging, time/frame RRD export,
+offset inspection, ModelScope staging/upload, report opening, RRD viewing, environment checks, and
+code updates.
 
 At the top of the page, enter the directory that contains the recording collection and click
 `Scan sessions`. The scanner finds direct children and nested layouts such as
@@ -120,6 +123,14 @@ command to exit. Logs retain the latest 1000 lines or approximately 256 KiB to b
 Inspection writes only `timestamp_anomaly_detail_table.html`, with all data, styles, and JavaScript
 embedded for offline sharing. The `Reports` tab scans these files and opens the selected report in
 the default browser; the output box prints the generated path instead of duplicating the report.
+
+The `Statistics` tab scans every detected Session under the collection root and groups duration by
+the unique `PXX` token found in the Session path or direct `mocap*` directory. Each Segment is timed
+from one Robocap reference video, so multiple cameras are never added repeatedly. Missing inspection
+reports can be created serially with the selected 8/4 Mocap ratio before aggregation. The result
+shows unchecked/frame-problem duration, total duration, Session count, and a
+`{Session: duration}` map for each action. Missing/unreadable reports, frame-count differences,
+estimated dropped frames, abnormal timestamps, and frame-index issues count as problem duration.
 
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
 synchronizes it across the Export and Offset tabs, and restores it after Web UI restarts. On Windows,
