@@ -115,6 +115,9 @@ def test_session_statistics_group_duration_and_unchecked_or_problem_time(
 
     assert [item.primitive_id for item in grouped] == ["P01", "P02", "P03"]
     assert [item.unchecked_or_problem_duration_s for item in grouped] == [0.0, 10.0, 10.0]
+    assert statistics.session_has_clean_frame_counts(rows[0]) is True
+    assert statistics.session_has_clean_frame_counts(rows[1]) is False
+    assert statistics.session_has_clean_frame_counts(rows[2]) is False
     assert "未检查/差帧时长" in markdown
     assert "00:00:30.000" in markdown
     assert '"session-clean": "00:00:10.000"' in markdown

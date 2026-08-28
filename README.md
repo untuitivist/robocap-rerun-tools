@@ -108,7 +108,7 @@ code updates.
 
 At the top of the page, enter the directory that contains the recording collection and click
 `Scan sessions`. The scanner finds direct children and nested layouts such as
-`EgoMotionActions/<primitive_id>/<session_id>`, then fills a searchable Session dropdown with
+`EgoMotionActions/<batch>/<primitive_id>/<session_id>`, then fills a searchable Session dropdown with
 relative labels.
 A session is recognized when its root directly contains at least one `robocap_*` source file.
 Generated analysis/artifact/dataset trees, calibration data, virtual environments, and build trees
@@ -132,6 +132,13 @@ shows unchecked/frame-count-difference duration, total duration, Session count, 
 `{Session: duration}` map for each action. This duration only includes missing/unreadable reports and
 frame counts that do not satisfy `n:ratio*(n+1):(n+1)`. Timestamp diff findings, inferred dropped
 frames, missing timestamps, and frame-index issues are ignored for this statistic.
+
+The same tab can batch-prepare and upload only clean Sessions. It recalculates eligibility at click
+time, optionally creates missing reports, and requires every Segment in a Session to satisfy the
+frame-count relation. The batch uses compressed full-session video, selects BVH/CSV/TRC/MP4 files
+except paths containing `unnamed`, includes no RRD, and reads the target repository from `.env`.
+Sessions without an unambiguous `PXX` (or an explicit custom action directory in an
+`EgoMotionActions` hierarchy) are skipped. All eligible Sessions share one upload batch timestamp.
 
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
 synchronizes it across the Export and Offset tabs, and restores it after Web UI restarts. On Windows,
@@ -178,19 +185,23 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
   raw_calibration/                       # required: maintained by calibration workflow
     <device_id>/                         # files are resolved by explicit device ID
   EgoMotionActions/                      # generated action data
-    <primitive_id>/                      # P01-P29 convention or a custom action name
-      <session_id>/
-        robocap_<segment>_video_*.mp4       # required: six first-person cameras
-        robocap_<segment>_imu_*.db          # required: Robocap IMU
-        robocap_<segment>_mag_*.db          # required: Robocap MAG
-        mocap/
-          *.{bvh,trc,csv,xrs,c3d,...}       # [optional format]: at least one is required
-                                            # include all bodies and rigid bodies in each format
-          *.mp4                             # required: third-person video(s)
-        robowrist_<device_id>_<side>/       # required: left/right video, IMU, and MAG
-        rerun/<segment>/inspection/*.rrd    # [optional]: only when explicitly selected
-        manifest.json                       # generated; includes device IDs
-        timestamp_anomaly_detail_table.html # generated and required
+    <YYYYMMDD_HHMMSS>/                   # local upload-start time shared by one upload
+      <primitive_id>/                    # P01-P29 convention or a custom action name
+        <session_id>/
+          robocap_<segment>_video_*.mp4       # required: six first-person cameras
+          robocap_<segment>_imu_*.db          # required: Robocap IMU
+          robocap_<segment>_mag_*.db          # required: Robocap MAG
+          mocap/
+            *.{bvh,trc,csv,xrs,c3d,...}       # [optional format]: at least one is required
+                                              # include all bodies and rigid bodies in each format
+            *.mp4                             # required: third-person video(s)
+          robowrist_<device_id>_<side>/       # required: left/right video, IMU, and MAG
+          rerun/<segment>/inspection/*.rrd    # [optional]: only when explicitly selected
+          manifest.json                       # generated; includes device IDs
+          timestamp_anomaly_detail_table.html # generated and required
+    Demo/                                  # legacy examples; never used for new uploads
+      <primitive_id>/
+        <session_id>/                      # same session contents as above
 ```
 
 The capture streams and motion-capture content are required. Only the concrete NOKOV export
@@ -219,7 +230,8 @@ robocap-rerun modelscope-auth
 
 Prepare one session. The staging root is automatically `<session parent>/_modelscope_dataset`; this
 regenerates the inspection HTML, compresses video by default, removes local absolute paths from the
-copied report, and updates the dataset-level metadata:
+copied report, and updates the dataset-level metadata. Prepared sessions remain under the local-only
+`_prepared/<primitive_id>/<session_id>/` tree until upload starts:
 
 ```bat
 robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection
@@ -272,6 +284,15 @@ that have not changed:
 ```bat
 robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
+
+When upload starts, every pending session receives the same local-time batch ID and is moved to
+`EgoMotionActions/<YYYYMMDD_HHMMSS>/<primitive_id>/<session_id>/`. The manifest and
+`metadata.jsonl` paths are updated atomically before transfer. If transfer fails, retrying reuses the
+assigned batch instead of creating a second timestamp. `_prepared/` is excluded from upload.
+`EgoMotionActions/Demo/` is reserved for recordings migrated from the legacy non-batched layout.
+The uploader downloads and merges the existing remote `metadata.jsonl` before committing the new
+index, so unrelated batches and Demo rows are retained. Local `(primitive_id, session_id)` rows
+replace matching remote rows. The merged index is uploaded only after session-file transfer succeeds.
 
 The command uses `MODELSCOPE_REPO_ID` from `.env`. Pass `--repo-id owner/another-dataset` only to
 override the saved repository for one upload.

@@ -56,6 +56,10 @@ class PrimitiveStatistic:
     sessions: tuple[SessionStatistic, ...]
 
 
+def session_has_clean_frame_counts(session: SessionStatistic) -> bool:
+    return bool(session.segments) and all(segment.status == "clean" for segment in session.segments)
+
+
 def _camera_priority(camera: str) -> tuple[int, str]:
     priorities = {
         "left": 0,

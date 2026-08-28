@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from robocap_rerun_tools import web_app
 
 
@@ -38,6 +40,7 @@ def test_web_app_builds_with_report_viewer() -> None:
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
     assert "补做缺失的检查报告" in config
     assert "统计根目录" in config
+    assert "批量准备并上传无差帧 Session" in config
     assert "动作基元（从 mocap* 自动建议 PXX，可任意自定义）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
@@ -86,6 +89,112 @@ def test_statistics_can_create_missing_report(tmp_path, monkeypatch) -> None:
     assert "统计完成" in final_output
     assert "P01" in final_markdown
     assert "00:00:12.500" in final_markdown
+
+
+def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatch) -> None:
+    from robocap_rerun_tools import cli, dataset_statistics
+
+    clean = tmp_path / "EgoMotionActions" / "P01" / "session-clean"
+    problem = tmp_path / "EgoMotionActions" / "P02" / "session-problem"
+    for session in (clean, problem):
+        mocap = session / "mocap"
+        mocap.mkdir(parents=True)
+        (session / "robocap_segment1_video_left.mp4").write_bytes(b"")
+        (mocap / "body.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+        (mocap / "third.mp4").write_bytes(b"")
+        (mocap / "unnamed.csv").write_text("frame,x\n", encoding="utf-8")
+        (mocap / "optional.xrs").write_text("data\n", encoding="utf-8")
+
+    def write_report(session: Path, mocap_frames: int) -> None:
+        report = dataset_statistics.timestamp_report_path(session, "segment1")
+        report.parent.mkdir(parents=True)
+        report.write_text(
+            '<script>const report={"ratio":8,"referenceFrames":9,'
+            f'"mocapFrames":{mocap_frames},"thirdFrames":10}}; '
+            "const eventTypes=[];</script>",
+            encoding="utf-8",
+        )
+
+    write_report(clean, 80)
+    write_report(problem, 72)
+    monkeypatch.setattr(dataset_statistics, "probe_video_duration", lambda *_args: (10.0, None))
+    monkeypatch.setattr(cli, "resolve_ffprobe", lambda *_args: "ffprobe")
+    monkeypatch.setattr(
+        web_app,
+        "validate_pending_modelscope_frame_counts",
+        lambda _root: ("_prepared/P01/session-clean",),
+    )
+    commands: list[list[str]] = []
+
+    def fake_stream(args):
+        commands.append(list(args))
+        yield "Done."
+        return web_app.StreamCommandResult(0, "Done.", "Done.")
+
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_stream)
+
+    output = collect_stream(
+        web_app.bulk_upload_clean_modelscope_sessions(tmp_path, 8, False, "中文")
+    )
+
+    assert [command[0] for command in commands] == [
+        "modelscope-auth",
+        "modelscope-stage",
+        "modelscope-upload",
+    ]
+    stage = commands[1]
+    assert stage[1] == str(clean.resolve())
+    assert stage[stage.index("--primitive-id") + 1] == "P01"
+    assert stage[stage.index("--dataset-root") + 1] == str(
+        tmp_path.resolve() / "_modelscope_dataset"
+    )
+    selected = [stage[index + 1] for index, item in enumerate(stage) if item == "--mocap-file"]
+    assert set(selected) == {str(Path("mocap") / "body.trc"), str(Path("mocap") / "third.mp4")}
+    assert commands[2] == ["modelscope-upload", str(tmp_path.resolve() / "_modelscope_dataset")]
+    assert "session-problem: unchecked or frame-count difference" in output
+    assert "批量上传完成" in output
+
+
+def test_batch_primitive_supports_explicit_custom_action_hierarchy(tmp_path) -> None:
+    timestamped = (
+        tmp_path / "EgoMotionActions" / "20260828_120000" / "Custom Walk" / "session-a"
+    )
+    demo = tmp_path / "EgoMotionActions" / "Demo" / "Legacy Action" / "session-b"
+    direct = tmp_path / "session-c"
+    for session in (timestamped, demo, direct):
+        session.mkdir(parents=True)
+
+    assert web_app.infer_batch_modelscope_primitive(tmp_path, timestamped) == "Custom Walk"
+    assert web_app.infer_batch_modelscope_primitive(tmp_path, demo) == "Legacy Action"
+    assert web_app.infer_batch_modelscope_primitive(tmp_path, direct) is None
+
+
+def test_pending_modelscope_validation_rejects_frame_difference(tmp_path, monkeypatch) -> None:
+    from robocap_rerun_tools import modelscope_publisher
+
+    relative = Path("_prepared") / "P01" / "session-clean"
+    report = tmp_path / relative / modelscope_publisher.REPORT_NAME
+    report.parent.mkdir(parents=True)
+    monkeypatch.setattr(
+        modelscope_publisher,
+        "load_staged_dataset",
+        lambda _root: SimpleNamespace(pending_session_paths=(relative.as_posix(),)),
+    )
+
+    def write_report(mocap_frames: int) -> None:
+        report.write_text(
+            '<script>const report={"ratio":8,"referenceFrames":9,'
+            f'"mocapFrames":{mocap_frames},"thirdFrames":10}}; '
+            "const eventTypes=[];</script>",
+            encoding="utf-8",
+        )
+
+    write_report(80)
+    assert web_app.validate_pending_modelscope_frame_counts(tmp_path) == (relative.as_posix(),)
+
+    write_report(72)
+    with pytest.raises(ValueError, match="frame counts do not match"):
+        web_app.validate_pending_modelscope_frame_counts(tmp_path)
 
 
 def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypatch) -> None:

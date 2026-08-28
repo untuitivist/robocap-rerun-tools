@@ -134,6 +134,13 @@ preserves the current token.
 Use `Prepare session` before `Upload prepared dataset`. Upload sends every session referenced by
 `metadata.jsonl` and uses the official `modelscope-hub`
 client and its resumable upload cache by default. The target repository must already exist.
+Preparation writes to local `_prepared/<primitive>/<session>/`. At upload start, all pending
+sessions share one local-time `YYYYMMDD_HHMMSS` batch and move to
+`EgoMotionActions/<batch>/<primitive>/<session>/`; a failed transfer reuses that batch on retry.
+`EgoMotionActions/Demo/` is reserved for migrated legacy examples.
+The Statistics tab also has a clean-session batch upload. It recalculates every Session, requires
+all Segments to satisfy the exact frame-count relation, uses the curated default Mocap files and no
+RRD, then prepares and uploads all eligible Sessions in one shared timestamp batch.
 When aligned-intersection staging is enabled, its ratio and Offset are prefilled from the RRD
 Export controls and continue to follow changes made there. Edit the ModelScope copies only to
 override alignment for that staging operation.
@@ -231,6 +238,11 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 再执行“上传已准备数据集”。
 上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存；
 目标仓库必须已经存在。
+准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用一个本地时间
+`YYYYMMDD_HHMMSS` 批次，并移动到 `EgoMotionActions/<批次>/<动作>/<session>/`；传输失败后重试会
+复用该批次。`EgoMotionActions/Demo/` 只保留迁移后的旧示例。
+“统计”页还提供 clean Session 批量上传。它会重新检查全部 Session，只保留所有 Segment 都满足精确
+帧数关系的数据，使用默认 Mocap 文件且不带 RRD，然后将全部合格 Session 放入同一个上传时间批次。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
 """
@@ -250,6 +262,12 @@ LANGUAGE_PACKS = {
         "statistics_mocap_ratio": "Mocap ratio for missing inspections",
         "statistics_fill_missing": "Create missing inspection reports",
         "statistics_button": "Calculate statistics",
+        "statistics_batch_help": (
+            "Batch upload recalculates the root and includes only sessions whose every Segment "
+            "satisfies `n:ratio*(n+1):n+1`. It uses compressed full-session video, selects "
+            "BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads the repository from `.env`."
+        ),
+        "statistics_batch_upload": "Prepare and upload clean sessions",
         "package_output": "Output zip",
         "package_height": "Proxy height",
         "package_crf": "Proxy CRF",
@@ -348,6 +366,12 @@ LANGUAGE_PACKS = {
         "statistics_mocap_ratio": "补做检查使用的动捕比例",
         "statistics_fill_missing": "补做缺失的检查报告",
         "statistics_button": "统计根目录",
+        "statistics_batch_help": (
+            "批量上传会重新统计，只处理所有 Segment 都满足 `n:ratio*(n+1):n+1` 的 Session。"
+            "固定使用压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；"
+            "目标仓库读取 `.env`。"
+        ),
+        "statistics_batch_upload": "批量准备并上传无差帧 Session",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
         "package_crf": "压缩 CRF",
@@ -1396,19 +1420,25 @@ def scan_modelscope_rrd_files(session_dir: str, segment: str) -> tuple[str, obje
     return summary, gr.update(choices=choices, value=choices)
 
 
+def default_modelscope_mocap_files(session_dir: Path) -> list[Path]:
+    from robocap_rerun_tools.modelscope_publisher import find_mocap_files
+
+    path = session_dir.expanduser().resolve()
+    return [
+        file.relative_to(path)
+        for file in find_mocap_files(path)
+        if file.suffix.casefold() in DEFAULT_SELECTED_MOCAP_SUFFIXES
+        and "unnamed" not in file.relative_to(path).as_posix().casefold()
+    ]
+
+
 def scan_modelscope_mocap_files(session_dir: str) -> tuple[str, object]:
     from robocap_rerun_tools.modelscope_publisher import find_mocap_files
 
     path = Path(session_path(session_dir)).resolve()
-    mocap_files = find_mocap_files(path)
-    relative_files = [file.relative_to(path) for file in mocap_files]
+    relative_files = [file.relative_to(path) for file in find_mocap_files(path)]
     choices = [str(file) for file in relative_files]
-    default_selection = [
-        choice
-        for relative, choice in zip(relative_files, choices, strict=True)
-        if relative.suffix.casefold() in DEFAULT_SELECTED_MOCAP_SUFFIXES
-        and "unnamed" not in relative.as_posix().casefold()
-    ]
+    default_selection = [str(file) for file in default_modelscope_mocap_files(path)]
     summary = "\n".join(
         [
             f"Session: {path}",
@@ -1702,6 +1732,294 @@ def calculate_dataset_statistics(
                 add(f"- {statistic.session_dir.name}: {error}")
     add("统计完成。" if is_chinese else "Statistics complete.")
     yield output(), markdown
+
+
+def infer_batch_modelscope_primitive(dataset_root: Path, session_dir: Path) -> str | None:
+    from robocap_rerun_tools.dataset_statistics import (
+        UNASSIGNED_PRIMITIVE,
+        infer_action_primitive,
+    )
+    from robocap_rerun_tools.modelscope_publisher import validate_primitive_id
+
+    detected = infer_action_primitive(dataset_root, session_dir)
+    if detected != UNASSIGNED_PRIMITIVE:
+        return detected
+
+    try:
+        relative_parts = session_dir.resolve().relative_to(dataset_root.resolve()).parts
+    except (OSError, ValueError):
+        return None
+
+    action_parts: tuple[str, ...] = ()
+    if dataset_root.name.casefold() == "egomotionactions":
+        action_parts = relative_parts
+    else:
+        for index, part in enumerate(relative_parts):
+            if part.casefold() == "egomotionactions":
+                action_parts = relative_parts[index + 1 :]
+                break
+    if len(action_parts) < 2:
+        return None
+    if action_parts[0].casefold() == "demo" or re.fullmatch(
+        r"\d{8}_\d{6}", action_parts[0]
+    ):
+        if len(action_parts) < 3:
+            return None
+        candidate = action_parts[1]
+    else:
+        candidate = action_parts[0]
+    try:
+        return validate_primitive_id(candidate)
+    except ValueError:
+        return None
+
+
+def validate_pending_modelscope_frame_counts(dataset_root: Path) -> tuple[str, ...]:
+    from robocap_rerun_tools.dataset_statistics import (
+        load_report_payload,
+        report_has_frame_count_difference,
+    )
+    from robocap_rerun_tools.modelscope_publisher import REPORT_NAME, load_staged_dataset
+
+    staged = load_staged_dataset(dataset_root)
+    if not staged.pending_session_paths:
+        raise ValueError(f"No pending ModelScope sessions were prepared under {dataset_root}.")
+
+    failures: list[str] = []
+    for relative_path in staged.pending_session_paths:
+        report_path = dataset_root / Path(relative_path) / REPORT_NAME
+        try:
+            payload = load_report_payload(report_path)
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            failures.append(f"{relative_path}: unreadable inspection report ({exc})")
+            continue
+        if report_has_frame_count_difference(payload):
+            failures.append(f"{relative_path}: frame counts do not match n:ratio*(n+1):n+1")
+    if failures:
+        raise ValueError(
+            "Pending ModelScope sessions failed the clean frame-count requirement:\n- "
+            + "\n- ".join(failures)
+        )
+    return staged.pending_session_paths
+
+
+def bulk_upload_clean_modelscope_sessions(
+    dataset_root: object,
+    mocap_ratio: int,
+    fill_missing_reports: bool,
+    language: str = "中文",
+) -> Iterator[str]:
+    from robocap_rerun_tools.cli import resolve_ffprobe
+    from robocap_rerun_tools.dataset_statistics import (
+        discover_segment_references,
+        session_has_clean_frame_counts,
+        summarize_session,
+    )
+    from robocap_rerun_tools.modelscope_publisher import ModelScopePublisherError
+
+    root = dataset_root_path(dataset_root)
+    try:
+        ratio = int(mocap_ratio)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Statistics Mocap ratio must be 4 or 8.") from exc
+    if ratio not in {4, 8}:
+        raise ValueError("Statistics Mocap ratio must be 4 or 8.")
+
+    is_chinese = language == "中文"
+    history: deque[str] = deque(maxlen=STREAM_LOG_MAX_LINES)
+
+    def add(message: str) -> None:
+        history.extend(line for line in message.splitlines() if line.strip())
+
+    def render(current: str = "") -> str:
+        value = "\n".join(history)
+        if current:
+            value = f"{value}\n\n{current}" if value else current
+        if len(value) > STREAM_LOG_MAX_CHARS:
+            value = "... earlier batch logs omitted ...\n" + value[-STREAM_LOG_MAX_CHARS:]
+        return value
+
+    def command_step(args: list[str], label: str) -> Generator[str, None, StreamCommandResult]:
+        add(label)
+        stream = stream_cli_command(args)
+        while True:
+            try:
+                snapshot = next(stream)
+            except StopIteration as stop:
+                result = stop.value
+                if not isinstance(result, StreamCommandResult):
+                    raise TypeError(f"CLI stream returned no result for {args[0]}.")
+                add(f"{label}: {'done' if result.returncode == 0 else 'failed'}")
+                return result
+            yield render(snapshot)
+
+    sessions = discover_session_directories(root)
+    add(f"统计根目录：{root}" if is_chinese else f"Statistics root: {root}")
+    add(
+        f"识别到 Session：{len(sessions)}"
+        if is_chinese
+        else f"Detected sessions: {len(sessions)}"
+    )
+    if not sessions:
+        add("未发现 Session。" if is_chinese else "No sessions were discovered.")
+        yield render()
+        return
+
+    references = [
+        reference for session in sessions for reference in discover_segment_references(session)
+    ]
+    missing = [reference for reference in references if not reference.report_path.is_file()]
+    if fill_missing_reports:
+        for index, reference in enumerate(missing, start=1):
+            label = (
+                f"[{index}/{len(missing)}] 补做检查：{reference.session_dir.name}/{reference.segment}"
+                if is_chinese
+                else (
+                    f"[{index}/{len(missing)}] Create inspection: "
+                    f"{reference.session_dir.name}/{reference.segment}"
+                )
+            )
+            result = yield from command_step(
+                [
+                    "inspect",
+                    str(reference.session_dir),
+                    "--segment",
+                    reference.segment,
+                    "--mocap-ratio",
+                    str(ratio),
+                ],
+                label,
+            )
+            if result.returncode != 0:
+                add(
+                    "检查失败；该 Session 将被排除。"
+                    if is_chinese
+                    else "Inspection failed; this session will be excluded."
+                )
+
+    ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
+    candidates: list[tuple[Path, str, list[Path]]] = []
+    skipped: list[str] = []
+    for index, session in enumerate(sessions, start=1):
+        add(
+            f"[{index}/{len(sessions)}] 筛选：{session.name}"
+            if is_chinese
+            else f"[{index}/{len(sessions)}] Filter: {session.name}"
+        )
+        statistic = summarize_session(root, session, ffprobe)
+        if not session_has_clean_frame_counts(statistic):
+            skipped.append(f"{session}: unchecked or frame-count difference")
+            yield render()
+            continue
+        primitive = infer_batch_modelscope_primitive(root, session)
+        if primitive is None:
+            skipped.append(f"{session}: action primitive is ambiguous or missing")
+            yield render()
+            continue
+        try:
+            mocap_files = default_modelscope_mocap_files(session)
+        except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+            skipped.append(f"{session}: {exc}")
+            yield render()
+            continue
+        if not mocap_files:
+            skipped.append(f"{session}: no default-selected BVH/CSV/TRC/MP4 Mocap file")
+            yield render()
+            continue
+        candidates.append((session, primitive, mocap_files))
+        yield render()
+
+    duplicate_keys: dict[tuple[str, str], list[Path]] = {}
+    for session, primitive, _ in candidates:
+        duplicate_keys.setdefault((primitive, session.name), []).append(session)
+    duplicates = {key: paths for key, paths in duplicate_keys.items() if len(paths) > 1}
+    if duplicates:
+        add(
+            "批量上传已停止：动作名称和 Session ID 组合重复。"
+            if is_chinese
+            else "Batch upload stopped: duplicate action/session ID combinations."
+        )
+        for (primitive, session_id), paths in sorted(duplicates.items()):
+            add(f"- {primitive}/{session_id}: {', '.join(str(path) for path in paths)}")
+        yield render()
+        return
+
+    add(
+        f"合格 Session：{len(candidates)}；排除：{len(skipped)}"
+        if is_chinese
+        else f"Eligible sessions: {len(candidates)}; excluded: {len(skipped)}"
+    )
+    for session, primitive, _ in candidates:
+        add(f"+ {primitive}/{session.name}: {session}")
+    for reason in skipped:
+        add(f"- {reason}")
+    yield render()
+    if not candidates:
+        add("没有可上传的合格 Session。" if is_chinese else "No eligible session to upload.")
+        yield render()
+        return
+
+    auth_result = yield from command_step(
+        ["modelscope-auth"],
+        "检查 ModelScope 身份。" if is_chinese else "Check ModelScope authentication.",
+    )
+    if auth_result.returncode != 0:
+        yield render()
+        return
+
+    staged_root = root / "_modelscope_dataset"
+    for index, (session, primitive, mocap_files) in enumerate(candidates, start=1):
+        args = [
+            "modelscope-stage",
+            str(session),
+            "--primitive-id",
+            primitive,
+            "--dataset-root",
+            str(staged_root),
+        ]
+        for mocap_file in mocap_files:
+            args.extend(["--mocap-file", str(mocap_file)])
+        label = (
+            f"[{index}/{len(candidates)}] 准备：{primitive}/{session.name}"
+            if is_chinese
+            else f"[{index}/{len(candidates)}] Prepare: {primitive}/{session.name}"
+        )
+        stage_result = yield from command_step(args, label)
+        if stage_result.returncode != 0:
+            add(
+                "批量准备失败，未开始上传。已成功准备的 Session 保留供修复后重试。"
+                if is_chinese
+                else (
+                    "Batch preparation failed; upload did not start. Successfully prepared "
+                    "sessions remain available for retry."
+                )
+            )
+            yield render()
+            return
+
+    try:
+        pending_paths = validate_pending_modelscope_frame_counts(staged_root)
+    except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+        add(
+            f"上传前 clean 校验失败：{exc}"
+            if is_chinese
+            else f"Pre-upload clean validation failed: {exc}"
+        )
+        yield render()
+        return
+    add(
+        f"上传前校验通过：{len(pending_paths)} 个 pending Session。"
+        if is_chinese
+        else f"Pre-upload validation passed: {len(pending_paths)} pending sessions."
+    )
+
+    upload_result = yield from command_step(
+        ["modelscope-upload", str(staged_root)],
+        "上传同一时间批次。" if is_chinese else "Upload one shared timestamp batch.",
+    )
+    if upload_result.returncode == 0:
+        add("批量上传完成。" if is_chinese else "Batch upload complete.")
+    yield render()
 
 
 def package_data(
@@ -2016,6 +2334,8 @@ def language_updates(language: str):
         gr.update(label=labels["statistics_mocap_ratio"]),
         gr.update(label=labels["statistics_fill_missing"]),
         gr.update(value=labels["statistics_button"]),
+        gr.update(value=labels["statistics_batch_help"]),
+        gr.update(value=labels["statistics_batch_upload"]),
         gr.update(label=labels["package_output"]),
         gr.update(label=labels["package_height"]),
         gr.update(label=labels["package_crf"]),
@@ -2198,6 +2518,18 @@ def build_app():
                     language,
                 ],
                 outputs=[output, statistics_result],
+            )
+            statistics_batch_help = gr.Markdown(labels["statistics_batch_help"])
+            statistics_batch_upload = gr.Button(labels["statistics_batch_upload"])
+            statistics_batch_upload.click(
+                bulk_upload_clean_modelscope_sessions,
+                inputs=[
+                    dataset_root,
+                    statistics_mocap_ratio,
+                    statistics_fill_missing,
+                    language,
+                ],
+                outputs=output,
             )
 
         with gr.Tab("打包 / Package"):
@@ -2529,6 +2861,8 @@ def build_app():
                 statistics_mocap_ratio,
                 statistics_fill_missing,
                 statistics_button,
+                statistics_batch_help,
+                statistics_batch_upload,
                 package_output,
                 package_height,
                 package_crf,

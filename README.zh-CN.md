@@ -117,7 +117,7 @@ start_web.bat
 - 内置中文文档
 
 页面顶部先填写包含多条录制数据的数据集根目录，再点击“扫描 Session”。扫描器兼容 Session
-直接位于根目录下，以及 `EgoMotionActions/<primitive_id>/<session_id>` 这类嵌套结构；下拉框使用相对路径
+直接位于根目录下，以及 `EgoMotionActions/<批次>/<动作>/<session_id>` 这类嵌套结构；下拉框使用相对路径
 区分同名 Session。Session 的判定标准是其根目录直接存在至少一个 `robocap_*` 源文件。
 扫描会排除分析结果、生成产物、ModelScope 暂存数据、标定目录、虚拟环境和构建目录。数据集根目录
 和最近选择的 Session 会在 Web 重启后恢复；切换 Session 时会清空上一条 Session 派生出的 GT、
@@ -150,6 +150,12 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 Session 数和 `{Session: Session 时长}`。未检查/差帧时长只包含缺失或无法读取报告，以及帧数不满足
 `n:ratio*(n+1):(n+1)` 的 Segment；时间戳 diff、推算丢帧、缺失时间戳和 frame_index 等其他问题
 均不计入此时长。
+
+同一页可批量准备并上传 clean Session。点击时会重新筛选，必要时先补报告；只有全部 Segment 都满足
+上述帧数关系的 Session 才会进入上传。批量流程固定使用压缩的完整 Session，默认选择
+BVH/CSV/TRC/MP4 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
+`PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会跳过。全部合格 Session 共用
+同一个上传时间批次。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`
@@ -199,19 +205,23 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
   raw_calibration/                       # 必需：由独立标定流程维护
     <device_id>/                         # 通过明确的 device ID 查找
   EgoMotionActions/                      # 工具生成的动作数据
-    <primitive_id>/                      # P01-P29 惯例或自定义动作名称
-      <session_id>/
-        robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
-        robocap_<segment>_imu_*.db          # 必需：Robocap IMU
-        robocap_<segment>_mag_*.db          # 必需：Robocap MAG
-        mocap/
-          *.{bvh,trc,csv,xrs,c3d,...}       # [可选格式]：至少存在一种
-                                            # 每种已选格式包含全部人体和刚体
-          *.mp4                             # 必需：一个或多个第三人称视频
-        robowrist_<device_id>_<side>/       # 必需：左右视频、IMU、MAG
-        rerun/<segment>/inspection/*.rrd    # [可选]：仅勾选后包含
-        manifest.json                       # 自动生成；包含 device ID
-        timestamp_anomaly_detail_table.html # 自动生成且必需
+    <YYYYMMDD_HHMMSS>/                   # 一次上传共用的本地上传开始时间
+      <primitive_id>/                    # P01-P29 惯例或自定义动作名称
+        <session_id>/
+          robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
+          robocap_<segment>_imu_*.db          # 必需：Robocap IMU
+          robocap_<segment>_mag_*.db          # 必需：Robocap MAG
+          mocap/
+            *.{bvh,trc,csv,xrs,c3d,...}       # [可选格式]：至少存在一种
+                                              # 每种已选格式包含全部人体和刚体
+            *.mp4                             # 必需：一个或多个第三人称视频
+          robowrist_<device_id>_<side>/       # 必需：左右视频、IMU、MAG
+          rerun/<segment>/inspection/*.rrd    # [可选]：仅勾选后包含
+          manifest.json                       # 自动生成；包含 device ID
+          timestamp_anomaly_detail_table.html # 自动生成且必需
+    Demo/                                  # 旧结构迁移来的示例；新上传不写入
+      <primitive_id>/
+        <session_id>/                      # 内容与上面的 session 相同
 ```
 
 采集数据与动捕内容本身必需。只有具体采用哪些 NOKOV 导出格式和是否包含 RRD 是可选项；动捕格式
@@ -244,7 +254,7 @@ robocap-rerun modelscope-auth
 
 先准备一套 session。数据集根目录自动使用该 Session 同级的 `_modelscope_dataset`。下面的命令会
 重新生成检查 HTML，默认压缩视频，去掉待上传 HTML 中的本机绝对路径，并更新数据集根目录的
-`metadata.jsonl`：
+`metadata.jsonl`。准备结果先写入仅供本地使用的 `_prepared/<primitive_id>/<session_id>/`：
 
 ```bat
 robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection
@@ -263,6 +273,13 @@ robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_sessi
 ```bat
 robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
+
+上传开始时，所有待上传 Session 共用一个本地时间批次，并定稿到
+`EgoMotionActions/<YYYYMMDD_HHMMSS>/<primitive_id>/<session_id>/`。工具会在传输前原子更新
+`manifest.json` 与 `metadata.jsonl`；传输失败后重试会复用原批次，不会产生第二个时间目录。
+`_prepared/` 不会上传。`EgoMotionActions/Demo/` 只存放从旧版无批次结构迁移的示例。
+提交新索引前，工具会下载并合并远端 `metadata.jsonl`，保留无关批次与 Demo 行；本地相同
+`(primitive_id, session_id)` 的行覆盖远端旧行。只有 Session 文件传输成功后才提交合并索引。
 
 上传默认使用 `.env` 中的 `MODELSCOPE_REPO_ID`；只有临时覆盖时才传
 `--repo-id owner/another-dataset`。仅 CLI 在明确需要时支持

@@ -40,8 +40,12 @@ REPORT_NAME = "timestamp_anomaly_detail_table.html"
 METADATA_NAME = "metadata.jsonl"
 DATASET_README_NAME = "README.md"
 ACTIONS_DIR_NAME = "EgoMotionActions"
+PREPARED_DIR_NAME = "_prepared"
+DEMO_DIR_NAME = "Demo"
 CALIBRATION_DIR_NAME = "raw_calibration"
 MOCAP_DIR_NAME = CANONICAL_MOCAP_DIR_NAME
+UPLOAD_BATCH_FORMAT = "%Y%m%d_%H%M%S"
+UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}_\d{6}\Z")
 PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
 PRIMITIVE_ID_INVALID_CHAR_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 WINDOWS_RESERVED_NAMES = {
@@ -97,6 +101,9 @@ class StagedDataset:
     metadata_path: Path
     readme_path: Path
     session_paths: tuple[str, ...]
+    batch_ids: tuple[str, ...] = ()
+    pending_session_count: int = 0
+    pending_session_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -107,6 +114,7 @@ class UploadResult:
     username: str
     uploaded_path: str
     session_count: int
+    batch_id: str | None = None
 
 
 def validate_primitive_id(value: str) -> str:
@@ -143,6 +151,40 @@ def validate_session_id(value: str) -> str:
     if not session_id or session_id in {".", ".."} or Path(session_id).name != session_id:
         raise ValueError("Session ID must be one non-empty directory name without path separators.")
     return session_id
+
+
+def validate_upload_batch_id(value: str) -> str:
+    batch_id = value.strip()
+    if not UPLOAD_BATCH_PATTERN.fullmatch(batch_id):
+        raise ValueError(
+            f"Upload batch ID must use {UPLOAD_BATCH_FORMAT}: {value!r}."
+        )
+    try:
+        datetime.strptime(batch_id, UPLOAD_BATCH_FORMAT).replace(tzinfo=UTC)
+    except ValueError as exc:
+        raise ValueError(f"Upload batch ID is not a valid local date/time: {value!r}.") from exc
+    return batch_id
+
+
+def upload_batch_id(upload_time: datetime | None = None) -> str:
+    moment = upload_time or datetime.now().astimezone()
+    return moment.strftime(UPLOAD_BATCH_FORMAT)
+
+
+def prepared_session_path(primitive_id: str, session_id: str) -> str:
+    return f"{PREPARED_DIR_NAME}/{primitive_id}/{session_id}"
+
+
+def legacy_session_path(primitive_id: str, session_id: str) -> str:
+    return f"{ACTIONS_DIR_NAME}/{primitive_id}/{session_id}"
+
+
+def demo_session_path(primitive_id: str, session_id: str) -> str:
+    return f"{ACTIONS_DIR_NAME}/{DEMO_DIR_NAME}/{primitive_id}/{session_id}"
+
+
+def published_session_path(batch_id: str, primitive_id: str, session_id: str) -> str:
+    return f"{ACTIONS_DIR_NAME}/{batch_id}/{primitive_id}/{session_id}"
 
 
 def require_mocap_directory(session_dir: Path) -> Path:
@@ -600,7 +642,7 @@ After downloading, read the dataset-wide session index without any additional de
 import json
 from pathlib import Path
 
-dataset_root = Path("./EgoMotionActions")
+dataset_root = Path(".")
 records = [
     json.loads(line)
     for line in (dataset_root / "metadata.jsonl").read_text(encoding="utf-8").splitlines()
@@ -719,9 +761,14 @@ configs:
 
 # EgoMocap Dataset
 
-Each row in `metadata.jsonl` describes one recording. Session files use the stable
-`EgoMotionActions/<primitive_id>/<session_id>/` hierarchy. The built-in task catalog uses
-`P01` through `P29`, but a safe custom single-directory name is also accepted.
+Each row in `metadata.jsonl` describes one recording. New uploads use
+`EgoMotionActions/<YYYYMMDD_HHMMSS>/<primitive_id>/<session_id>/`, where the batch ID is the
+uploader's local time when upload starts. All pending sessions in one upload operation share that
+batch ID, and a failed upload reuses it when retried. The built-in task catalog uses `P01` through
+`P29`, but a safe custom single-directory name is also accepted.
+
+`EgoMotionActions/Demo/<primitive_id>/<session_id>/` contains recordings migrated from the legacy
+non-batched hierarchy. `Demo` is an example archive, not a new-upload destination.
 
 Every session directory includes a self-contained `timestamp_anomaly_detail_table.html`
 inspection report. Paths inside manifests and reports are dataset-relative.
@@ -765,25 +812,36 @@ are optional. All other listed capture streams and generated records are require
   raw_calibration/                              # required, maintained separately
     <device_id>/
   EgoMotionActions/                             # required action recordings
-    <primitive_id>/                              # P01-P29 convention or a custom name
-      <session_id>/
-        robocap_<segment>_video_*.mp4            # required six first-person videos
-        robocap_<segment>_imu_*.db               # required Robocap IMU
-        robocap_<segment>_mag_*.db               # required Robocap MAG
-        mocap/
-          *.mp4                                  # required third-person video
-          *.{bvh,trc,csv,xrs,c3d,...}            # one or more formats required
-        robowrist_<device_id>_left/               # required left streams
-        robowrist_<device_id>_right/              # required right streams
-        rerun/<segment>/inspection/*.rrd          # optional
-        manifest.json                            # generated, required
-        timestamp_anomaly_detail_table.html      # generated, required
+    <YYYYMMDD_HHMMSS>/                           # one local-time ID per upload operation
+      <primitive_id>/                            # P01-P29 convention or a custom name
+        <session_id>/
+          robocap_<segment>_video_*.mp4          # required six first-person videos
+          robocap_<segment>_imu_*.db             # required Robocap IMU
+          robocap_<segment>_mag_*.db             # required Robocap MAG
+          mocap/
+            *.mp4                                # required third-person video
+            *.{bvh,trc,csv,xrs,c3d,...}          # one or more formats required
+          robowrist_<device_id>_left/             # required left streams
+          robowrist_<device_id>_right/            # required right streams
+          rerun/<segment>/inspection/*.rrd        # optional
+          manifest.json                          # generated, required
+          timestamp_anomaly_detail_table.html    # generated, required
+    Demo/                                        # legacy example recordings only
+      <primitive_id>/
+        <session_id>/                            # same session contents as above
 ```
 
 `README.md` is the ModelScope Dataset Card. `metadata.jsonl` is the dataset-wide session index.
 `raw_calibration/` is a required dataset-level collection maintained by the calibration workflow;
-session staging never copies session-local calibration files into it. `EgoMotionActions/` is
-generated by session staging.
+session staging never copies session-local calibration files into it. Session preparation writes
+to local `_prepared/<primitive_id>/<session_id>/`; the upload operation assigns one shared
+local-time batch ID and moves every pending session into its final `EgoMotionActions/` path before
+uploading. `_prepared/` is never uploaded.
+
+Before updating `metadata.jsonl`, the uploader downloads the current remote index and merges it with
+the local rows by `(primitive_id, session_id)`. Local rows replace matching remote rows; unrelated
+remote batches and `Demo` records remain indexed. Session files are transferred first, and the
+merged metadata is committed only after that transfer succeeds.
 """
     )
 
@@ -796,25 +854,52 @@ def _write_dataset_readme(dataset_root: Path) -> Path:
     return readme_path
 
 
-def _read_metadata(path: Path) -> list[dict[str, object]]:
-    if not path.is_file():
-        return []
+def _read_metadata_document(document: str, source: str) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(document.splitlines(), start=1):
         if not line.strip():
             continue
         try:
             entry = json.loads(line)
         except json.JSONDecodeError as exc:
             raise ModelScopePublisherError(
-                f"Invalid {METADATA_NAME} line {line_number}: {exc}"
+                f"Invalid {source} line {line_number}: {exc}"
             ) from exc
         if not isinstance(entry, dict):
             raise ModelScopePublisherError(
-                f"Invalid {METADATA_NAME} line {line_number}: expected a JSON object."
+                f"Invalid {source} line {line_number}: expected a JSON object."
             )
         entries.append(entry)
     return entries
+
+
+def _read_metadata(path: Path) -> list[dict[str, object]]:
+    if not path.is_file():
+        return []
+    return _read_metadata_document(path.read_text(encoding="utf-8"), str(path))
+
+
+def _metadata_document(entries: Sequence[Mapping[str, object]]) -> str:
+    ordered = sorted(
+        entries,
+        key=lambda item: (
+            str(item.get("upload_batch_id") or ""),
+            str(item.get("primitive_id", "")),
+            str(item.get("session_id", "")),
+        ),
+    )
+    return "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in ordered)
+
+
+def _write_metadata_entries(
+    dataset_root: Path, entries: Sequence[dict[str, object]]
+) -> Path:
+    metadata_path = dataset_root / METADATA_NAME
+    text = _metadata_document(entries)
+    temporary = metadata_path.with_name(f".{metadata_path.name}.tmp")
+    temporary.write_text(text, encoding="utf-8", newline="\n")
+    temporary.replace(metadata_path)
+    return metadata_path
 
 
 def _update_metadata(dataset_root: Path, entry: dict[str, object]) -> Path:
@@ -830,15 +915,43 @@ def _update_metadata(dataset_root: Path, entry: dict[str, object]) -> Path:
             )
         by_key[item_key] = item
     by_key[key] = entry
-    ordered = sorted(
-        by_key.values(),
-        key=lambda item: (str(item.get("primitive_id", "")), str(item.get("session_id", ""))),
-    )
-    text = "".join(json.dumps(item, ensure_ascii=False) + "\n" for item in ordered)
-    temporary = metadata_path.with_name(f".{metadata_path.name}.tmp")
-    temporary.write_text(text, encoding="utf-8", newline="\n")
-    temporary.replace(metadata_path)
-    return metadata_path
+    return _write_metadata_entries(dataset_root, list(by_key.values()))
+
+
+def _metadata_session_location(
+    entry: Mapping[str, object],
+) -> tuple[str, str, str, str | None]:
+    primitive = validate_primitive_id(str(entry.get("primitive_id", "")))
+    session_id = validate_session_id(str(entry.get("session_id", "")))
+    relative_path = str(entry.get("session_path", ""))
+    batch_value = entry.get("upload_batch_id")
+    if str(batch_value).casefold() == DEMO_DIR_NAME.casefold():
+        expected_path = demo_session_path(primitive, session_id)
+        if relative_path != expected_path:
+            raise ModelScopePublisherError(
+                f"Demo metadata path for {primitive}/{session_id} must be {expected_path}."
+            )
+        return primitive, session_id, relative_path, DEMO_DIR_NAME
+    if batch_value is None or str(batch_value).strip() == "":
+        expected_paths = {
+            prepared_session_path(primitive, session_id),
+            legacy_session_path(primitive, session_id),
+        }
+        if relative_path not in expected_paths:
+            raise ModelScopePublisherError(
+                f"Prepared metadata path for {primitive}/{session_id} must be one of "
+                f"{sorted(expected_paths)}."
+            )
+        return primitive, session_id, relative_path, None
+
+    batch_id = validate_upload_batch_id(str(batch_value))
+    expected_path = published_session_path(batch_id, primitive, session_id)
+    if relative_path != expected_path:
+        raise ModelScopePublisherError(
+            f"Metadata path for upload batch {batch_id}, {primitive}/{session_id} must be "
+            f"{expected_path}."
+        )
+    return primitive, session_id, relative_path, batch_id
 
 
 def _validate_stage_locations(session_dir: Path, dataset_root: Path, target_dir: Path) -> None:
@@ -878,7 +991,8 @@ def stage_session(
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id or source.name)
     root = (dataset_root or default_dataset_root(source)).expanduser().resolve()
-    target = root / ACTIONS_DIR_NAME / primitive / resolved_session_id
+    relative_session = prepared_session_path(primitive, resolved_session_id)
+    target = root / Path(relative_session)
     _validate_stage_locations(source, root, target)
     device_ids = discover_device_ids(source, ffprobe)
 
@@ -1026,6 +1140,8 @@ def stage_session(
         "created_at_utc": datetime.now(UTC).isoformat(),
         "primitive_id": primitive,
         "session_id": resolved_session_id,
+        "upload_batch_id": None,
+        "dataset_path": relative_session,
         "segment": segment or "auto/all",
         "device_ids": device_ids,
         "options": {
@@ -1050,10 +1166,10 @@ def stage_session(
         encoding="utf-8",
         newline="\n",
     )
-    relative_session = f"{ACTIONS_DIR_NAME}/{primitive}/{resolved_session_id}"
     metadata_record: dict[str, object] = {
         "primitive_id": primitive,
         "session_id": resolved_session_id,
+        "upload_batch_id": None,
         "session_path": relative_session,
         "manifest": f"{relative_session}/manifest.json",
         "inspection_html": f"{relative_session}/{REPORT_NAME}",
@@ -1088,9 +1204,24 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
     root = dataset_root.expanduser().resolve()
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id)
-    target = root / ACTIONS_DIR_NAME / primitive / resolved_session_id
-    manifest_path = target / "manifest.json"
     metadata_path = root / METADATA_NAME
+    entries = _read_metadata(metadata_path)
+    entry = next(
+        (
+            item
+            for item in entries
+            if item.get("primitive_id") == primitive
+            and item.get("session_id") == resolved_session_id
+        ),
+        None,
+    )
+    if entry is None:
+        raise FileNotFoundError(
+            f"Prepared metadata has no session {primitive}/{resolved_session_id}: {metadata_path}"
+        )
+    _, _, relative_path, _ = _metadata_session_location(entry)
+    target = root / Path(relative_path)
+    manifest_path = target / "manifest.json"
     readme_path = root / DATASET_README_NAME
     inspection_html = target / REPORT_NAME
     required = [manifest_path, metadata_path, readme_path, inspection_html]
@@ -1141,23 +1272,159 @@ def load_staged_dataset(dataset_root: Path) -> StagedDataset:
     if not entries:
         raise ModelScopePublisherError(f"{metadata_path} has no staged sessions.")
     session_paths: list[str] = []
+    batch_ids: set[str] = set()
+    pending_session_paths: list[str] = []
     missing: list[str] = []
     for entry in entries:
-        primitive = validate_primitive_id(str(entry.get("primitive_id", "")))
-        session_id = validate_session_id(str(entry.get("session_id", "")))
-        expected_path = f"{ACTIONS_DIR_NAME}/{primitive}/{session_id}"
-        if entry.get("session_path") != expected_path:
-            raise ModelScopePublisherError(
-                f"Metadata path for {primitive}/{session_id} must be {expected_path}."
-            )
-        session_dir = root / ACTIONS_DIR_NAME / primitive / session_id
+        _, _, relative_path, batch_id = _metadata_session_location(entry)
+        session_dir = root / Path(relative_path)
         for required in (session_dir / "manifest.json", session_dir / REPORT_NAME):
             if not required.is_file():
                 missing.append(str(required))
-        session_paths.append(expected_path)
+        session_paths.append(relative_path)
+        if batch_id is None:
+            pending_session_paths.append(relative_path)
+        elif batch_id != DEMO_DIR_NAME:
+            batch_ids.add(batch_id)
     if missing:
         raise FileNotFoundError("Staged dataset files are missing: " + ", ".join(missing))
-    return StagedDataset(root, metadata_path, readme_path, tuple(sorted(session_paths)))
+    return StagedDataset(
+        root,
+        metadata_path,
+        readme_path,
+        tuple(sorted(session_paths)),
+        tuple(sorted(batch_ids)),
+        len(pending_session_paths),
+        tuple(sorted(pending_session_paths)),
+    )
+
+
+def finalize_upload_batch(
+    staged: StagedDataset,
+    *,
+    upload_time: datetime | None = None,
+    progress: Callable[[str], None] | None = print,
+) -> tuple[StagedDataset, str | None]:
+    entries = _read_metadata(staged.metadata_path)
+    parsed = [_metadata_session_location(entry) for entry in entries]
+    pending_indices = [index for index, item in enumerate(parsed) if item[3] is None]
+    if not pending_indices:
+        latest_batch = max(staged.batch_ids, default=None)
+        if progress is not None and latest_batch is not None:
+            progress(f"No pending sessions; reusing upload batch {latest_batch}.")
+        return staged, latest_batch
+
+    moment = upload_time or datetime.now().astimezone()
+    if moment.tzinfo is None:
+        moment = moment.astimezone()
+    batch_id = upload_batch_id(moment)
+    batch_created_at = moment.isoformat()
+    updated_entries = [dict(entry) for entry in entries]
+    moves: list[tuple[Path, Path, str, str]] = []
+
+    for index in pending_indices:
+        primitive, session_id, relative_path, _ = parsed[index]
+        source = staged.dataset_root / Path(relative_path)
+        published_path = published_session_path(batch_id, primitive, session_id)
+        target = staged.dataset_root / Path(published_path)
+        if not source.is_dir():
+            raise FileNotFoundError(f"Prepared session directory is missing: {source}")
+        if target.exists():
+            raise ModelScopePublisherError(
+                f"Upload batch target already exists; retry after the current second: {target}"
+            )
+        manifest_path = source / "manifest.json"
+        manifest_text = manifest_path.read_text(encoding="utf-8")
+        manifest = json.loads(manifest_text)
+        if not isinstance(manifest, dict):
+            raise ModelScopePublisherError(f"Staged manifest is not a JSON object: {manifest_path}")
+        manifest["upload_batch_id"] = batch_id
+        manifest["upload_batch_created_at"] = batch_created_at
+        manifest["dataset_path"] = published_path
+        updated_manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+        moves.append((source, target, manifest_text, updated_manifest_text))
+
+        entry = updated_entries[index]
+        entry["upload_batch_id"] = batch_id
+        entry["upload_batch_created_at"] = batch_created_at
+        entry["session_path"] = published_path
+        entry["manifest"] = f"{published_path}/manifest.json"
+        entry["inspection_html"] = f"{published_path}/{REPORT_NAME}"
+
+    moved: list[tuple[Path, Path, str]] = []
+    try:
+        for source, target, original_manifest, updated_manifest in moves:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.replace(target)
+            moved.append((source, target, original_manifest))
+            (target / "manifest.json").write_text(
+                updated_manifest,
+                encoding="utf-8",
+                newline="\n",
+            )
+            if progress is not None:
+                progress(
+                    f"Prepared upload path: {target.relative_to(staged.dataset_root).as_posix()}"
+                )
+        _write_metadata_entries(staged.dataset_root, updated_entries)
+    except Exception:
+        for source, target, original_manifest in reversed(moved):
+            if target.is_dir() and not source.exists():
+                (target / "manifest.json").write_text(
+                    original_manifest,
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                source.parent.mkdir(parents=True, exist_ok=True)
+                target.replace(source)
+        raise
+
+    return load_staged_dataset(staged.dataset_root), batch_id
+
+
+def merge_metadata_entries(
+    remote_entries: Sequence[Mapping[str, object]],
+    local_entries: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    merged: dict[tuple[str, str], dict[str, object]] = {}
+    for source, entries in (("remote", remote_entries), ("local", local_entries)):
+        for entry in entries:
+            try:
+                primitive = validate_primitive_id(str(entry.get("primitive_id", "")))
+                session_id = validate_session_id(str(entry.get("session_id", "")))
+            except ValueError as exc:
+                raise ModelScopePublisherError(
+                    f"Invalid {source} {METADATA_NAME} identity: {exc}"
+                ) from exc
+            merged[(primitive, session_id)] = dict(entry)
+    return sorted(
+        merged.values(),
+        key=lambda item: (
+            str(item.get("upload_batch_id") or ""),
+            str(item.get("primitive_id", "")),
+            str(item.get("session_id", "")),
+        ),
+    )
+
+
+def _download_remote_metadata(
+    api: Any,
+    repository: str,
+    revision: str,
+) -> str:
+    from modelscope_hub.errors import NotExistError
+
+    try:
+        downloaded = api.download_file(
+            repository,
+            "dataset",
+            METADATA_NAME,
+            revision=revision,
+            force=True,
+        )
+    except NotExistError:
+        return ""
+    return Path(downloaded).read_text(encoding="utf-8")
 
 
 def _hub_api(settings: ModelScopeSettings):
@@ -1212,6 +1479,8 @@ def upload_staged_dataset(
     max_workers: int | None = None,
     use_cache: bool = True,
     settings: ModelScopeSettings | None = None,
+    upload_time: datetime | None = None,
+    progress: Callable[[str], None] | None = print,
 ) -> UploadResult:
     resolved = settings or load_modelscope_settings()
     if not resolved.token:
@@ -1243,23 +1512,62 @@ def upload_staged_dataset(
                 visibility=visibility,
                 license=license_name or None,
             )
+        remote_metadata = (
+            _download_remote_metadata(api, repository, target_revision) if exists else ""
+        )
+        staged, batch_id = finalize_upload_batch(
+            staged,
+            upload_time=upload_time,
+            progress=progress,
+        )
         allow_patterns = [f"{glob.escape(path)}/**" for path in staged.session_paths]
         if (staged.dataset_root / CALIBRATION_DIR_NAME).is_dir():
             allow_patterns.append(f"{CALIBRATION_DIR_NAME}/**")
-        allow_patterns.extend([METADATA_NAME, DATASET_README_NAME])
+        allow_patterns.append(DATASET_README_NAME)
+        folder_commit_message = commit_message or (
+            f"Upload batch {batch_id} with {len(staged.session_paths)} indexed session(s)"
+            if batch_id is not None
+            else f"Upload {len(staged.session_paths)} indexed session(s)"
+        )
         api.upload_folder(
             repository,
             "dataset",
             staged.dataset_root,
             path_in_repo="",
             revision=target_revision,
-            commit_message=commit_message
-            or f"Upload {len(staged.session_paths)} prepared session(s)",
+            commit_message=folder_commit_message,
             allow_patterns=allow_patterns,
             max_workers=max_workers,
             use_cache=use_cache,
             disable_tqdm=False,
         )
+        local_entries = _read_metadata(staged.metadata_path)
+        remote_entries = _read_metadata_document(
+            remote_metadata,
+            f"remote {METADATA_NAME}",
+        )
+        merged_metadata = _metadata_document(
+            merge_metadata_entries(remote_entries, local_entries)
+        )
+        if merged_metadata != remote_metadata:
+            if progress is not None:
+                progress(
+                    f"Updating {METADATA_NAME}: retained {len(remote_entries)} remote row(s), "
+                    f"merged {len(local_entries)} local row(s)."
+                )
+            api.upload_file(
+                repository,
+                "dataset",
+                merged_metadata.encode("utf-8"),
+                METADATA_NAME,
+                revision=target_revision,
+                commit_message=(
+                    f"Update metadata for upload batch {batch_id}"
+                    if batch_id is not None
+                    else "Update dataset metadata"
+                ),
+                disable_tqdm=True,
+            )
     except ModelScopePublisherError:
         raise
     except Exception as exc:
@@ -1274,6 +1582,7 @@ def upload_staged_dataset(
         username,
         str(staged.dataset_root),
         len(staged.session_paths),
+        batch_id,
     )
 
 
@@ -1283,7 +1592,7 @@ def upload_staged_session(
     **kwargs: Any,
 ) -> UploadResult:
     dataset = load_staged_dataset(staged.dataset_root)
-    selected = f"{ACTIONS_DIR_NAME}/{staged.primitive_id}/{staged.session_id}"
+    selected = staged.session_dir.relative_to(staged.dataset_root).as_posix()
     if selected not in dataset.session_paths:
         raise ModelScopePublisherError(
             f"Selected staged session is missing from metadata: {selected}"
