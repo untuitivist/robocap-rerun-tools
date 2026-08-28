@@ -147,8 +147,9 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 “统计 / Statistics”页会扫描根目录下识别到的全部 Session，并从 Session 路径或直属 `mocap*`
 目录中的唯一 `PXX` 归类。每个 Segment 只选择一个 Robocap 参考视频计算时长，不会把多摄像头重复
 相加。默认会按选择的 8/4 倍比例串行补做缺失检查，再输出每个动作的未检查/差帧时长、总时长、
-Session 数和 `{Session: Session 时长}`。缺失或无法读取报告、帧数差异、推算丢帧、异常时间戳和
-frame_index 问题都会计入未检查/差帧时长。
+Session 数和 `{Session: Session 时长}`。未检查/差帧时长只包含缺失或无法读取报告，以及帧数不满足
+`n:ratio*(n+1):(n+1)` 的 Segment；时间戳 diff、推算丢帧、缺失时间戳和 frame_index 等其他问题
+均不计入此时长。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`

@@ -171,29 +171,24 @@ def _finite_number(value: object) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def report_has_frame_problem(payload: dict[str, object]) -> bool:
-    for key in ("mocapDelta", "thirdDelta"):
-        value = _finite_number(payload.get(key))
-        if value is not None and value != 0:
-            return True
-    for key in (
-        "estimatedDropped",
-        "abnormalDiffs",
-        "missingTimestamps",
-        "frameIssues",
-    ):
-        value = _finite_number(payload.get(key))
-        if value is not None and value > 0:
-            return True
-    if payload.get("droppedMatch") is False and payload.get("expectedDropped") is not None:
+def _nonnegative_integer(value: object) -> int | None:
+    number = _finite_number(value)
+    if number is None or number < 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
+def report_has_frame_count_difference(payload: dict[str, object]) -> bool:
+    reference_frames = _nonnegative_integer(payload.get("referenceFrames"))
+    mocap_frames = _nonnegative_integer(payload.get("mocapFrames"))
+    third_frames = _nonnegative_integer(payload.get("thirdFrames"))
+    ratio = _nonnegative_integer(payload.get("ratio"))
+    if None in (reference_frames, mocap_frames, third_frames) or ratio not in {4, 8}:
         return True
-    files = payload.get("files")
-    if isinstance(files, list):
-        return any(
-            isinstance(item, dict) and "(parse error:" in str(item.get("stream", ""))
-            for item in files
-        )
-    return False
+    return (
+        mocap_frames != ratio * (reference_frames + 1)
+        or third_frames != reference_frames + 1
+    )
 
 
 def summarize_session(
@@ -227,8 +222,16 @@ def summarize_session(
                 status = "unchecked"
                 detail = f"inspection report is unreadable: {exc}"
             else:
-                status = "frame_problem" if report_has_frame_problem(payload) else "clean"
-                detail = "inspection reports frame/timestamp anomalies" if status != "clean" else ""
+                status = (
+                    "frame_difference"
+                    if report_has_frame_count_difference(payload)
+                    else "clean"
+                )
+                detail = (
+                    "frame counts do not match n:ratio*(n+1):n+1"
+                    if status != "clean"
+                    else ""
+                )
 
         if status != "clean" and duration_s is not None:
             unchecked_or_problem_duration_s += duration_s
@@ -324,10 +327,13 @@ def render_statistics_markdown(
             f"- Root: `{dataset_root}`",
             f"- Sessions: **{session_count}**",
             f"- Total duration: **{format_duration(total_duration_s)}**",
-            f"- Unchecked/frame-problem duration: **{format_duration(problem_duration_s)}**",
+            (
+                "- Unchecked/frame-count-difference duration: "
+                f"**{format_duration(problem_duration_s)}**"
+            ),
             "",
             (
-                "| PXX | Unchecked/frame-problem duration | Total duration | Sessions | "
+                "| PXX | Unchecked/frame-count-difference duration | Total duration | Sessions | "
                 "{Session: duration} |"
             ),
             "|---|---:|---:|---:|---|",
@@ -368,9 +374,10 @@ def render_statistics_markdown(
             [
                 "",
                 (
-                    "“未检查/差帧”包含缺少或无法读取检查报告，以及报告中的帧数差异、"
-                    "推算丢帧、异常时间戳或 frame_index 问题。每个 Segment 只使用一条 "
-                    "Robocap 参考视频计时。"
+                    "“未检查/差帧”只包含缺少或无法读取检查报告，以及帧数不满足 "
+                    "n:ratio*(n+1):(n+1) 的 Segment。时间戳 diff、推算丢帧、缺失时间戳和 "
+                    "frame_index 等其他问题不计入此时长。每个 Segment 只使用一条 Robocap "
+                    "参考视频计时。"
                 ),
             ]
         )
@@ -379,9 +386,10 @@ def render_statistics_markdown(
             [
                 "",
                 (
-                    "Unchecked/frame-problem duration includes missing or unreadable reports, "
-                    "frame-count deltas, estimated dropped frames, abnormal timestamps, and "
-                    "frame-index issues. Each segment is timed from one Robocap reference video."
+                    "Unchecked/frame-count-difference duration only includes missing or unreadable "
+                    "reports and segments whose frame counts do not satisfy "
+                    "n:ratio*(n+1):(n+1). Other timestamp, inferred-drop, and frame-index findings "
+                    "are ignored. Each segment is timed from one Robocap reference video."
                 ),
             ]
         )

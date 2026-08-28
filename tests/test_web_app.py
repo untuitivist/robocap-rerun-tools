@@ -59,7 +59,8 @@ def test_statistics_can_create_missing_report(tmp_path, monkeypatch) -> None:
         captured.append(args)
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(
-            '<script>const report={"mocapDelta":0,"thirdDelta":0,'
+            '<script>const report={"ratio":8,"referenceFrames":9,'
+            '"mocapFrames":80,"thirdFrames":10,"mocapDelta":0,"thirdDelta":0,'
             '"estimatedDropped":0,"expectedDropped":0,"droppedMatch":true,'
             '"abnormalDiffs":0,"missingTimestamps":0,"frameIssues":0,"files":[]}; '
             "const eventTypes=[];</script>",

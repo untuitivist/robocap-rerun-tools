@@ -6,6 +6,10 @@ from robocap_rerun_tools import dataset_statistics as statistics
 
 def write_report(path: Path, **overrides: object) -> None:
     payload: dict[str, object] = {
+        "ratio": 8,
+        "referenceFrames": 9,
+        "mocapFrames": 80,
+        "thirdFrames": 10,
         "mocapDelta": 0,
         "thirdDelta": 0,
         "estimatedDropped": 0,
@@ -59,29 +63,28 @@ def test_infer_action_primitive_uses_path_and_mocap_directory(tmp_path: Path) ->
     )
 
 
-def test_report_problem_detection_covers_frame_and_timestamp_issues() -> None:
+def test_report_frame_count_difference_ignores_other_inspection_issues() -> None:
     clean = {
+        "ratio": 8,
+        "referenceFrames": 9,
+        "mocapFrames": 80,
+        "thirdFrames": 10,
         "mocapDelta": 0,
         "thirdDelta": 0,
-        "estimatedDropped": 0,
+        "estimatedDropped": 7,
         "expectedDropped": 0,
-        "droppedMatch": True,
-        "abnormalDiffs": 0,
-        "missingTimestamps": 0,
-        "frameIssues": 0,
-        "files": [],
+        "droppedMatch": False,
+        "abnormalDiffs": 11,
+        "missingTimestamps": 3,
+        "frameIssues": 5,
+        "files": [{"stream": "broken (parse error: example)"}],
     }
 
-    assert statistics.report_has_frame_problem(clean) is False
-    for key, value in (
-        ("mocapDelta", -8),
-        ("thirdDelta", -1),
-        ("estimatedDropped", 1),
-        ("abnormalDiffs", 1),
-        ("missingTimestamps", 1),
-        ("frameIssues", 1),
-    ):
-        assert statistics.report_has_frame_problem({**clean, key: value}) is True
+    assert statistics.report_has_frame_count_difference(clean) is False
+    assert statistics.report_has_frame_count_difference({**clean, "mocapFrames": 72}) is True
+    assert statistics.report_has_frame_count_difference({**clean, "thirdFrames": 9}) is True
+    assert statistics.report_has_frame_count_difference({**clean, "ratio": 6}) is True
+    assert statistics.report_has_frame_count_difference({**clean, "referenceFrames": None}) is True
 
 
 def test_session_statistics_group_duration_and_unchecked_or_problem_time(
@@ -97,6 +100,7 @@ def test_session_statistics_group_duration_and_unchecked_or_problem_time(
     write_report(statistics.timestamp_report_path(clean_session, "segment1"))
     write_report(
         statistics.timestamp_report_path(problem_session, "segment1"),
+        mocapFrames=72,
         mocapDelta=-8,
         estimatedDropped=1,
     )
