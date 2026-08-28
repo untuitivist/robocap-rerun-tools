@@ -40,7 +40,7 @@ def test_web_app_builds_with_report_viewer() -> None:
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
     assert "补做缺失的检查报告" in config
     assert "统计根目录" in config
-    assert "批量准备并上传无差帧 Session" in config
+    assert "逐个准备并上传无差帧 Session" in config
     assert "动作基元（从 mocap* 自动建议 PXX，可任意自定义）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
@@ -96,7 +96,8 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
 
     clean = tmp_path / "EgoMotionActions" / "P01" / "session-clean"
     problem = tmp_path / "EgoMotionActions" / "P02" / "session-problem"
-    for session in (clean, problem):
+    clean_two = tmp_path / "EgoMotionActions" / "P03" / "session-clean-two"
+    for session in (clean, problem, clean_two):
         mocap = session / "mocap"
         mocap.mkdir(parents=True)
         (session / "robocap_segment1_video_left.mp4").write_bytes(b"")
@@ -117,13 +118,16 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
 
     write_report(clean, 80)
     write_report(problem, 72)
+    write_report(clean_two, 80)
     monkeypatch.setattr(dataset_statistics, "probe_video_duration", lambda *_args: (10.0, None))
     monkeypatch.setattr(cli, "resolve_ffprobe", lambda *_args: "ffprobe")
-    monkeypatch.setattr(
-        web_app,
-        "validate_pending_modelscope_frame_counts",
-        lambda _root: ("_prepared/P01/session-clean",),
-    )
+    validated_roots: list[Path] = []
+
+    def fake_validate(root: Path) -> tuple[str, ...]:
+        validated_roots.append(root)
+        return ("_prepared/only-session",)
+
+    monkeypatch.setattr(web_app, "validate_pending_modelscope_frame_counts", fake_validate)
     commands: list[list[str]] = []
 
     def fake_stream(args):
@@ -141,18 +145,33 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
         "modelscope-auth",
         "modelscope-stage",
         "modelscope-upload",
+        "modelscope-stage",
+        "modelscope-upload",
     ]
-    stage = commands[1]
-    assert stage[1] == str(clean.resolve())
-    assert stage[stage.index("--primitive-id") + 1] == "P01"
-    assert stage[stage.index("--dataset-root") + 1] == str(
-        tmp_path.resolve() / "_modelscope_dataset"
-    )
-    selected = [stage[index + 1] for index, item in enumerate(stage) if item == "--mocap-file"]
-    assert set(selected) == {str(Path("mocap") / "body.trc"), str(Path("mocap") / "third.mp4")}
-    assert commands[2] == ["modelscope-upload", str(tmp_path.resolve() / "_modelscope_dataset")]
+    expected_roots = [
+        tmp_path.resolve() / "_modelscope_dataset" / "sequential" / "P01" / "session-clean",
+        tmp_path.resolve() / "_modelscope_dataset" / "sequential" / "P03" / "session-clean-two",
+    ]
+    for stage, session, primitive, staged_root in zip(
+        (commands[1], commands[3]),
+        (clean, clean_two),
+        ("P01", "P03"),
+        expected_roots,
+        strict=True,
+    ):
+        assert stage[1] == str(session.resolve())
+        assert stage[stage.index("--primitive-id") + 1] == primitive
+        assert stage[stage.index("--dataset-root") + 1] == str(staged_root)
+        selected = [stage[index + 1] for index, item in enumerate(stage) if item == "--mocap-file"]
+        assert set(selected) == {
+            str(Path("mocap") / "body.trc"),
+            str(Path("mocap") / "third.mp4"),
+        }
+    assert commands[2] == ["modelscope-upload", str(expected_roots[0])]
+    assert commands[4] == ["modelscope-upload", str(expected_roots[1])]
+    assert validated_roots == expected_roots
     assert "session-problem: unchecked or frame-count difference" in output
-    assert "批量上传完成" in output
+    assert "逐个上传完成：2/2" in output
 
 
 def test_batch_primitive_supports_explicit_custom_action_hierarchy(tmp_path) -> None:

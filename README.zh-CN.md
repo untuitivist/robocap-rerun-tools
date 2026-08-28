@@ -151,11 +151,12 @@ Session 数和 `{Session: Session 时长}`。未检查/差帧时长只包含缺�
 `n:ratio*(n+1):(n+1)` 的 Segment；时间戳 diff、推算丢帧、缺失时间戳和 frame_index 等其他问题
 均不计入此时长。
 
-同一页可批量准备并上传 clean Session。点击时会重新筛选，必要时先补报告；只有全部 Segment 都满足
-上述帧数关系的 Session 才会进入上传。批量流程固定使用压缩的完整 Session，默认选择
-BVH/CSV/TRC/MP4 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
-`PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会跳过。全部合格 Session 共用
-同一个上传时间批次。
+同一页可逐个准备并上传 clean Session。点击时会重新筛选，必要时先补报告；只有全部 Segment 都满足
+上述帧数关系的 Session 才会进入上传。每个合格 Session 使用独立暂存根目录，依次完成准备、clean
+校验和上传后才开始下一个；任一步失败都会停止后续处理，不回滚已上传 Session，并保留当前 Session
+的暂存数据供重试。该流程固定使用压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4 并排除路径含
+`unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别 `PXX`，且不在明确的
+`EgoMotionActions/<动作>/...` 结构下的 Session 会跳过。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`
