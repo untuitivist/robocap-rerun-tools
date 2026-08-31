@@ -240,8 +240,11 @@ robocap-rerun modelscope-auth
 
 Prepare one session. The staging root is automatically `<session parent>/_modelscope_dataset`; this
 regenerates the inspection HTML, compresses video by default, removes local absolute paths from the
-copied report, and updates the dataset-level metadata. Prepared sessions remain under the local-only
-`_prepared/<primitive_id>/<session_id>/` tree until upload starts:
+copied report, and updates the dataset-level metadata. Every new metadata row and Session manifest
+contains numeric `duration_s`: full-session staging sums one Robocap reference camera per included
+Segment, while aligned-intersection staging records the cropped common-timeline duration. Pending
+metadata without a positive finite duration is rejected before upload. Prepared sessions remain
+under the local-only `_prepared/<primitive_id>/<session_id>/` tree until upload starts:
 
 ```bat
 robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection

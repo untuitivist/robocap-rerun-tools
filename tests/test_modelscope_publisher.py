@@ -14,6 +14,13 @@ from robocap_rerun_tools.dataset_intersection import (
     FrameSlice,
 )
 
+REAL_MEASURE_SESSION_DURATION_S = publisher.measure_session_duration_s
+
+
+@pytest.fixture(autouse=True)
+def stub_staged_session_duration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(publisher, "measure_session_duration_s", lambda *_args, **_kwargs: 12.5)
+
 
 @pytest.mark.parametrize(
     ("value", "expected"),
@@ -161,6 +168,8 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
     motion_record = next(item for item in manifest["files"] if item["kind"] == "data")
     assert motion_record["source"] == "Mocap-NOKOV/motion.trc"
     assert motion_record["packaged_as"] == "mocap/motion.trc"
+    assert manifest["duration_s"] == 12.5
+    assert staged.duration_s == 12.5
 
     metadata = [
         json.loads(line) for line in staged.metadata_path.read_text(encoding="utf-8").splitlines()
@@ -177,6 +186,7 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
                 "timestamp_anomaly_detail_table.html"
             ),
             "segment": "segment1",
+            "duration_s": 12.5,
             "device_ids": {"main": None, "left": None, "right": None},
             "file_count": 3,
             "packaged_bytes": staged.total_bytes,
@@ -210,8 +220,70 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
     assert "Optional artifact: RRD files" in dataset_readme
     assert "Optional: third-person" not in dataset_readme
     assert "required third-person video" in dataset_readme
+    assert "numeric `duration_s`" in dataset_readme
+    assert "never the sum of all camera views" in normalized_readme
     assert "robowrist_<device_id>_left/" in dataset_readme
     assert "robowrist_<device_id>_right/" in dataset_readme
+
+
+def test_measure_session_duration_s_uses_one_reference_per_selected_segment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    for name in (
+        "robocap_segment1_video_left.mp4",
+        "robocap_segment1_video_right.mp4",
+        "robocap_segment2_video_left.mp4",
+    ):
+        (session / name).write_bytes(b"video")
+    durations = {
+        "robocap_segment1_video_left.mp4": 10.25,
+        "robocap_segment2_video_left.mp4": 20.5,
+    }
+    calls: list[str] = []
+
+    def probe(path: Path, _ffprobe: str) -> tuple[float | None, str | None]:
+        calls.append(path.name)
+        return durations[path.name], None
+
+    monkeypatch.setattr(publisher, "measure_session_duration_s", REAL_MEASURE_SESSION_DURATION_S)
+    monkeypatch.setattr(publisher, "probe_video_duration", probe)
+
+    assert publisher.measure_session_duration_s(session, None, "ffprobe") == 30.75
+    assert calls == [
+        "robocap_segment1_video_left.mp4",
+        "robocap_segment2_video_left.mp4",
+    ]
+    calls.clear()
+    assert publisher.measure_session_duration_s(session, "SEGMENT2", "ffprobe") == 20.5
+    assert calls == ["robocap_segment2_video_left.mp4"]
+
+
+def test_measure_aligned_session_duration_s_uses_cropped_capture_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = AlignedIntersectionPlan(
+        ratio=8,
+        video_frame_offset=1,
+        gt_frame_offset=8,
+        reference_video="robocap_segment1_video_left.mp4",
+        robocap_frames=FrameSlice(2, 62, 90),
+        mocap_frames=FrameSlice(16, 496, 720),
+        third_person_frames=None,
+        capture_start_ns=1_000_000_000,
+        capture_end_ns_exclusive=3_250_000_000,
+        video_slices=(),
+        motion_slices=(),
+    )
+    monkeypatch.setattr(publisher, "measure_session_duration_s", REAL_MEASURE_SESSION_DURATION_S)
+    monkeypatch.setattr(
+        publisher,
+        "probe_video_duration",
+        lambda *_args, **_kwargs: pytest.fail("capture-time duration must not invoke ffprobe"),
+    )
+
+    assert publisher.measure_session_duration_s(tmp_path, "segment1", "ffprobe", plan) == 2.25
 
 
 def test_stage_session_records_applied_aligned_intersection(
@@ -282,6 +354,7 @@ def test_stage_session_records_applied_aligned_intersection(
     assert all("aligned_selection" in item for item in manifest["files"][:-1])
     assert metadata["alignment"]["video_frame_offset"] == 1
     assert metadata["alignment"]["staged_video_frame_offset"] == 0
+    assert metadata["duration_s"] == manifest["duration_s"] == 12.5
     assert manifest["alignment"] == staged.alignment
     assert publisher.load_staged_session(
         staged.dataset_root, staged.primitive_id, staged.session_id
@@ -400,6 +473,23 @@ def test_staging_same_session_updates_one_metadata_row(tmp_path: Path) -> None:
     assert (
         publisher.load_staged_session(second.dataset_root, "P01", second.session_id).file_count == 3
     )
+
+
+def test_pending_session_metadata_requires_duration_s(tmp_path: Path) -> None:
+    staged = stage_fixture(tmp_path)
+    metadata = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
+    metadata.pop("duration_s")
+    staged.metadata_path.write_text(
+        json.dumps(metadata) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    with pytest.raises(
+        publisher.ModelScopePublisherError,
+        match=r"must include duration_s.*Prepare the Session again",
+    ):
+        publisher.load_staged_dataset(staged.dataset_root)
 
 
 def test_stage_session_never_packages_dotenv_files(tmp_path: Path) -> None:
@@ -815,6 +905,7 @@ def test_upload_staged_session_uploads_every_indexed_session(
         json.loads(line) for line in calls[3][1][2].decode("utf-8").splitlines()
     ]
     assert len(uploaded_metadata) == 2
+    assert {entry["duration_s"] for entry in uploaded_metadata} == {12.5}
     final_session = (
         staged.dataset_root
         / publisher.ACTIONS_DIR_NAME

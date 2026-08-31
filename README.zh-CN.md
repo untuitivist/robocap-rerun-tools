@@ -258,7 +258,10 @@ robocap-rerun modelscope-auth
 
 先准备一套 session。数据集根目录自动使用该 Session 同级的 `_modelscope_dataset`。下面的命令会
 重新生成检查 HTML，默认压缩视频，去掉待上传 HTML 中的本机绝对路径，并更新数据集根目录的
-`metadata.jsonl`。准备结果先写入仅供本地使用的 `_prepared/<primitive_id>/<session_id>/`：
+`metadata.jsonl`。每条新元数据和 Session manifest 都包含数值型 `duration_s`：完整 Session 按每个
+已包含 Segment 的一个 Robocap 参考相机求和，交集裁切则记录裁切后公共时间线的时长。缺少正有限
+时长的待上传元数据会在上传前被拒绝。准备结果先写入仅供本地使用的
+`_prepared/<primitive_id>/<session_id>/`：
 
 ```bat
 robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_session39 --primitive-id P01 --segment segment1 --refresh-inspection

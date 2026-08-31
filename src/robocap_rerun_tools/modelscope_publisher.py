@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import re
 import shutil
@@ -22,6 +23,7 @@ from .dataset_intersection import (
     build_aligned_intersection_plan,
     stage_aligned_file,
 )
+from .dataset_statistics import discover_segment_references, probe_video_duration
 from .session_layout import (
     CANONICAL_MOCAP_DIR_NAME,
     canonical_mocap_relative_path,
@@ -90,6 +92,7 @@ class StageResult:
     inspection_html: Path
     file_count: int
     total_bytes: int
+    duration_s: float | None = None
     dry_run: bool = False
     main_device_id: str | None = None
     left_device_id: str | None = None
@@ -499,6 +502,76 @@ def discover_device_ids(session_dir: Path, ffprobe: str = "ffprobe") -> dict[str
     }
 
 
+def _positive_duration_s(value: float, source: str) -> float:
+    if not math.isfinite(value) or value <= 0:
+        raise ModelScopePublisherError(
+            f"Session duration from {source} must be finite and positive; got {value!r}."
+        )
+    rounded = round(value, 6)
+    if rounded <= 0:
+        raise ModelScopePublisherError(
+            f"Session duration from {source} is below metadata precision: {value!r}."
+        )
+    return rounded
+
+
+def _reference_video_duration_s(path: Path, ffprobe: str) -> float:
+    duration_s, error = probe_video_duration(path, ffprobe)
+    if duration_s is None:
+        detail = error or "duration is unavailable"
+        raise ModelScopePublisherError(
+            f"Cannot determine Session duration from Robocap reference video {path}: {detail}"
+        )
+    return _positive_duration_s(duration_s, str(path))
+
+
+def measure_session_duration_s(
+    session_dir: Path,
+    segment: str | None,
+    ffprobe: str,
+    intersection_plan: AlignedIntersectionPlan | None = None,
+) -> float:
+    source = session_dir.expanduser().resolve()
+    if intersection_plan is not None:
+        start_ns = intersection_plan.capture_start_ns
+        end_ns = intersection_plan.capture_end_ns_exclusive
+        if start_ns is not None and end_ns is not None:
+            return _positive_duration_s(
+                (end_ns - start_ns) / 1e9,
+                "the aligned Robocap capture-time window",
+            )
+
+        reference = (source / Path(intersection_plan.reference_video)).resolve()
+        if not reference.is_file() or not reference.is_relative_to(source):
+            raise ModelScopePublisherError(
+                "Aligned Session duration reference is missing or outside the Session: "
+                f"{intersection_plan.reference_video}"
+            )
+        frames = intersection_plan.robocap_frames
+        if frames.source_count <= 0 or frames.count <= 0:
+            raise ModelScopePublisherError(
+                "Aligned Session duration requires positive source and staged Robocap frame counts."
+            )
+        source_duration_s = _reference_video_duration_s(reference, ffprobe)
+        return _positive_duration_s(
+            source_duration_s * frames.count / frames.source_count,
+            "the aligned Robocap frame interval",
+        )
+
+    references = discover_segment_references(source)
+    if segment is not None:
+        references = tuple(
+            item for item in references if item.segment.casefold() == segment.casefold()
+        )
+    if not references:
+        scope = f" Segment {segment!r}" if segment is not None else ""
+        raise ModelScopePublisherError(
+            f"Cannot determine Session duration:{scope} has no Robocap reference video."
+        )
+    duration_s = sum(_reference_video_duration_s(item.video_path, ffprobe) for item in references)
+    return _positive_duration_s(duration_s, "the selected Robocap Segment reference videos")
+
+
 def default_dataset_root(session_dir: Path) -> Path:
     return session_dir.resolve().parent / "_modelscope_dataset"
 
@@ -665,7 +738,12 @@ records = [
     if line.strip()
 ]
 for record in records:
-    print(record["primitive_id"], record["session_id"], record["session_path"])
+    print(
+        record["primitive_id"],
+        record["session_id"],
+        record.get("duration_s"),
+        record["session_path"],
+    )
 ```
 
 """
@@ -783,6 +861,11 @@ local date when upload starts. All pending sessions in one upload operation shar
 `upload_batch_created_at` retains the exact ISO timestamp. A failed upload reuses its assigned date.
 Legacy `YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. The built-in task
 catalog uses `P01` through `P29`, but a safe custom single-directory name is also accepted.
+
+Every newly prepared row contains numeric `duration_s`. For a full Session it is the sum of one
+Robocap reference-camera duration per included Segment, never the sum of all camera views. For an
+aligned-intersection upload it is the duration of the cropped common timeline. The same value is
+stored in that Session's `manifest.json`.
 
 `EgoMotionActions/Demo/<primitive_id>/<session_id>/` contains recordings migrated from the legacy
 non-batched hierarchy. `Demo` is an example archive, not a new-upload destination.
@@ -935,6 +1018,30 @@ def _update_metadata(dataset_root: Path, entry: dict[str, object]) -> Path:
     return _write_metadata_entries(dataset_root, list(by_key.values()))
 
 
+def _metadata_duration_s(
+    entry: Mapping[str, object], *, required: bool
+) -> float | None:
+    value = entry.get("duration_s")
+    if value is None:
+        if required:
+            raise ModelScopePublisherError(
+                f"Pending {METADATA_NAME} row for "
+                f"{entry.get('primitive_id')}/{entry.get('session_id')} must include duration_s. "
+                "Prepare the Session again with the current tool before uploading."
+            )
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ModelScopePublisherError(
+            f"{METADATA_NAME} duration_s must be a JSON number; got {value!r}."
+        )
+    duration_s = float(value)
+    if not math.isfinite(duration_s) or duration_s <= 0:
+        raise ModelScopePublisherError(
+            f"{METADATA_NAME} duration_s must be finite and positive; got {value!r}."
+        )
+    return duration_s
+
+
 def _metadata_session_location(
     entry: Mapping[str, object],
 ) -> tuple[str, str, str, str | None]:
@@ -1056,6 +1163,11 @@ def stage_session(
         except DatasetIntersectionError as exc:
             raise ModelScopePublisherError(str(exc)) from exc
 
+    duration_s = measure_session_duration_s(source, segment, ffprobe, intersection_plan)
+    if progress is not None:
+        duration_scope = "aligned intersection" if intersection_plan is not None else "Session"
+        progress(f"{duration_scope} duration: {duration_s:.6f} s")
+
     manifest_path = target / "manifest.json"
     metadata_path = root / METADATA_NAME
     readme_path = root / DATASET_README_NAME
@@ -1074,6 +1186,7 @@ def stage_session(
             total_bytes=sum(path.stat().st_size for path in files)
             + sum(path.stat().st_size for path in rerun_files)
             + report_source.stat().st_size,
+            duration_s=duration_s,
             dry_run=True,
             main_device_id=device_ids["main"],
             left_device_id=device_ids["left"],
@@ -1160,6 +1273,7 @@ def stage_session(
         "upload_batch_id": None,
         "dataset_path": relative_session,
         "segment": segment or "auto/all",
+        "duration_s": duration_s,
         "device_ids": device_ids,
         "options": {
             "raw_video": raw_video,
@@ -1191,6 +1305,7 @@ def stage_session(
         "manifest": f"{relative_session}/manifest.json",
         "inspection_html": f"{relative_session}/{REPORT_NAME}",
         "segment": segment or "auto/all",
+        "duration_s": duration_s,
         "device_ids": device_ids,
         "file_count": len(file_records),
         "packaged_bytes": total_bytes,
@@ -1210,6 +1325,7 @@ def stage_session(
         inspection_html=inspection_target,
         file_count=len(file_records),
         total_bytes=total_bytes,
+        duration_s=duration_s,
         main_device_id=device_ids["main"],
         left_device_id=device_ids["left"],
         right_device_id=device_ids["right"],
@@ -1236,7 +1352,8 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
         raise FileNotFoundError(
             f"Prepared metadata has no session {primitive}/{resolved_session_id}: {metadata_path}"
         )
-    _, _, relative_path, _ = _metadata_session_location(entry)
+    _, _, relative_path, batch_id = _metadata_session_location(entry)
+    duration_s = _metadata_duration_s(entry, required=batch_id is None)
     target = root / Path(relative_path)
     manifest_path = target / "manifest.json"
     readme_path = root / DATASET_README_NAME
@@ -1272,6 +1389,7 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
         inspection_html=inspection_html,
         file_count=len(files),
         total_bytes=total_bytes,
+        duration_s=duration_s,
         main_device_id=_clean_device_id(device_ids.get("main")),
         left_device_id=_clean_device_id(device_ids.get("left")),
         right_device_id=_clean_device_id(device_ids.get("right")),
@@ -1294,6 +1412,7 @@ def load_staged_dataset(dataset_root: Path) -> StagedDataset:
     missing: list[str] = []
     for entry in entries:
         _, _, relative_path, batch_id = _metadata_session_location(entry)
+        _metadata_duration_s(entry, required=batch_id is None)
         session_dir = root / Path(relative_path)
         for required in (session_dir / "manifest.json", session_dir / REPORT_NAME):
             if not required.is_file():
