@@ -135,12 +135,13 @@ Use `Prepare session` before `Upload prepared dataset`. Upload sends every sessi
 `metadata.jsonl` and uses the official `modelscope-hub`
 client and its resumable upload cache by default. The target repository must already exist.
 Preparation writes to local `_prepared/<primitive>/<session>/`. At upload start, all pending
-sessions share one local-time `YYYYMMDD_HHMMSS` batch and move to
-`EgoMotionActions/<batch>/<primitive>/<session>/`; a failed transfer reuses that batch on retry.
+sessions share one uploader-local `YYYYMMDD` date and move to
+`EgoMotionActions/<date>/<primitive>/<session>/`; the exact start time remains in metadata and a
+failed transfer reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain readable.
 `EgoMotionActions/Demo/` is reserved for migrated legacy examples.
 The Statistics tab also has a clean-session batch upload. It recalculates every Session, requires
 all Segments to satisfy the exact frame-count relation, uses the curated default Mocap files and no
-RRD, then prepares and uploads all eligible Sessions in one shared timestamp batch.
+RRD, then prepares and uploads all eligible Sessions under one shared local-date directory.
 When aligned-intersection staging is enabled, its ratio and Offset are prefilled from the RRD
 Export controls and continue to follow changes made there. Edit the ModelScope copies only to
 override alignment for that staging operation.
@@ -238,11 +239,11 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 再执行“上传已准备数据集”。
 上传会包含 `metadata.jsonl` 引用的全部 session，并使用官方 `modelscope-hub`，默认开启可恢复上传缓存；
 目标仓库必须已经存在。
-准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用一个本地时间
-`YYYYMMDD_HHMMSS` 批次，并移动到 `EgoMotionActions/<批次>/<动作>/<session>/`；传输失败后重试会
-复用该批次。`EgoMotionActions/Demo/` 只保留迁移后的旧示例。
+准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用上传电脑本地
+日期 `YYYYMMDD`，并移动到 `EgoMotionActions/<日期>/<动作>/<session>/`；完整开始时间仍保存在元数据
+中，传输失败后重试会复用该日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。
 “统计”页还提供 clean Session 批量上传。它会重新检查全部 Session，只保留所有 Segment 都满足精确
-帧数关系的数据，使用默认 Mocap 文件且不带 RRD，然后将全部合格 Session 放入同一个上传时间批次。
+帧数关系的数据，使用默认 Mocap 文件且不带 RRD，然后将全部合格 Session 放入同一个本地日期目录。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
 """
@@ -1761,7 +1762,7 @@ def infer_batch_modelscope_primitive(dataset_root: Path, session_dir: Path) -> s
     if len(action_parts) < 2:
         return None
     if action_parts[0].casefold() == "demo" or re.fullmatch(
-        r"\d{8}_\d{6}", action_parts[0]
+        r"\d{8}(?:_\d{6})?", action_parts[0]
     ):
         if len(action_parts) < 3:
             return None
@@ -2015,7 +2016,7 @@ def bulk_upload_clean_modelscope_sessions(
 
     upload_result = yield from command_step(
         ["modelscope-upload", str(staged_root)],
-        "上传同一时间批次。" if is_chinese else "Upload one shared timestamp batch.",
+        "上传到同一本地日期目录。" if is_chinese else "Upload under one local-date directory.",
     )
     if upload_result.returncode == 0:
         add("批量上传完成。" if is_chinese else "Batch upload complete.")

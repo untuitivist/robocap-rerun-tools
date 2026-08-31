@@ -156,15 +156,17 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
 
 
 def test_batch_primitive_supports_explicit_custom_action_hierarchy(tmp_path) -> None:
-    timestamped = (
-        tmp_path / "EgoMotionActions" / "20260828_120000" / "Custom Walk" / "session-a"
+    dated = tmp_path / "EgoMotionActions" / "20260828" / "Custom Walk" / "session-a"
+    legacy_timestamped = (
+        tmp_path / "EgoMotionActions" / "20260828_120000" / "Custom Run" / "session-b"
     )
     demo = tmp_path / "EgoMotionActions" / "Demo" / "Legacy Action" / "session-b"
     direct = tmp_path / "session-c"
-    for session in (timestamped, demo, direct):
+    for session in (dated, legacy_timestamped, demo, direct):
         session.mkdir(parents=True)
 
-    assert web_app.infer_batch_modelscope_primitive(tmp_path, timestamped) == "Custom Walk"
+    assert web_app.infer_batch_modelscope_primitive(tmp_path, dated) == "Custom Walk"
+    assert web_app.infer_batch_modelscope_primitive(tmp_path, legacy_timestamped) == "Custom Run"
     assert web_app.infer_batch_modelscope_primitive(tmp_path, demo) == "Legacy Action"
     assert web_app.infer_batch_modelscope_primitive(tmp_path, direct) is None
 

@@ -51,6 +51,16 @@ def test_validate_primitive_id_rejects_unsafe_directory_names(value: str) -> Non
         publisher.validate_primitive_id(value)
 
 
+def test_upload_batch_id_uses_local_date_and_accepts_legacy_ids() -> None:
+    moment = datetime(2026, 8, 28, 17, 32, 45, tzinfo=UTC)
+
+    assert publisher.upload_batch_id(moment) == "20260828"
+    assert publisher.validate_upload_batch_id("20260828") == "20260828"
+    assert publisher.validate_upload_batch_id("20260828_173245") == "20260828_173245"
+    with pytest.raises(ValueError, match="valid local date"):
+        publisher.validate_upload_batch_id("20260230")
+
+
 def write_inspection_report(session_dir: Path, segment: str = "segment1") -> Path:
     report = session_dir / "_artifacts" / segment / "inspection" / publisher.REPORT_NAME
     report.parent.mkdir(parents=True)
@@ -189,10 +199,11 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
     assert "Required capture streams" in dataset_readme
     assert "Complete dataset structure" in dataset_readme
     assert "Only the concrete NOKOV motion-capture export format selection" in normalized_readme
-    assert "EgoMotionActions/<YYYYMMDD_HHMMSS>/<primitive_id>/<session_id>/" in dataset_readme
+    assert "EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/" in dataset_readme
     assert "EgoMotionActions/Demo/<primitive_id>/<session_id>/" in dataset_readme
     assert "raw_calibration/<device_id>/" in dataset_readme
-    assert "upload operation assigns one shared local-time batch ID" in normalized_readme
+    assert "pending sessions in one upload operation share that date" in normalized_readme
+    assert "Legacy `YYYYMMDD_HHMMSS` paths remain readable" in dataset_readme
     assert "rerun/<segment>/inspection/*.rrd" in dataset_readme
     assert "at least one motion-capture format must be present" in normalized_readme
     assert "under `mocap/`" in dataset_readme
@@ -782,20 +793,20 @@ def test_upload_staged_session_uploads_every_indexed_session(
 
     assert result.repo_url == "https://modelscope.cn/datasets/owner/egomocap"
     assert result.session_count == 2
-    assert result.batch_id == "20260828_173245"
+    assert result.batch_id == "20260828"
     assert calls[0] == ("repo_exists", ("owner/egomocap", "dataset"), {})
     assert calls[1][0] == "create_repo"
     assert calls[2][0] == "upload_folder"
     assert calls[2][1][:3] == ("owner/egomocap", "dataset", staged.dataset_root)
     assert calls[2][2]["allow_patterns"] == [
-        "EgoMotionActions/20260828_173245/P01/20260803_081935_session39/**",
-        "EgoMotionActions/20260828_173245/Walk [[]v2]/second_session/**",
+        "EgoMotionActions/20260828/P01/20260803_081935_session39/**",
+        "EgoMotionActions/20260828/Walk [[]v2]/second_session/**",
         "raw_calibration/**",
         "README.md",
     ]
     assert calls[2][2]["disable_tqdm"] is False
     assert calls[2][2]["commit_message"] == (
-        "Upload batch 20260828_173245 with 2 indexed session(s)"
+        "Upload batch 20260828 with 2 indexed session(s)"
     )
     assert calls[3][0] == "upload_file"
     assert calls[3][1][:2] == ("owner/egomocap", "dataset")
@@ -807,7 +818,7 @@ def test_upload_staged_session_uploads_every_indexed_session(
     final_session = (
         staged.dataset_root
         / publisher.ACTIONS_DIR_NAME
-        / "20260828_173245"
+        / "20260828"
         / "P01"
         / staged.session_id
     )
@@ -816,9 +827,9 @@ def test_upload_staged_session_uploads_every_indexed_session(
     metadata = [
         json.loads(line) for line in staged.metadata_path.read_text(encoding="utf-8").splitlines()
     ]
-    assert {entry["upload_batch_id"] for entry in metadata} == {"20260828_173245"}
+    assert {entry["upload_batch_id"] for entry in metadata} == {"20260828"}
     assert all(
-        entry["session_path"].startswith("EgoMotionActions/20260828_173245/")
+        entry["session_path"].startswith("EgoMotionActions/20260828/")
         for entry in metadata
     )
 
@@ -865,7 +876,7 @@ def test_upload_retry_reuses_existing_batch(tmp_path: Path, monkeypatch: pytest.
         progress=None,
     )
 
-    assert first.batch_id == second.batch_id == "20260828_173245"
+    assert first.batch_id == second.batch_id == "20260828"
     assert upload_calls[0]["allow_patterns"] == upload_calls[1]["allow_patterns"]
 
 
@@ -918,7 +929,7 @@ def test_failed_file_transfer_retry_reuses_finalized_batch(
         progress=None,
     )
 
-    assert retry.batch_id == "20260828_173245"
+    assert retry.batch_id == "20260828"
     assert folder_attempts == 2
 
 
@@ -1002,12 +1013,48 @@ def test_finalize_upload_batch_migrates_legacy_local_stage(tmp_path: Path) -> No
         progress=None,
     )
 
-    assert batch_id == "20260828_180001"
+    assert batch_id == "20260828"
     assert finalized.session_paths == (
-        "EgoMotionActions/20260828_180001/P01/20260803_081935_session39",
+        "EgoMotionActions/20260828/P01/20260803_081935_session39",
     )
     assert finalized.pending_session_paths == ()
     assert not legacy_path.exists()
+
+
+def test_finalize_upload_batch_replaces_same_session_on_same_date(tmp_path: Path) -> None:
+    staged = stage_fixture(tmp_path)
+    finalized, first_batch = publisher.finalize_upload_batch(
+        publisher.load_staged_dataset(staged.dataset_root),
+        upload_time=datetime(2026, 8, 28, 18, 0, 1, tzinfo=UTC),
+        progress=None,
+    )
+    published = staged.dataset_root / Path(finalized.session_paths[0])
+    (published / "stale.txt").write_text("old", encoding="utf-8")
+
+    source = tmp_path / staged.session_id
+    (source / "Mocap-NOKOV" / "motion.trc").write_text("updated\n", encoding="utf-8")
+    restaged = publisher.stage_session(
+        source,
+        staged.primitive_id,
+        dataset_root=staged.dataset_root,
+        segment="segment1",
+        raw_video=True,
+        progress=None,
+    )
+    finalized, second_batch = publisher.finalize_upload_batch(
+        publisher.load_staged_dataset(restaged.dataset_root),
+        upload_time=datetime(2026, 8, 28, 20, 30, 0, tzinfo=UTC),
+        progress=None,
+    )
+
+    assert first_batch == second_batch == "20260828"
+    assert finalized.session_paths == (
+        "EgoMotionActions/20260828/P01/20260803_081935_session39",
+    )
+    assert not (published / "stale.txt").exists()
+    assert (published / "mocap" / "motion.trc").read_text(encoding="utf-8") == "updated\n"
+    manifest = json.loads((published / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["upload_batch_created_at"] == "2026-08-28T20:30:00+00:00"
 
 
 def test_upload_requires_configured_token(tmp_path: Path) -> None:

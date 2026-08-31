@@ -156,7 +156,7 @@ frame_index 等其他问题均不计入此时长。
 上述帧数关系的 Session 才会进入上传。批量流程固定使用压缩的完整 Session，默认选择
 BVH/CSV/TRC/MP4 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
 `PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会跳过。全部合格 Session 共用
-同一个上传时间批次。
+同一个上传日期目录。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`
@@ -206,7 +206,7 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
   raw_calibration/                       # 必需：由独立标定流程维护
     <device_id>/                         # 通过明确的 device ID 查找
   EgoMotionActions/                      # 工具生成的动作数据
-    <YYYYMMDD_HHMMSS>/                   # 一次上传共用的本地上传开始时间
+    <YYYYMMDD>/                          # 新上传按上传电脑本地日期归档
       <primitive_id>/                    # P01-P29 惯例或自定义动作名称
         <session_id>/
           robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
@@ -275,10 +275,11 @@ robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_sessi
 robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
 
-上传开始时，所有待上传 Session 共用一个本地时间批次，并定稿到
-`EgoMotionActions/<YYYYMMDD_HHMMSS>/<primitive_id>/<session_id>/`。工具会在传输前原子更新
-`manifest.json` 与 `metadata.jsonl`；传输失败后重试会复用原批次，不会产生第二个时间目录。
-`_prepared/` 不会上传。`EgoMotionActions/Demo/` 只存放从旧版无批次结构迁移的示例。
+上传开始时，所有待上传 Session 按上传电脑的本地日期归档到
+`EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`，精确 ISO 开始时间保留在
+`upload_batch_created_at`。工具会在传输前原子更新 `manifest.json` 与 `metadata.jsonl`；传输失败后
+重试会复用原日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。`_prepared/` 不会上传。
+`EgoMotionActions/Demo/` 只存放从旧版无批次结构迁移的示例。
 提交新索引前，工具会下载并合并远端 `metadata.jsonl`，保留无关批次与 Demo 行；本地相同
 `(primitive_id, session_id)` 的行覆盖远端旧行。只有 Session 文件传输成功后才提交合并索引。
 

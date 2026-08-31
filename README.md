@@ -187,7 +187,7 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
   raw_calibration/                       # required: maintained by calibration workflow
     <device_id>/                         # files are resolved by explicit device ID
   EgoMotionActions/                      # generated action data
-    <YYYYMMDD_HHMMSS>/                   # local upload-start time shared by one upload
+    <YYYYMMDD>/                          # uploader-local date for new uploads
       <primitive_id>/                    # P01-P29 convention or a custom action name
         <session_id>/
           robocap_<segment>_video_*.mp4       # required: six first-person cameras
@@ -287,10 +287,11 @@ that have not changed:
 robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
 
-When upload starts, every pending session receives the same local-time batch ID and is moved to
-`EgoMotionActions/<YYYYMMDD_HHMMSS>/<primitive_id>/<session_id>/`. The manifest and
-`metadata.jsonl` paths are updated atomically before transfer. If transfer fails, retrying reuses the
-assigned batch instead of creating a second timestamp. `_prepared/` is excluded from upload.
+When upload starts, every pending session receives the uploader's local date and is moved to
+`EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`. The exact ISO start time remains in
+`upload_batch_created_at`. The manifest and `metadata.jsonl` paths are updated atomically before
+transfer. If transfer fails, retrying reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain
+readable but are no longer generated. `_prepared/` is excluded from upload.
 `EgoMotionActions/Demo/` is reserved for recordings migrated from the legacy non-batched layout.
 The uploader downloads and merges the existing remote `metadata.jsonl` before committing the new
 index, so unrelated batches and Demo rows are retained. Local `(primitive_id, session_id)` rows

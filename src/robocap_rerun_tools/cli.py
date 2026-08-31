@@ -1973,7 +1973,7 @@ def command_modelscope_upload(args: argparse.Namespace) -> int:
         print(f"ModelScope upload failed: {exc}", file=sys.stderr)
         return 2
     print(f"Uploaded dataset root: {result.uploaded_path}")
-    print(f"Upload batch: {result.batch_id or 'not assigned'}")
+    print(f"Upload date: {result.batch_id or 'not assigned'}")
     print(f"Prepared sessions: {result.session_count}")
     print(f"Repository: {result.repo_url}")
     print(f"Revision: {result.revision}")
@@ -2158,9 +2158,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     modelscope_upload_parser = sub.add_parser(
         "modelscope-upload",
-        help=(
-            "Upload all prepared sessions under one YYYYMMDD_HHMMSS/name/session_id batch path."
-        ),
+        help="Upload all prepared sessions under one YYYYMMDD/name/session_id date path.",
     )
     modelscope_upload_parser.add_argument("dataset_root", type=Path)
     modelscope_upload_parser.add_argument(

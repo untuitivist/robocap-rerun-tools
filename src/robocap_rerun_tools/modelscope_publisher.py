@@ -44,8 +44,10 @@ PREPARED_DIR_NAME = "_prepared"
 DEMO_DIR_NAME = "Demo"
 CALIBRATION_DIR_NAME = "raw_calibration"
 MOCAP_DIR_NAME = CANONICAL_MOCAP_DIR_NAME
-UPLOAD_BATCH_FORMAT = "%Y%m%d_%H%M%S"
-UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}_\d{6}\Z")
+UPLOAD_BATCH_FORMAT = "%Y%m%d"
+UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}\Z")
+LEGACY_UPLOAD_BATCH_FORMAT = "%Y%m%d_%H%M%S"
+LEGACY_UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}_\d{6}\Z")
 PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
 PRIMITIVE_ID_INVALID_CHAR_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 WINDOWS_RESERVED_NAMES = {
@@ -107,6 +109,15 @@ class StagedDataset:
 
 
 @dataclass(frozen=True)
+class _UploadSessionMove:
+    source: Path
+    target: Path
+    backup: Path | None
+    original_manifest: str
+    updated_manifest: str
+
+
+@dataclass(frozen=True)
 class UploadResult:
     repo_id: str
     repo_url: str
@@ -155,14 +166,19 @@ def validate_session_id(value: str) -> str:
 
 def validate_upload_batch_id(value: str) -> str:
     batch_id = value.strip()
-    if not UPLOAD_BATCH_PATTERN.fullmatch(batch_id):
+    if UPLOAD_BATCH_PATTERN.fullmatch(batch_id):
+        batch_format = UPLOAD_BATCH_FORMAT
+    elif LEGACY_UPLOAD_BATCH_PATTERN.fullmatch(batch_id):
+        batch_format = LEGACY_UPLOAD_BATCH_FORMAT
+    else:
         raise ValueError(
-            f"Upload batch ID must use {UPLOAD_BATCH_FORMAT}: {value!r}."
+            f"Upload batch ID must use {UPLOAD_BATCH_FORMAT}; legacy "
+            f"{LEGACY_UPLOAD_BATCH_FORMAT} IDs remain readable: {value!r}."
         )
     try:
-        datetime.strptime(batch_id, UPLOAD_BATCH_FORMAT).replace(tzinfo=UTC)
+        datetime.strptime(batch_id, batch_format).replace(tzinfo=UTC)
     except ValueError as exc:
-        raise ValueError(f"Upload batch ID is not a valid local date/time: {value!r}.") from exc
+        raise ValueError(f"Upload batch ID is not a valid local date: {value!r}.") from exc
     return batch_id
 
 
@@ -762,10 +778,11 @@ configs:
 # EgoMocap Dataset
 
 Each row in `metadata.jsonl` describes one recording. New uploads use
-`EgoMotionActions/<YYYYMMDD_HHMMSS>/<primitive_id>/<session_id>/`, where the batch ID is the
-uploader's local time when upload starts. All pending sessions in one upload operation share that
-batch ID, and a failed upload reuses it when retried. The built-in task catalog uses `P01` through
-`P29`, but a safe custom single-directory name is also accepted.
+`EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`, where the batch ID is the uploader's
+local date when upload starts. All pending sessions in one upload operation share that date, while
+`upload_batch_created_at` retains the exact ISO timestamp. A failed upload reuses its assigned date.
+Legacy `YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. The built-in task
+catalog uses `P01` through `P29`, but a safe custom single-directory name is also accepted.
 
 `EgoMotionActions/Demo/<primitive_id>/<session_id>/` contains recordings migrated from the legacy
 non-batched hierarchy. `Demo` is an example archive, not a new-upload destination.
@@ -812,7 +829,7 @@ are optional. All other listed capture streams and generated records are require
   raw_calibration/                              # required, maintained separately
     <device_id>/
   EgoMotionActions/                             # required action recordings
-    <YYYYMMDD_HHMMSS>/                           # one local-time ID per upload operation
+    <YYYYMMDD>/                                  # uploader-local date for new uploads
       <primitive_id>/                            # P01-P29 convention or a custom name
         <session_id>/
           robocap_<segment>_video_*.mp4          # required six first-person videos
@@ -1320,7 +1337,13 @@ def finalize_upload_batch(
     batch_id = upload_batch_id(moment)
     batch_created_at = moment.isoformat()
     updated_entries = [dict(entry) for entry in entries]
-    moves: list[tuple[Path, Path, str, str]] = []
+    replacement_root = (
+        staged.dataset_root
+        / PREPARED_DIR_NAME
+        / ".replaced"
+        / moment.strftime("%Y%m%d_%H%M%S_%f")
+    )
+    moves: list[_UploadSessionMove] = []
 
     for index in pending_indices:
         primitive, session_id, relative_path, _ = parsed[index]
@@ -1329,10 +1352,13 @@ def finalize_upload_batch(
         target = staged.dataset_root / Path(published_path)
         if not source.is_dir():
             raise FileNotFoundError(f"Prepared session directory is missing: {source}")
-        if target.exists():
+        if target.exists() and not target.is_dir():
             raise ModelScopePublisherError(
-                f"Upload batch target already exists; retry after the current second: {target}"
+                f"Upload date target is not a directory: {target}"
             )
+        backup = replacement_root / primitive / session_id if target.is_dir() else None
+        if backup is not None and backup.exists():
+            raise ModelScopePublisherError(f"Upload replacement backup already exists: {backup}")
         manifest_path = source / "manifest.json"
         manifest_text = manifest_path.read_text(encoding="utf-8")
         manifest = json.loads(manifest_text)
@@ -1342,7 +1368,15 @@ def finalize_upload_batch(
         manifest["upload_batch_created_at"] = batch_created_at
         manifest["dataset_path"] = published_path
         updated_manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
-        moves.append((source, target, manifest_text, updated_manifest_text))
+        moves.append(
+            _UploadSessionMove(
+                source,
+                target,
+                backup,
+                manifest_text,
+                updated_manifest_text,
+            )
+        )
 
         entry = updated_entries[index]
         entry["upload_batch_id"] = batch_id
@@ -1351,33 +1385,52 @@ def finalize_upload_batch(
         entry["manifest"] = f"{published_path}/manifest.json"
         entry["inspection_html"] = f"{published_path}/{REPORT_NAME}"
 
-    moved: list[tuple[Path, Path, str]] = []
+    attempted: list[_UploadSessionMove] = []
     try:
-        for source, target, original_manifest, updated_manifest in moves:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source.replace(target)
-            moved.append((source, target, original_manifest))
-            (target / "manifest.json").write_text(
-                updated_manifest,
+        for move in moves:
+            attempted.append(move)
+            move.target.parent.mkdir(parents=True, exist_ok=True)
+            if move.backup is not None:
+                move.backup.parent.mkdir(parents=True, exist_ok=True)
+                move.target.replace(move.backup)
+                if progress is not None:
+                    progress(
+                        "Replacing existing upload-date path: "
+                        f"{move.target.relative_to(staged.dataset_root).as_posix()}"
+                    )
+            move.source.replace(move.target)
+            (move.target / "manifest.json").write_text(
+                move.updated_manifest,
                 encoding="utf-8",
                 newline="\n",
             )
             if progress is not None:
                 progress(
-                    f"Prepared upload path: {target.relative_to(staged.dataset_root).as_posix()}"
+                    "Prepared upload path: "
+                    f"{move.target.relative_to(staged.dataset_root).as_posix()}"
                 )
         _write_metadata_entries(staged.dataset_root, updated_entries)
     except Exception:
-        for source, target, original_manifest in reversed(moved):
-            if target.is_dir() and not source.exists():
-                (target / "manifest.json").write_text(
-                    original_manifest,
+        for move in reversed(attempted):
+            if move.target.is_dir() and not move.source.exists():
+                (move.target / "manifest.json").write_text(
+                    move.original_manifest,
                     encoding="utf-8",
                     newline="\n",
                 )
-                source.parent.mkdir(parents=True, exist_ok=True)
-                target.replace(source)
+                move.source.parent.mkdir(parents=True, exist_ok=True)
+                move.target.replace(move.source)
+            if (
+                move.backup is not None
+                and move.backup.is_dir()
+                and not move.target.exists()
+            ):
+                move.target.parent.mkdir(parents=True, exist_ok=True)
+                move.backup.replace(move.target)
+        shutil.rmtree(replacement_root, ignore_errors=True)
         raise
+
+    shutil.rmtree(replacement_root, ignore_errors=True)
 
     return load_staged_dataset(staged.dataset_root), batch_id
 
