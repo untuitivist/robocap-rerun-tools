@@ -138,12 +138,15 @@ counts that do not satisfy `n:ratio*(n+1):(n+1)`; error-free covers valid report
 Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
-The same tab can batch-prepare and upload only clean Sessions. It recalculates eligibility at click
-time, optionally creates missing reports, and requires every Segment in a Session to satisfy the
-frame-count relation. The batch uses compressed full-session video, selects BVH/CSV/TRC/MP4 files
-except paths containing `unnamed`, includes no RRD, and reads the target repository from `.env`.
+The same tab uploads clean Sessions one by one. It first reads the target repository's remote
+`metadata.jsonl`; matching `(primitive_id, session_id)` entries are skipped before missing-report
+generation, staging, or video processing. Each remaining Session must satisfy the frame-count
+relation and completes prepare, clean validation, and upload in an isolated staging root before the
+next starts. A failure stops the sequence without rolling back completed uploads and keeps the
+current staging data for retry. The flow uses compressed full-session video, selects BVH/CSV/TRC/MP4
+files except paths containing `unnamed`, includes no RRD, and reads the repository from `.env`.
 Sessions without an unambiguous `PXX` (or an explicit custom action directory in an
-`EgoMotionActions` hierarchy) are skipped. All eligible Sessions share one upload batch timestamp.
+`EgoMotionActions` hierarchy) are excluded.
 
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
 synchronizes it across the Export and Offset tabs, and restores it after Web UI restarts. On Windows,

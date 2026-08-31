@@ -1065,3 +1065,59 @@ def test_upload_requires_configured_token(tmp_path: Path) -> None:
 
     with pytest.raises(publisher.ModelScopePublisherError, match="not configured"):
         publisher.upload_staged_session(staged, "owner/egomocap", settings=settings)
+
+
+def test_fetch_remote_session_keys_uses_metadata_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata = tmp_path / "metadata.jsonl"
+    metadata.write_text(
+        "\n".join(
+            [
+                json.dumps({"primitive_id": "p01", "session_id": "session-one"}),
+                json.dumps({"primitive_id": "Custom Walk", "session_id": "session-two"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[object, ...]] = []
+
+    class FakeApi:
+        def repo_exists(self, *args):
+            calls.append(("repo_exists", *args))
+            return True
+
+        def download_file(self, *args, **kwargs):
+            calls.append(("download_file", *args, kwargs))
+            return metadata
+
+    monkeypatch.setattr(publisher, "_hub_api", lambda _settings: FakeApi())
+    settings = publisher.ModelScopeSettings(
+        "secret", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/egomocap"
+    )
+
+    keys = publisher.fetch_remote_session_keys(settings=settings)
+
+    assert keys == frozenset({("P01", "session-one"), ("Custom Walk", "session-two")})
+    assert calls[0] == ("repo_exists", "owner/egomocap", "dataset")
+    assert calls[1][0:4] == (
+        "download_file",
+        "owner/egomocap",
+        "dataset",
+        publisher.METADATA_NAME,
+    )
+    assert calls[1][4] == {"revision": "master", "force": True}
+
+
+def test_fetch_remote_session_keys_rejects_missing_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api = SimpleNamespace(repo_exists=lambda *_args: False)
+    monkeypatch.setattr(publisher, "_hub_api", lambda _settings: api)
+    settings = publisher.ModelScopeSettings(
+        "secret", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/missing"
+    )
+
+    with pytest.raises(publisher.ModelScopePublisherError, match="does not exist"):
+        publisher.fetch_remote_session_keys(settings=settings)

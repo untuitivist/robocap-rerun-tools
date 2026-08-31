@@ -153,11 +153,12 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 多帧/少帧、第三人称多帧/少帧，并合并同一 Session 多个 Segment 的类别。时间戳 diff、推算丢帧、
 缺失时间戳和 frame_index 等其他问题不改变这项帧数分类。
 
-同一页可批量准备并上传 clean Session。点击时会重新筛选，必要时先补报告；只有全部 Segment 都满足
-上述帧数关系的 Session 才会进入上传。批量流程固定使用压缩的完整 Session，默认选择
-BVH/CSV/TRC/MP4 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
-`PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会跳过。全部合格 Session 共用
-同一个上传日期目录。
+同一页可逐个上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，按
+`(primitive_id, session_id)` 跳过已上传项；这些项不会补报告、暂存或处理视频。其余 Session 必须满足
+上述帧数关系，并在独立暂存根目录中依次完成准备、clean 校验和上传后才开始下一条。任一步失败都会
+停止后续处理，不回滚已完成上传，并保留当前暂存数据供重试。该流程固定使用压缩的完整 Session，默认
+选择 BVH/CSV/TRC/MP4 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
+`PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会排除。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`

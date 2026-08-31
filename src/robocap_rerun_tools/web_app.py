@@ -139,9 +139,11 @@ sessions share one uploader-local `YYYYMMDD` date and move to
 `EgoMotionActions/<date>/<primitive>/<session>/`; the exact start time remains in metadata and a
 failed transfer reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain readable.
 `EgoMotionActions/Demo/` is reserved for migrated legacy examples.
-The Statistics tab also has a clean-session batch upload. It recalculates every Session, requires
-all Segments to satisfy the exact frame-count relation, uses the curated default Mocap files and no
-RRD, then prepares and uploads all eligible Sessions under one shared local-date directory.
+The Statistics tab also uploads clean Sessions sequentially. It reads remote `metadata.jsonl` first
+and skips matching `(primitive_id, session_id)` entries before inspection or staging. Each remaining
+Session must satisfy the exact frame-count relation, uses the curated default Mocap files and no RRD,
+and completes prepare, clean validation, and upload in an isolated staging root before the next one.
+A failure stops the sequence without rolling back completed uploads.
 When aligned-intersection staging is enabled, its ratio and Offset are prefilled from the RRD
 Export controls and continue to follow changes made there. Edit the ModelScope copies only to
 override alignment for that staging operation.
@@ -242,8 +244,10 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用上传电脑本地
 日期 `YYYYMMDD`，并移动到 `EgoMotionActions/<日期>/<动作>/<session>/`；完整开始时间仍保存在元数据
 中，传输失败后重试会复用该日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。
-“统计”页还提供 clean Session 批量上传。它会重新检查全部 Session，只保留所有 Segment 都满足精确
-帧数关系的数据，使用默认 Mocap 文件且不带 RRD，然后将全部合格 Session 放入同一个本地日期目录。
+“统计”页还提供 clean Session 逐个上传。它先读取远端 `metadata.jsonl`，按
+`(primitive_id, session_id)` 跳过已上传数据，且不会对这些数据补检查或暂存。其余 Session 必须满足
+精确帧数关系，使用默认 Mocap 文件且不带 RRD，并在独立暂存根目录中依次完成准备、clean 校验和上传
+后再处理下一条。任一步失败都会停止后续处理，但不回滚已经完成的上传。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
 """
@@ -264,11 +268,12 @@ LANGUAGE_PACKS = {
         "statistics_fill_missing": "Create missing inspection reports",
         "statistics_button": "Calculate statistics",
         "statistics_batch_help": (
-            "Batch upload recalculates the root and includes only sessions whose every Segment "
-            "satisfies `n:ratio*(n+1):n+1`. It uses compressed full-session video, selects "
-            "BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads the repository from `.env`."
+            "Sequential upload reads remote metadata first and skips existing action/Session "
+            "keys. Each remaining Session must satisfy `n:ratio*(n+1):n+1`, then completes "
+            "prepare, validation, and upload before the next starts. It uses compressed full-session "
+            "video, selects BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads `.env`."
         ),
-        "statistics_batch_upload": "Prepare and upload clean sessions",
+        "statistics_batch_upload": "Upload new clean Sessions one by one",
         "package_output": "Output zip",
         "package_height": "Proxy height",
         "package_crf": "Proxy CRF",
@@ -368,11 +373,11 @@ LANGUAGE_PACKS = {
         "statistics_fill_missing": "补做缺失的检查报告",
         "statistics_button": "统计根目录",
         "statistics_batch_help": (
-            "批量上传会重新统计，只处理所有 Segment 都满足 `n:ratio*(n+1):n+1` 的 Session。"
-            "固定使用压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；"
-            "目标仓库读取 `.env`。"
+            "逐个上传先读取远端 metadata.jsonl，按动作与 Session ID 跳过已上传数据。其余 Session "
+            "必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理下一条。固定使用"
+            "压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；读取 `.env`。"
         ),
-        "statistics_batch_upload": "批量准备并上传无差帧 Session",
+        "statistics_batch_upload": "逐个上传未上传的无差帧 Session",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
         "package_crf": "压缩 CRF",
@@ -1804,6 +1809,21 @@ def validate_pending_modelscope_frame_counts(dataset_root: Path) -> tuple[str, .
     return staged.pending_session_paths
 
 
+def sequential_modelscope_dataset_root(
+    dataset_root: Path,
+    primitive_id: str,
+    session_id: str,
+) -> Path:
+    from robocap_rerun_tools.modelscope_publisher import (
+        validate_primitive_id,
+        validate_session_id,
+    )
+
+    primitive = validate_primitive_id(primitive_id)
+    resolved_session = validate_session_id(session_id)
+    return dataset_root / "_modelscope_dataset" / "sequential" / primitive / resolved_session
+
+
 def bulk_upload_clean_modelscope_sessions(
     dataset_root: object,
     mocap_ratio: int,
@@ -1816,7 +1836,11 @@ def bulk_upload_clean_modelscope_sessions(
         session_has_clean_frame_counts,
         summarize_session,
     )
-    from robocap_rerun_tools.modelscope_publisher import ModelScopePublisherError
+    from robocap_rerun_tools.modelscope_publisher import (
+        ModelScopePublisherError,
+        fetch_remote_session_keys,
+        validate_session_id,
+    )
 
     root = dataset_root_path(dataset_root)
     try:
@@ -1866,8 +1890,113 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
 
+    identified: list[tuple[Path, str, str]] = []
+    excluded: list[str] = []
+    for index, session in enumerate(sessions, start=1):
+        add(
+            f"[{index}/{len(sessions)}] 识别：{session.name}"
+            if is_chinese
+            else f"[{index}/{len(sessions)}] Identify: {session.name}"
+        )
+        primitive = infer_batch_modelscope_primitive(root, session)
+        if primitive is None:
+            excluded.append(f"{session}: action primitive is ambiguous or missing")
+            yield render()
+            continue
+        try:
+            session_id = validate_session_id(session.name)
+        except ValueError as exc:
+            excluded.append(f"{session}: invalid Session ID ({exc})")
+            yield render()
+            continue
+        identified.append((session, primitive, session_id))
+        yield render()
+
+    if not identified:
+        for reason in excluded:
+            add(f"- {reason}")
+        add(
+            "没有可识别的 Session，未连接 ModelScope。"
+            if is_chinese
+            else "No identifiable Session; ModelScope was not contacted."
+        )
+        yield render()
+        return
+
+    auth_result = yield from command_step(
+        ["modelscope-auth"],
+        "检查 ModelScope 身份。" if is_chinese else "Check ModelScope authentication.",
+    )
+    if auth_result.returncode != 0:
+        yield render()
+        return
+
+    add(
+        "读取远端 metadata.jsonl，识别已上传 Session。"
+        if is_chinese
+        else "Read remote metadata.jsonl to identify uploaded Sessions."
+    )
+    yield render()
+    try:
+        remote_keys = fetch_remote_session_keys()
+    except (OSError, ValueError, ModelScopePublisherError) as exc:
+        add(
+            f"读取远端 Session 索引失败，未开始上传：{exc}"
+            if is_chinese
+            else f"Remote Session lookup failed; upload did not start: {exc}"
+        )
+        yield render()
+        return
+
+    remote_skipped = [
+        item for item in identified if (item[1], item[2]) in remote_keys
+    ]
+    pending = [item for item in identified if (item[1], item[2]) not in remote_keys]
+    add(
+        f"远端索引：{len(remote_keys)}；已上传跳过：{len(remote_skipped)}；待处理：{len(pending)}"
+        if is_chinese
+        else (
+            f"Remote index: {len(remote_keys)}; already uploaded: {len(remote_skipped)}; "
+            f"remaining: {len(pending)}"
+        )
+    )
+    for session, primitive, session_id in remote_skipped:
+        add(f"= {primitive}/{session_id}: {session}")
+    yield render()
+    if not pending:
+        add(
+            "所有可识别 Session 均已上传；未补检查、未暂存、未上传。"
+            if is_chinese
+            else (
+                "All identifiable Sessions are already uploaded; no inspection, staging, "
+                "or upload was run."
+            )
+        )
+        yield render()
+        return
+
+    duplicate_keys: dict[tuple[str, str], list[Path]] = {}
+    for session, primitive, session_id in pending:
+        duplicate_keys.setdefault((primitive, session_id), []).append(session)
+    duplicates = {key: paths for key, paths in duplicate_keys.items() if len(paths) > 1}
+    if duplicates:
+        add(
+            "逐个上传已停止：未上传数据中动作名称和 Session ID 组合重复。"
+            if is_chinese
+            else (
+                "Sequential upload stopped: duplicate action/session ID combinations "
+                "among not-yet-uploaded data."
+            )
+        )
+        for (primitive, session_id), paths in sorted(duplicates.items()):
+            add(f"- {primitive}/{session_id}: {', '.join(str(path) for path in paths)}")
+        yield render()
+        return
+
     references = [
-        reference for session in sessions for reference in discover_segment_references(session)
+        reference
+        for session, _, _ in pending
+        for reference in discover_segment_references(session)
     ]
     missing = [reference for reference in references if not reference.report_path.is_file()]
     if fill_missing_reports:
@@ -1895,81 +2024,65 @@ def bulk_upload_clean_modelscope_sessions(
                 add(
                     "检查失败；该 Session 将被排除。"
                     if is_chinese
-                    else "Inspection failed; this session will be excluded."
+                    else "Inspection failed; this Session will be excluded."
                 )
 
     ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
-    candidates: list[tuple[Path, str, list[Path]]] = []
-    skipped: list[str] = []
-    for index, session in enumerate(sessions, start=1):
+    candidates: list[tuple[Path, str, str, list[Path]]] = []
+    for index, (session, primitive, session_id) in enumerate(pending, start=1):
         add(
-            f"[{index}/{len(sessions)}] 筛选：{session.name}"
+            f"[{index}/{len(pending)}] 筛选：{session.name}"
             if is_chinese
-            else f"[{index}/{len(sessions)}] Filter: {session.name}"
+            else f"[{index}/{len(pending)}] Filter: {session.name}"
         )
         statistic = summarize_session(root, session, ffprobe)
         if not session_has_clean_frame_counts(statistic):
-            skipped.append(f"{session}: unchecked or frame-count difference")
-            yield render()
-            continue
-        primitive = infer_batch_modelscope_primitive(root, session)
-        if primitive is None:
-            skipped.append(f"{session}: action primitive is ambiguous or missing")
+            excluded.append(f"{session}: unchecked or frame-count difference")
             yield render()
             continue
         try:
             mocap_files = default_modelscope_mocap_files(session)
         except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
-            skipped.append(f"{session}: {exc}")
+            excluded.append(f"{session}: {exc}")
             yield render()
             continue
         if not mocap_files:
-            skipped.append(f"{session}: no default-selected BVH/CSV/TRC/MP4 Mocap file")
+            excluded.append(f"{session}: no default-selected BVH/CSV/TRC/MP4 Mocap file")
             yield render()
             continue
-        candidates.append((session, primitive, mocap_files))
+        candidates.append((session, primitive, session_id, mocap_files))
         yield render()
-
-    duplicate_keys: dict[tuple[str, str], list[Path]] = {}
-    for session, primitive, _ in candidates:
-        duplicate_keys.setdefault((primitive, session.name), []).append(session)
-    duplicates = {key: paths for key, paths in duplicate_keys.items() if len(paths) > 1}
-    if duplicates:
-        add(
-            "批量上传已停止：动作名称和 Session ID 组合重复。"
-            if is_chinese
-            else "Batch upload stopped: duplicate action/session ID combinations."
-        )
-        for (primitive, session_id), paths in sorted(duplicates.items()):
-            add(f"- {primitive}/{session_id}: {', '.join(str(path) for path in paths)}")
-        yield render()
-        return
 
     add(
-        f"合格 Session：{len(candidates)}；排除：{len(skipped)}"
+        (
+            f"新上传候选：{len(candidates)}；已上传跳过：{len(remote_skipped)}；"
+            f"本地排除：{len(excluded)}"
+        )
         if is_chinese
-        else f"Eligible sessions: {len(candidates)}; excluded: {len(skipped)}"
+        else (
+            f"New upload candidates: {len(candidates)}; already uploaded: "
+            f"{len(remote_skipped)}; locally excluded: {len(excluded)}"
+        )
     )
-    for session, primitive, _ in candidates:
-        add(f"+ {primitive}/{session.name}: {session}")
-    for reason in skipped:
+    for session, primitive, session_id, _ in candidates:
+        add(f"+ {primitive}/{session_id}: {session}")
+    for reason in excluded:
         add(f"- {reason}")
     yield render()
     if not candidates:
-        add("没有可上传的合格 Session。" if is_chinese else "No eligible session to upload.")
+        add(
+            "没有新的无差帧 Session 可上传。"
+            if is_chinese
+            else "No new clean Session is available to upload."
+        )
         yield render()
         return
 
-    auth_result = yield from command_step(
-        ["modelscope-auth"],
-        "检查 ModelScope 身份。" if is_chinese else "Check ModelScope authentication.",
-    )
-    if auth_result.returncode != 0:
-        yield render()
-        return
-
-    staged_root = root / "_modelscope_dataset"
-    for index, (session, primitive, mocap_files) in enumerate(candidates, start=1):
+    completed = 0
+    for index, (session, primitive, session_id, mocap_files) in enumerate(
+        candidates, start=1
+    ):
+        staged_root = sequential_modelscope_dataset_root(root, primitive, session_id)
         args = [
             "modelscope-stage",
             str(session),
@@ -1981,45 +2094,96 @@ def bulk_upload_clean_modelscope_sessions(
         for mocap_file in mocap_files:
             args.extend(["--mocap-file", str(mocap_file)])
         label = (
-            f"[{index}/{len(candidates)}] 准备：{primitive}/{session.name}"
+            f"[{index}/{len(candidates)}] 准备：{primitive}/{session_id}\n暂存目录：{staged_root}"
             if is_chinese
-            else f"[{index}/{len(candidates)}] Prepare: {primitive}/{session.name}"
+            else (
+                f"[{index}/{len(candidates)}] Prepare: {primitive}/{session_id}\n"
+                f"Staging root: {staged_root}"
+            )
         )
         stage_result = yield from command_step(args, label)
         if stage_result.returncode != 0:
             add(
-                "批量准备失败，未开始上传。已成功准备的 Session 保留供修复后重试。"
+                f"逐个上传已停止；新上传完成 {completed}/{len(candidates)}。"
+                "当前 Session 的暂存数据已保留。"
                 if is_chinese
                 else (
-                    "Batch preparation failed; upload did not start. Successfully prepared "
-                    "sessions remain available for retry."
+                    f"Sequential upload stopped; completed {completed}/{len(candidates)} new "
+                    "uploads. The current Session's staging data was kept."
                 )
             )
             yield render()
             return
 
-    try:
-        pending_paths = validate_pending_modelscope_frame_counts(staged_root)
-    except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+        try:
+            pending_paths = validate_pending_modelscope_frame_counts(staged_root)
+            if len(pending_paths) != 1:
+                raise ValueError(
+                    "Isolated staging root must contain exactly one pending Session; "
+                    f"found {len(pending_paths)}."
+                )
+        except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+            add(
+                f"[{index}/{len(candidates)}] 上传前 clean 校验失败：{exc}"
+                if is_chinese
+                else f"[{index}/{len(candidates)}] Pre-upload clean validation failed: {exc}"
+            )
+            add(
+                f"逐个上传已停止；新上传完成 {completed}/{len(candidates)}。"
+                "当前 Session 的暂存数据已保留。"
+                if is_chinese
+                else (
+                    f"Sequential upload stopped; completed {completed}/{len(candidates)} new "
+                    "uploads. The current Session's staging data was kept."
+                )
+            )
+            yield render()
+            return
         add(
-            f"上传前 clean 校验失败：{exc}"
+            f"[{index}/{len(candidates)}] 上传前校验通过：1 个 pending Session。"
             if is_chinese
-            else f"Pre-upload clean validation failed: {exc}"
+            else f"[{index}/{len(candidates)}] Pre-upload validation passed: 1 pending Session."
+        )
+
+        upload_result = yield from command_step(
+            ["modelscope-upload", str(staged_root)],
+            (
+                f"[{index}/{len(candidates)}] 上传：{primitive}/{session_id}"
+                if is_chinese
+                else f"[{index}/{len(candidates)}] Upload: {primitive}/{session_id}"
+            ),
+        )
+        if upload_result.returncode != 0:
+            add(
+                f"逐个上传已停止；新上传完成 {completed}/{len(candidates)}。"
+                "当前 Session 的暂存数据已保留。"
+                if is_chinese
+                else (
+                    f"Sequential upload stopped; completed {completed}/{len(candidates)} new "
+                    "uploads. The current Session's staging data was kept."
+                )
+            )
+            yield render()
+            return
+        completed += 1
+        add(
+            f"[{index}/{len(candidates)}] 上传完成：{primitive}/{session_id}"
+            if is_chinese
+            else f"[{index}/{len(candidates)}] Upload complete: {primitive}/{session_id}"
         )
         yield render()
-        return
-    add(
-        f"上传前校验通过：{len(pending_paths)} 个 pending Session。"
-        if is_chinese
-        else f"Pre-upload validation passed: {len(pending_paths)} pending sessions."
-    )
 
-    upload_result = yield from command_step(
-        ["modelscope-upload", str(staged_root)],
-        "上传到同一本地日期目录。" if is_chinese else "Upload under one local-date directory.",
+    add(
+        (
+            f"逐个上传完成：新上传 {completed}；已上传跳过 {len(remote_skipped)}；"
+            f"本地排除 {len(excluded)}。"
+        )
+        if is_chinese
+        else (
+            f"Sequential upload complete: {completed} new; {len(remote_skipped)} already "
+            f"uploaded; {len(excluded)} locally excluded."
+        )
     )
-    if upload_result.returncode == 0:
-        add("批量上传完成。" if is_chinese else "Batch upload complete.")
     yield render()
 
 

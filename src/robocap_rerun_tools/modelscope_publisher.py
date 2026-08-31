@@ -1508,6 +1508,16 @@ def _redacted_error(exc: Exception, token: str | None) -> str:
     return message.replace(token, "<redacted>") if token else message
 
 
+def _resolve_repository(settings: ModelScopeSettings, repo_id: str | None) -> str:
+    repository_value = (repo_id or settings.repo_id or "").strip()
+    if not repository_value:
+        raise ModelScopePublisherError(
+            f"Repository is not configured. Pass --repo-id or set {REPO_ID_KEY} "
+            f"in {settings.env_path}."
+        )
+    return validate_repo_id(repository_value)
+
+
 def verify_modelscope_auth(settings: ModelScopeSettings | None = None) -> str:
     resolved = settings or load_modelscope_settings()
     if not resolved.token:
@@ -1517,6 +1527,44 @@ def verify_modelscope_auth(settings: ModelScopeSettings | None = None) -> str:
     except Exception as exc:
         raise ModelScopePublisherError(
             f"ModelScope authentication failed: {_redacted_error(exc, resolved.token)}"
+        ) from exc
+
+
+def fetch_remote_session_keys(
+    repo_id: str | None = None,
+    *,
+    revision: str = "master",
+    settings: ModelScopeSettings | None = None,
+) -> frozenset[tuple[str, str]]:
+    resolved = settings or load_modelscope_settings()
+    if not resolved.token:
+        raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")
+    repository = _resolve_repository(resolved, repo_id)
+    target_revision = revision.strip() or "master"
+    try:
+        api = _hub_api(resolved)
+        if not api.repo_exists(repository, "dataset"):
+            raise ModelScopePublisherError(f"Dataset repository does not exist: {repository}.")
+        document = _download_remote_metadata(api, repository, target_revision)
+        entries = _read_metadata_document(document, f"remote {METADATA_NAME}")
+        keys: set[tuple[str, str]] = set()
+        for entry in entries:
+            try:
+                key = (
+                    validate_primitive_id(str(entry.get("primitive_id", ""))),
+                    validate_session_id(str(entry.get("session_id", ""))),
+                )
+            except ValueError as exc:
+                raise ModelScopePublisherError(
+                    f"Invalid remote {METADATA_NAME} identity: {exc}"
+                ) from exc
+            keys.add(key)
+        return frozenset(keys)
+    except ModelScopePublisherError:
+        raise
+    except Exception as exc:
+        raise ModelScopePublisherError(
+            f"ModelScope metadata lookup failed: {_redacted_error(exc, resolved.token)}"
         ) from exc
 
 
@@ -1538,12 +1586,7 @@ def upload_staged_dataset(
     resolved = settings or load_modelscope_settings()
     if not resolved.token:
         raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")
-    repository_value = (repo_id or resolved.repo_id or "").strip()
-    if not repository_value:
-        raise ModelScopePublisherError(
-            f"Repository is not configured. Pass --repo-id or set {REPO_ID_KEY} in {resolved.env_path}."
-        )
-    repository = validate_repo_id(repository_value)
+    repository = _resolve_repository(resolved, repo_id)
     target_revision = revision.strip() or "master"
     if visibility not in {"private", "internal", "public"}:
         raise ValueError("Visibility must be private, internal, or public.")
