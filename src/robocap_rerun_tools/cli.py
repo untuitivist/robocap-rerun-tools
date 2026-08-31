@@ -2062,7 +2062,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     modelscope_stage_parser = sub.add_parser(
         "modelscope-stage",
-        help="Prepare one session for a timestamped ModelScope upload batch.",
+        help="Prepare one session for a date-grouped ModelScope upload.",
     )
     modelscope_stage_parser.add_argument("session_dir", type=Path)
     modelscope_stage_parser.add_argument(
