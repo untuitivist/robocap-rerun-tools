@@ -49,18 +49,36 @@ class SegmentStatistic:
 class SessionStatistic:
     primitive_id: str
     session_dir: Path
-    duration_s: float
-    unchecked_or_problem_duration_s: float
+    unchecked_duration_s: float
+    frame_difference_duration_s: float
+    clean_duration_s: float
     segments: tuple[SegmentStatistic, ...]
     errors: tuple[str, ...]
+
+    @property
+    def duration_s(self) -> float:
+        return (
+            self.unchecked_duration_s
+            + self.frame_difference_duration_s
+            + self.clean_duration_s
+        )
 
 
 @dataclass(frozen=True)
 class PrimitiveStatistic:
     primitive_id: str
-    duration_s: float
-    unchecked_or_problem_duration_s: float
+    unchecked_duration_s: float
+    frame_difference_duration_s: float
+    clean_duration_s: float
     sessions: tuple[SessionStatistic, ...]
+
+    @property
+    def duration_s(self) -> float:
+        return (
+            self.unchecked_duration_s
+            + self.frame_difference_duration_s
+            + self.clean_duration_s
+        )
 
 
 def session_has_clean_frame_counts(session: SessionStatistic) -> bool:
@@ -223,8 +241,11 @@ def summarize_session(
 ) -> SessionStatistic:
     segments: list[SegmentStatistic] = []
     errors: list[str] = []
-    total_duration_s = 0.0
-    unchecked_or_problem_duration_s = 0.0
+    duration_by_status = {
+        "unchecked": 0.0,
+        "frame_difference": 0.0,
+        "clean": 0.0,
+    }
 
     references = discover_segment_references(session_dir)
     if not references:
@@ -232,8 +253,6 @@ def summarize_session(
 
     for reference in references:
         duration_s, duration_error = probe_video_duration(reference.video_path, ffprobe)
-        if duration_s is not None:
-            total_duration_s += duration_s
         if duration_error:
             errors.append(f"{reference.video_path.name}: {duration_error}")
 
@@ -260,8 +279,8 @@ def summarize_session(
                     status = "clean"
                     detail = ""
 
-        if status != "clean" and duration_s is not None:
-            unchecked_or_problem_duration_s += duration_s
+        if duration_s is not None:
+            duration_by_status[status] += duration_s
         if detail and status == "unchecked":
             errors.append(f"{reference.segment}: {detail}")
         segments.append(
@@ -279,8 +298,9 @@ def summarize_session(
     return SessionStatistic(
         primitive_id=infer_action_primitive(dataset_root, session_dir),
         session_dir=session_dir,
-        duration_s=total_duration_s,
-        unchecked_or_problem_duration_s=unchecked_or_problem_duration_s,
+        unchecked_duration_s=duration_by_status["unchecked"],
+        frame_difference_duration_s=duration_by_status["frame_difference"],
+        clean_duration_s=duration_by_status["clean"],
         segments=tuple(segments),
         errors=tuple(errors),
     )
@@ -304,10 +324,11 @@ def aggregate_by_primitive(
         rows.append(
             PrimitiveStatistic(
                 primitive_id=primitive_id,
-                duration_s=sum(item.duration_s for item in ordered),
-                unchecked_or_problem_duration_s=sum(
-                    item.unchecked_or_problem_duration_s for item in ordered
+                unchecked_duration_s=sum(item.unchecked_duration_s for item in ordered),
+                frame_difference_duration_s=sum(
+                    item.frame_difference_duration_s for item in ordered
                 ),
+                clean_duration_s=sum(item.clean_duration_s for item in ordered),
                 sessions=ordered,
             )
         )
@@ -355,22 +376,29 @@ def render_statistics_markdown(
 ) -> str:
     is_chinese = language == "中文"
     session_count = sum(len(item.sessions) for item in primitives)
-    total_duration_s = sum(item.duration_s for item in primitives)
-    problem_duration_s = sum(item.unchecked_or_problem_duration_s for item in primitives)
+    unchecked_duration_s = sum(item.unchecked_duration_s for item in primitives)
+    frame_difference_duration_s = sum(
+        item.frame_difference_duration_s for item in primitives
+    )
+    clean_duration_s = sum(item.clean_duration_s for item in primitives)
+    total_duration_s = unchecked_duration_s + frame_difference_duration_s + clean_duration_s
     if is_chinese:
         lines = [
             "## 数据集时长统计",
             "",
             f"- 根目录：`{dataset_root}`",
             f"- Session：**{session_count}**",
+            f"- 未检查时长：**{format_duration(unchecked_duration_s)}**",
+            f"- 差帧时长：**{format_duration(frame_difference_duration_s)}**",
+            f"- 无误时长：**{format_duration(clean_duration_s)}**",
             f"- 总时长：**{format_duration(total_duration_s)}**",
-            f"- 未检查/差帧时长：**{format_duration(problem_duration_s)}**",
             "",
             (
-                "| PXX | 未检查/差帧时长 | 总时长 | Session 数 | {Session: Session 时长} | "
+                "| PXX | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 | "
+                "{Session: Session 时长} | "
                 "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)} |"
             ),
-            "|---|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---|---|",
         ]
     else:
         lines = [
@@ -378,18 +406,21 @@ def render_statistics_markdown(
             "",
             f"- Root: `{dataset_root}`",
             f"- Sessions: **{session_count}**",
-            f"- Total duration: **{format_duration(total_duration_s)}**",
+            f"- Unchecked duration: **{format_duration(unchecked_duration_s)}**",
             (
-                "- Unchecked/frame-count-difference duration: "
-                f"**{format_duration(problem_duration_s)}**"
+                "- Frame-count-difference duration: "
+                f"**{format_duration(frame_difference_duration_s)}**"
             ),
+            f"- Error-free duration: **{format_duration(clean_duration_s)}**",
+            f"- Total duration: **{format_duration(total_duration_s)}**",
             "",
             (
-                "| PXX | Unchecked/frame-count-difference duration | Total duration | Sessions | "
-                "{Session: duration} | {Session: [anomalies](normal, mocap extra, mocap missing, "
+                "| PXX | Unchecked duration | Frame-count-difference duration | "
+                "Error-free duration | Total duration | Sessions | {Session: duration} | "
+                "{Session: [anomalies](normal, mocap extra, mocap missing, "
                 "third-person extra, third-person missing)} |"
             ),
-            "|---|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---|---|",
         ]
 
     for primitive in primitives:
@@ -426,7 +457,9 @@ def render_statistics_markdown(
             + " | ".join(
                 [
                     _markdown_cell(primitive_label),
-                    format_duration(primitive.unchecked_or_problem_duration_s),
+                    format_duration(primitive.unchecked_duration_s),
+                    format_duration(primitive.frame_difference_duration_s),
+                    format_duration(primitive.clean_duration_s),
                     format_duration(primitive.duration_s),
                     str(len(primitive.sessions)),
                     f"`{_markdown_cell(mapping)}`",
@@ -441,9 +474,11 @@ def render_statistics_markdown(
             [
                 "",
                 (
-                    "“未检查/差帧”只包含缺少或无法读取检查报告，以及帧数不满足 "
-                    "n:ratio*(n+1):(n+1) 的 Segment。时间戳 diff、推算丢帧、缺失时间戳和 "
-                    "frame_index 等其他问题不计入此时长。每个 Segment 只使用一条 Robocap "
+                    "三类时长互斥且覆盖全部可计时时长：未检查包含缺少、无法读取或帧数字段无效的"
+                    "检查报告；差帧包含帧数不满足 n:ratio*(n+1):(n+1) 的 Segment；无误包含"
+                    "检查报告有效且帧数关系一致的 Segment。因此未检查时长 + 差帧时长 + 无误时长 "
+                    "= 总时长。时间戳 diff、推算丢帧、缺失时间戳和 frame_index 等其他问题不改变"
+                    "这项帧数分类。每个 Segment 只使用一条 Robocap "
                     "参考视频计时。异常列表按每个 Segment 的实际帧数与期望帧数比较后，在 Session "
                     "内取并集；缺失或无效报告显示为“未检查”。"
                 ),
@@ -454,10 +489,13 @@ def render_statistics_markdown(
             [
                 "",
                 (
-                    "Unchecked/frame-count-difference duration only includes missing or unreadable "
-                    "reports and segments whose frame counts do not satisfy "
-                    "n:ratio*(n+1):(n+1). Other timestamp, inferred-drop, and frame-index findings "
-                    "are ignored. Each segment is timed from one Robocap reference video. The "
+                    "The three duration categories are mutually exclusive and cover all measurable "
+                    "duration. Unchecked means a missing, unreadable, or invalid inspection report; "
+                    "frame-count difference means n:ratio*(n+1):(n+1) is not satisfied; error-free "
+                    "means a valid report with matching frame counts. Therefore unchecked + "
+                    "frame-count difference + error-free = total. Other timestamp, inferred-drop, "
+                    "and frame-index findings do not change this frame-count classification. Each "
+                    "segment is timed from one Robocap reference video. The "
                     "anomaly list compares actual and expected frame counts per Segment, then "
                     "takes their union per Session; missing or invalid reports are unchecked."
                 ),

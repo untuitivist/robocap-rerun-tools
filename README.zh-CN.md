@@ -108,7 +108,7 @@ start_web.bat
 
 - 中文/英文切换
 - 检查帧率、漏帧和异常时间戳，并快捷打开独立 HTML 报告
-- 按 `PXX` 统计未检查/差帧时长、总时长、Session 数和逐 Session 帧数异常
+- 按 `PXX` 分别统计未检查、差帧、无误和总时长、Session 数及逐 Session 帧数异常
 - 默认压缩视频的数据打包
 - time/frame RRD 导出、offset 检查和 offset sweep
 - RRD Web Viewer
@@ -146,11 +146,12 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 
 “统计 / Statistics”页会扫描根目录下识别到的全部 Session，并从 Session 路径或直属 `mocap*`
 目录中的唯一 `PXX` 归类。每个 Segment 只选择一个 Robocap 参考视频计算时长，不会把多摄像头重复
-相加。默认会按选择的 8/4 倍比例串行补做缺失检查，再输出每个动作的未检查/差帧时长、总时长、
-Session 数、`{Session: Session 时长}` 和逐 Session 异常列表。异常列表区分正常、mocap 多帧/少帧、
-第三人称多帧/少帧，并合并同一 Session 多个 Segment 的类别。未检查/差帧时长只包含缺失或无法读取
-报告，以及帧数不满足 `n:ratio*(n+1):(n+1)` 的 Segment；时间戳 diff、推算丢帧、缺失时间戳和
-frame_index 等其他问题均不计入此时长。
+相加。默认会按选择的 8/4 倍比例串行补做缺失检查，再输出每个动作的未检查时长、差帧时长、无误
+时长、总时长、Session 数、`{Session: Session 时长}` 和逐 Session 异常列表。三个时长类别互斥，且
+`未检查时长 + 差帧时长 + 无误时长 = 总时长`。未检查表示报告缺失、无法读取或帧数字段无效；差帧
+表示帧数不满足 `n:ratio*(n+1):(n+1)`；无误表示报告有效且帧数关系一致。异常列表区分正常、mocap
+多帧/少帧、第三人称多帧/少帧，并合并同一 Session 多个 Segment 的类别。时间戳 diff、推算丢帧、
+缺失时间戳和 frame_index 等其他问题不改变这项帧数分类。
 
 同一页可批量准备并上传 clean Session。点击时会重新筛选，必要时先补报告；只有全部 Segment 都满足
 上述帧数关系的 Session 才会进入上传。批量流程固定使用压缩的完整 Session，默认选择

@@ -94,7 +94,7 @@ def test_report_frame_count_difference_ignores_other_inspection_issues() -> None
     assert statistics.report_has_frame_count_difference({**clean, "referenceFrames": None}) is True
 
 
-def test_session_statistics_group_duration_and_unchecked_or_problem_time(
+def test_session_statistics_group_duration_categories_sum_to_total(
     tmp_path: Path, monkeypatch
 ) -> None:
     clean_session = tmp_path / "session-clean"
@@ -119,9 +119,19 @@ def test_session_statistics_group_duration_and_unchecked_or_problem_time(
     ]
     grouped = statistics.aggregate_by_primitive(rows)
     markdown = statistics.render_statistics_markdown(tmp_path, grouped, language="中文")
+    english = statistics.render_statistics_markdown(tmp_path, grouped, language="English")
 
     assert [item.primitive_id for item in grouped] == ["P01", "P02", "P03"]
-    assert [item.unchecked_or_problem_duration_s for item in grouped] == [0.0, 10.0, 10.0]
+    assert [item.unchecked_duration_s for item in grouped] == [0.0, 0.0, 10.0]
+    assert [item.frame_difference_duration_s for item in grouped] == [0.0, 10.0, 0.0]
+    assert [item.clean_duration_s for item in grouped] == [10.0, 0.0, 0.0]
+    assert all(
+        item.duration_s
+        == item.unchecked_duration_s
+        + item.frame_difference_duration_s
+        + item.clean_duration_s
+        for item in grouped
+    )
     assert statistics.session_has_clean_frame_counts(rows[0]) is True
     assert statistics.session_has_clean_frame_counts(rows[1]) is False
     assert statistics.session_has_clean_frame_counts(rows[2]) is False
@@ -129,7 +139,14 @@ def test_session_statistics_group_duration_and_unchecked_or_problem_time(
     assert statistics.session_frame_anomaly_labels(rows[1], language="English") == (
         "mocap missing",
     )
-    assert "未检查/差帧时长" in markdown
+    assert "| PXX | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 |" in markdown
+    assert "- 未检查时长：**00:00:10.000**" in markdown
+    assert "- 差帧时长：**00:00:10.000**" in markdown
+    assert "- 无误时长：**00:00:10.000**" in markdown
+    assert "未检查时长 + 差帧时长 + 无误时长 = 总时长" in markdown
+    assert "Unchecked duration" in english
+    assert "Frame-count-difference duration" in english
+    assert "Error-free duration" in english
     assert "00:00:30.000" in markdown
     assert '"session-clean": "00:00:10.000"' in markdown
     assert "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown

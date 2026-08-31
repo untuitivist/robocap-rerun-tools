@@ -128,11 +128,14 @@ The `Statistics` tab scans every detected Session under the collection root and 
 the unique `PXX` token found in the Session path or direct `mocap*` directory. Each Segment is timed
 from one Robocap reference video, so multiple cameras are never added repeatedly. Missing inspection
 reports can be created serially with the selected 8/4 Mocap ratio before aggregation. The result
-shows unchecked/frame-count-difference duration, total duration, Session count, a
+separates unchecked, frame-count-difference, and error-free duration, then shows total duration,
+Session count, a
 `{Session: duration}` map, and a per-Session frame-anomaly list for each action. The anomaly list
 distinguishes normal, Mocap extra/missing frames, and third-person extra/missing frames; categories
-from multiple Segments are combined. This duration only includes missing/unreadable reports and frame
-counts that do not satisfy `n:ratio*(n+1):(n+1)`. Timestamp diff findings, inferred dropped frames,
+from multiple Segments are combined. The three duration categories are mutually exclusive and sum
+to total duration. Unchecked covers missing/unreadable/invalid reports; frame-count difference covers
+counts that do not satisfy `n:ratio*(n+1):(n+1)`; error-free covers valid reports whose counts match.
+Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
 The same tab can batch-prepare and upload only clean Sessions. It recalculates eligibility at click
