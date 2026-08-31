@@ -142,9 +142,11 @@ The same tab uploads clean Sessions one by one. It first reads the target reposi
 `metadata.jsonl`; matching `(primitive_id, session_id)` entries are skipped before missing-report
 generation, staging, or video processing. Each remaining Session must satisfy the frame-count
 relation and completes prepare, clean validation, and upload in an isolated staging root before the
-next starts. A failure stops the sequence without rolling back completed uploads and keeps the
-current staging data for retry. The flow uses compressed full-session video, selects BVH/CSV/TRC/MP4
-files except paths containing `unnamed`, includes no RRD, and reads the repository from `.env`.
+next starts. An upload failure is retried three times after the initial attempt; after four failed
+attempts the Session is skipped and processing continues. Preparation or clean-validation failure
+also skips only the current Session. Completed uploads are not rolled back, and failed staging data
+is retained for retry. The flow uses compressed full-session video, selects BVH/CSV/TRC/MP4 files
+except paths containing `unnamed`, includes no RRD, and reads the repository from `.env`.
 Sessions without an unambiguous `PXX` (or an explicit custom action directory in an
 `EgoMotionActions` hierarchy) are excluded.
 

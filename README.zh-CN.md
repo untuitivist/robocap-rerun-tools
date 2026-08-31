@@ -155,9 +155,10 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 
 同一页可逐个上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，按
 `(primitive_id, session_id)` 跳过已上传项；这些项不会补报告、暂存或处理视频。其余 Session 必须满足
-上述帧数关系，并在独立暂存根目录中依次完成准备、clean 校验和上传后才开始下一条。任一步失败都会
-停止后续处理，不回滚已完成上传，并保留当前暂存数据供重试。该流程固定使用压缩的完整 Session，默认
-选择 BVH/CSV/TRC/MP4 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
+上述帧数关系，并在独立暂存根目录中依次完成准备、clean 校验和上传后才开始下一条。上传首次失败后
+会再重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或 clean 校验失败也只跳过当前 Session，
+不停止后续队列，且不回滚已完成上传。该流程固定使用压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4
+并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
 `PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会排除。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer

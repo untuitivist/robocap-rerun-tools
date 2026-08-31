@@ -146,6 +146,13 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
 
     def fake_stream(args):
         commands.append(list(args))
+        if args[0] == "modelscope-upload" and str(args[1]).endswith("session-clean-one"):
+            yield "simulated upload failure"
+            return web_app.StreamCommandResult(
+                1,
+                "simulated upload failure",
+                "simulated upload failure\nCommand failed with exit code 1.",
+            )
         yield "Done."
         return web_app.StreamCommandResult(0, "Done.", "Done.")
 
@@ -159,6 +166,9 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
         "modelscope-auth",
         "modelscope-stage",
         "modelscope-upload",
+        "modelscope-upload",
+        "modelscope-upload",
+        "modelscope-upload",
         "modelscope-stage",
         "modelscope-upload",
     ]
@@ -167,7 +177,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
         tmp_path.resolve() / "_modelscope_dataset" / "sequential" / "P04" / "session-clean-two",
     ]
     for stage, session, primitive, staged_root in zip(
-        (commands[1], commands[3]),
+        (commands[1], commands[6]),
         (clean_one, clean_two),
         ("P03", "P04"),
         expected_roots,
@@ -181,15 +191,19 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
             str(Path("mocap") / "body.trc"),
             str(Path("mocap") / "third.mp4"),
         }
-    assert commands[2] == ["modelscope-upload", str(expected_roots[0])]
-    assert commands[4] == ["modelscope-upload", str(expected_roots[1])]
+    assert commands[2:6] == [
+        ["modelscope-upload", str(expected_roots[0])],
+    ] * 4
+    assert commands[7] == ["modelscope-upload", str(expected_roots[1])]
     assert validated_roots == expected_roots
     assert uploaded not in summarized
     assert set(summarized) == {problem.resolve(), clean_one.resolve(), clean_two.resolve()}
     assert "已上传跳过：1" in output
     assert "P01/session-uploaded" in output
     assert "session-problem: unchecked or frame-count difference" in output
-    assert "逐个上传完成：新上传 2；已上传跳过 1；本地排除 1" in output
+    assert "开始第 3/3 次重试" in output
+    assert "共尝试 4 次仍失败，跳过 P03/session-clean-one" in output
+    assert "逐个处理完成：新上传 1；失败跳过 1；已上传跳过 1；本地排除 1" in output
 
 
 def test_batch_primitive_supports_explicit_custom_action_hierarchy(tmp_path) -> None:

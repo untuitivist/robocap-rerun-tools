@@ -28,6 +28,7 @@ from robocap_rerun_tools.session_layout import discover_mocap_directories
 
 DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
 MOCAP_PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d{2})(?![A-Z0-9])", re.IGNORECASE)
+SEQUENTIAL_UPLOAD_RETRIES = 3
 
 EN_DOC = """# Robocap Rerun Tools
 
@@ -143,7 +144,9 @@ The Statistics tab also uploads clean Sessions sequentially. It reads remote `me
 and skips matching `(primitive_id, session_id)` entries before inspection or staging. Each remaining
 Session must satisfy the exact frame-count relation, uses the curated default Mocap files and no RRD,
 and completes prepare, clean validation, and upload in an isolated staging root before the next one.
-A failure stops the sequence without rolling back completed uploads.
+An upload failure is retried three times after the initial attempt. After four failed attempts, that
+Session is skipped and processing continues; preparation and clean-validation failures also skip only
+the current Session. Completed uploads are not rolled back.
 When aligned-intersection staging is enabled, its ratio and Offset are prefilled from the RRD
 Export controls and continue to follow changes made there. Edit the ModelScope copies only to
 override alignment for that staging operation.
@@ -247,7 +250,8 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 “统计”页还提供 clean Session 逐个上传。它先读取远端 `metadata.jsonl`，按
 `(primitive_id, session_id)` 跳过已上传数据，且不会对这些数据补检查或暂存。其余 Session 必须满足
 精确帧数关系，使用默认 Mocap 文件且不带 RRD，并在独立暂存根目录中依次完成准备、clean 校验和上传
-后再处理下一条。任一步失败都会停止后续处理，但不回滚已经完成的上传。
+后再处理下一条。上传首次失败后会再重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或
+clean 校验失败也只跳过当前 Session，不会停止后续队列；已经完成的上传不会回滚。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
 """
@@ -270,7 +274,8 @@ LANGUAGE_PACKS = {
         "statistics_batch_help": (
             "Sequential upload reads remote metadata first and skips existing action/Session "
             "keys. Each remaining Session must satisfy `n:ratio*(n+1):n+1`, then completes "
-            "prepare, validation, and upload before the next starts. It uses compressed full-session "
+            "prepare, validation, and upload before the next starts. Upload failures retry three "
+            "times, then skip that Session and continue. It uses compressed full-session "
             "video, selects BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads `.env`."
         ),
         "statistics_batch_upload": "Upload new clean Sessions one by one",
@@ -374,7 +379,8 @@ LANGUAGE_PACKS = {
         "statistics_button": "统计根目录",
         "statistics_batch_help": (
             "逐个上传先读取远端 metadata.jsonl，按动作与 Session ID 跳过已上传数据。其余 Session "
-            "必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理下一条。固定使用"
+            "必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理下一条。上传失败"
+            "会重试 3 次，共 4 次仍失败则跳过并继续。固定使用"
             "压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；读取 `.env`。"
         ),
         "statistics_batch_upload": "逐个上传未上传的无差帧 Session",
@@ -2079,6 +2085,7 @@ def bulk_upload_clean_modelscope_sessions(
         return
 
     completed = 0
+    failed_items = 0
     for index, (session, primitive, session_id, mocap_files) in enumerate(
         candidates, start=1
     ):
@@ -2103,17 +2110,18 @@ def bulk_upload_clean_modelscope_sessions(
         )
         stage_result = yield from command_step(args, label)
         if stage_result.returncode != 0:
+            failed_items += 1
             add(
-                f"逐个上传已停止；新上传完成 {completed}/{len(candidates)}。"
-                "当前 Session 的暂存数据已保留。"
+                f"[{index}/{len(candidates)}] 准备失败，跳过 {primitive}/{session_id}；"
+                "暂存数据已保留，继续下一条。"
                 if is_chinese
                 else (
-                    f"Sequential upload stopped; completed {completed}/{len(candidates)} new "
-                    "uploads. The current Session's staging data was kept."
+                    f"[{index}/{len(candidates)}] Preparation failed; skipped "
+                    f"{primitive}/{session_id}. Staging data was kept; continuing."
                 )
             )
             yield render()
-            return
+            continue
 
         try:
             pending_paths = validate_pending_modelscope_frame_counts(staged_root)
@@ -2123,48 +2131,69 @@ def bulk_upload_clean_modelscope_sessions(
                     f"found {len(pending_paths)}."
                 )
         except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+            failed_items += 1
             add(
                 f"[{index}/{len(candidates)}] 上传前 clean 校验失败：{exc}"
                 if is_chinese
                 else f"[{index}/{len(candidates)}] Pre-upload clean validation failed: {exc}"
             )
             add(
-                f"逐个上传已停止；新上传完成 {completed}/{len(candidates)}。"
-                "当前 Session 的暂存数据已保留。"
+                f"[{index}/{len(candidates)}] 跳过 {primitive}/{session_id}；"
+                "暂存数据已保留，继续下一条。"
                 if is_chinese
                 else (
-                    f"Sequential upload stopped; completed {completed}/{len(candidates)} new "
-                    "uploads. The current Session's staging data was kept."
+                    f"[{index}/{len(candidates)}] Skipped {primitive}/{session_id}. "
+                    "Staging data was kept; continuing."
                 )
             )
             yield render()
-            return
+            continue
         add(
             f"[{index}/{len(candidates)}] 上传前校验通过：1 个 pending Session。"
             if is_chinese
             else f"[{index}/{len(candidates)}] Pre-upload validation passed: 1 pending Session."
         )
 
-        upload_result = yield from command_step(
-            ["modelscope-upload", str(staged_root)],
-            (
-                f"[{index}/{len(candidates)}] 上传：{primitive}/{session_id}"
-                if is_chinese
-                else f"[{index}/{len(candidates)}] Upload: {primitive}/{session_id}"
-            ),
-        )
+        upload_attempts = SEQUENTIAL_UPLOAD_RETRIES + 1
+        for attempt in range(1, upload_attempts + 1):
+            upload_result = yield from command_step(
+                ["modelscope-upload", str(staged_root)],
+                (
+                    f"[{index}/{len(candidates)}] 上传尝试 {attempt}/{upload_attempts}："
+                    f"{primitive}/{session_id}"
+                    if is_chinese
+                    else (
+                        f"[{index}/{len(candidates)}] Upload attempt {attempt}/{upload_attempts}: "
+                        f"{primitive}/{session_id}"
+                    )
+                ),
+            )
+            if upload_result.returncode == 0:
+                break
+            if attempt <= SEQUENTIAL_UPLOAD_RETRIES:
+                add(
+                    f"[{index}/{len(candidates)}] 上传失败；开始第 "
+                    f"{attempt}/{SEQUENTIAL_UPLOAD_RETRIES} 次重试。"
+                    if is_chinese
+                    else (
+                        f"[{index}/{len(candidates)}] Upload failed; starting retry "
+                        f"{attempt}/{SEQUENTIAL_UPLOAD_RETRIES}."
+                    )
+                )
+                yield render()
         if upload_result.returncode != 0:
+            failed_items += 1
             add(
-                f"逐个上传已停止；新上传完成 {completed}/{len(candidates)}。"
-                "当前 Session 的暂存数据已保留。"
+                f"[{index}/{len(candidates)}] 共尝试 {upload_attempts} 次仍失败，跳过 "
+                f"{primitive}/{session_id}；暂存数据已保留，继续下一条。"
                 if is_chinese
                 else (
-                    f"Sequential upload stopped; completed {completed}/{len(candidates)} new "
-                    "uploads. The current Session's staging data was kept."
+                    f"[{index}/{len(candidates)}] Upload failed after {upload_attempts} attempts; "
+                    f"skipped {primitive}/{session_id}. Staging data was kept; continuing."
                 )
             )
             yield render()
-            return
+            continue
         completed += 1
         add(
             f"[{index}/{len(candidates)}] 上传完成：{primitive}/{session_id}"
@@ -2175,13 +2204,13 @@ def bulk_upload_clean_modelscope_sessions(
 
     add(
         (
-            f"逐个上传完成：新上传 {completed}；已上传跳过 {len(remote_skipped)}；"
-            f"本地排除 {len(excluded)}。"
+            f"逐个处理完成：新上传 {completed}；失败跳过 {failed_items}；"
+            f"已上传跳过 {len(remote_skipped)}；本地排除 {len(excluded)}。"
         )
         if is_chinese
         else (
-            f"Sequential upload complete: {completed} new; {len(remote_skipped)} already "
-            f"uploaded; {len(excluded)} locally excluded."
+            f"Sequential processing complete: {completed} new; {failed_items} failed and "
+            f"skipped; {len(remote_skipped)} already uploaded; {len(excluded)} locally excluded."
         )
     )
     yield render()
