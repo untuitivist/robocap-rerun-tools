@@ -18,6 +18,12 @@ ROBOCAP_VIDEO_PATTERN = re.compile(
     r"^robocap_(?P<segment>.+?)_video_(?P<camera>.+)\.mp4$", re.IGNORECASE
 )
 UNASSIGNED_PRIMITIVE = "UNASSIGNED"
+FRAME_ANOMALY_ORDER = (
+    "mocap_extra",
+    "mocap_missing",
+    "third_person_extra",
+    "third_person_missing",
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,7 @@ class SegmentStatistic:
     duration_s: float | None
     status: str
     detail: str = ""
+    frame_anomalies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -182,17 +189,31 @@ def _nonnegative_integer(value: object) -> int | None:
     return int(number)
 
 
-def report_has_frame_count_difference(payload: dict[str, object]) -> bool:
+def classify_frame_count_anomalies(payload: dict[str, object]) -> tuple[str, ...] | None:
     reference_frames = _nonnegative_integer(payload.get("referenceFrames"))
     mocap_frames = _nonnegative_integer(payload.get("mocapFrames"))
     third_frames = _nonnegative_integer(payload.get("thirdFrames"))
     ratio = _nonnegative_integer(payload.get("ratio"))
     if None in (reference_frames, mocap_frames, third_frames) or ratio not in {4, 8}:
-        return True
-    return (
-        mocap_frames != ratio * (reference_frames + 1)
-        or third_frames != reference_frames + 1
-    )
+        return None
+
+    expected_mocap_frames = ratio * (reference_frames + 1)
+    expected_third_frames = reference_frames + 1
+    anomalies: list[str] = []
+    if mocap_frames > expected_mocap_frames:
+        anomalies.append("mocap_extra")
+    elif mocap_frames < expected_mocap_frames:
+        anomalies.append("mocap_missing")
+    if third_frames > expected_third_frames:
+        anomalies.append("third_person_extra")
+    elif third_frames < expected_third_frames:
+        anomalies.append("third_person_missing")
+    return tuple(anomalies)
+
+
+def report_has_frame_count_difference(payload: dict[str, object]) -> bool:
+    anomalies = classify_frame_count_anomalies(payload)
+    return anomalies is None or bool(anomalies)
 
 
 def summarize_session(
@@ -216,6 +237,7 @@ def summarize_session(
         if duration_error:
             errors.append(f"{reference.video_path.name}: {duration_error}")
 
+        frame_anomalies: tuple[str, ...] = ()
         if not reference.report_path.is_file():
             status = "unchecked"
             detail = "inspection report is missing"
@@ -226,16 +248,17 @@ def summarize_session(
                 status = "unchecked"
                 detail = f"inspection report is unreadable: {exc}"
             else:
-                status = (
-                    "frame_difference"
-                    if report_has_frame_count_difference(payload)
-                    else "clean"
-                )
-                detail = (
-                    "frame counts do not match n:ratio*(n+1):n+1"
-                    if status != "clean"
-                    else ""
-                )
+                classified = classify_frame_count_anomalies(payload)
+                if classified is None:
+                    status = "unchecked"
+                    detail = "inspection report has invalid frame-count fields"
+                elif classified:
+                    status = "frame_difference"
+                    detail = "frame counts do not match n:ratio*(n+1):n+1"
+                    frame_anomalies = classified
+                else:
+                    status = "clean"
+                    detail = ""
 
         if status != "clean" and duration_s is not None:
             unchecked_or_problem_duration_s += duration_s
@@ -249,6 +272,7 @@ def summarize_session(
                 duration_s=duration_s,
                 status=status,
                 detail=detail,
+                frame_anomalies=frame_anomalies,
             )
         )
 
@@ -302,6 +326,27 @@ def _markdown_cell(value: str) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
 
 
+def session_frame_anomaly_labels(
+    session: SessionStatistic,
+    *,
+    language: str,
+) -> tuple[str, ...]:
+    is_chinese = language == "中文"
+    labels = {
+        "mocap_extra": "mocap多帧" if is_chinese else "mocap extra",
+        "mocap_missing": "mocap少帧" if is_chinese else "mocap missing",
+        "third_person_extra": "第三人称多帧" if is_chinese else "third-person extra",
+        "third_person_missing": "第三人称少帧" if is_chinese else "third-person missing",
+    }
+    anomaly_codes = {anomaly for segment in session.segments for anomaly in segment.frame_anomalies}
+    values = [labels[anomaly] for anomaly in FRAME_ANOMALY_ORDER if anomaly in anomaly_codes]
+    if not session.segments or any(segment.status == "unchecked" for segment in session.segments):
+        values.insert(0, "未检查" if is_chinese else "unchecked")
+    if not values:
+        values.append("正常" if is_chinese else "normal")
+    return tuple(values)
+
+
 def render_statistics_markdown(
     dataset_root: Path,
     primitives: tuple[PrimitiveStatistic, ...],
@@ -321,8 +366,11 @@ def render_statistics_markdown(
             f"- 总时长：**{format_duration(total_duration_s)}**",
             f"- 未检查/差帧时长：**{format_duration(problem_duration_s)}**",
             "",
-            "| PXX | 未检查/差帧时长 | 总时长 | Session 数 | {Session: Session 时长} |",
-            "|---|---:|---:|---:|---|",
+            (
+                "| PXX | 未检查/差帧时长 | 总时长 | Session 数 | {Session: Session 时长} | "
+                "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)} |"
+            ),
+            "|---|---:|---:|---:|---|---|",
         ]
     else:
         lines = [
@@ -338,9 +386,10 @@ def render_statistics_markdown(
             "",
             (
                 "| PXX | Unchecked/frame-count-difference duration | Total duration | Sessions | "
-                "{Session: duration} |"
+                "{Session: duration} | {Session: [anomalies](normal, mocap extra, mocap missing, "
+                "third-person extra, third-person missing)} |"
             ),
-            "|---|---:|---:|---:|---|",
+            "|---|---:|---:|---:|---|---|",
         ]
 
     for primitive in primitives:
@@ -354,6 +403,19 @@ def render_statistics_markdown(
             for item in primitive.sessions
         }
         mapping = json.dumps(session_durations, ensure_ascii=False, separators=(", ", ": "))
+        session_anomalies = {
+            (
+                item.session_dir.name
+                if name_counts[item.session_dir.name] == 1
+                else item.session_dir.as_posix()
+            ): list(session_frame_anomaly_labels(item, language=language))
+            for item in primitive.sessions
+        }
+        anomaly_mapping = json.dumps(
+            session_anomalies,
+            ensure_ascii=False,
+            separators=(", ", ": "),
+        )
         primitive_label = (
             "未分类"
             if is_chinese and primitive.primitive_id == UNASSIGNED_PRIMITIVE
@@ -368,6 +430,7 @@ def render_statistics_markdown(
                     format_duration(primitive.duration_s),
                     str(len(primitive.sessions)),
                     f"`{_markdown_cell(mapping)}`",
+                    f"`{_markdown_cell(anomaly_mapping)}`",
                 ]
             )
             + " |"
@@ -381,7 +444,8 @@ def render_statistics_markdown(
                     "“未检查/差帧”只包含缺少或无法读取检查报告，以及帧数不满足 "
                     "n:ratio*(n+1):(n+1) 的 Segment。时间戳 diff、推算丢帧、缺失时间戳和 "
                     "frame_index 等其他问题不计入此时长。每个 Segment 只使用一条 Robocap "
-                    "参考视频计时。"
+                    "参考视频计时。异常列表按每个 Segment 的实际帧数与期望帧数比较后，在 Session "
+                    "内取并集；缺失或无效报告显示为“未检查”。"
                 ),
             ]
         )
@@ -393,7 +457,9 @@ def render_statistics_markdown(
                     "Unchecked/frame-count-difference duration only includes missing or unreadable "
                     "reports and segments whose frame counts do not satisfy "
                     "n:ratio*(n+1):(n+1). Other timestamp, inferred-drop, and frame-index findings "
-                    "are ignored. Each segment is timed from one Robocap reference video."
+                    "are ignored. Each segment is timed from one Robocap reference video. The "
+                    "anomaly list compares actual and expected frame counts per Segment, then "
+                    "takes their union per Session; missing or invalid reports are unchecked."
                 ),
             ]
         )
