@@ -1553,6 +1553,14 @@ def available_tcp_port() -> int:
         return int(probe.getsockname()[1])
 
 
+def resolve_web_server_port(port: int | None) -> int:
+    if port in (None, 0):
+        return available_tcp_port()
+    if port < 1 or port > 65535:
+        raise ValueError(f"Web server port must be from 0 to 65535: {port}")
+    return port
+
+
 def choose_web_viewer_port(viewer_port: object) -> tuple[int, str]:
     try:
         port = normalize_offset(viewer_port)
@@ -3223,7 +3231,7 @@ def main(args: argparse.Namespace) -> int:
     app = build_app()
     launch_options: dict[str, object] = {
         "server_name": args.host,
-        "server_port": args.port,
+        "server_port": resolve_web_server_port(args.port),
         "inbrowser": args.open,
     }
     if "css" in inspect.signature(app.launch).parameters:

@@ -64,6 +64,46 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "仓库不存在时创建" not in config
 
 
+def test_web_main_selects_an_available_system_port(monkeypatch) -> None:
+    from robocap_rerun_tools import modelscope_publisher
+
+    launch_options = {}
+
+    class FakeApp:
+        def launch(self, server_name=None, server_port=None, inbrowser=False):
+            launch_options.update(
+                server_name=server_name,
+                server_port=server_port,
+                inbrowser=inbrowser,
+            )
+
+    monkeypatch.setattr(web_app, "ensure_localhost_no_proxy", lambda: None)
+    monkeypatch.setattr(modelscope_publisher, "ensure_env_file", lambda: None)
+    monkeypatch.setattr(web_app, "available_tcp_port", lambda: 49160)
+    monkeypatch.setattr(web_app, "build_app", FakeApp)
+
+    result = web_app.main(SimpleNamespace(host="127.0.0.1", port=0, open=True))
+
+    assert result == 0
+    assert launch_options == {
+        "server_name": "127.0.0.1",
+        "server_port": 49160,
+        "inbrowser": True,
+    }
+
+
+def test_web_server_port_rejects_invalid_values(monkeypatch) -> None:
+    monkeypatch.setattr(web_app, "available_tcp_port", lambda: 49160)
+
+    assert web_app.resolve_web_server_port(None) == 49160
+    assert web_app.resolve_web_server_port(0) == 49160
+    assert web_app.resolve_web_server_port(18080) == 18080
+    with pytest.raises(ValueError, match="0 to 65535"):
+        web_app.resolve_web_server_port(-1)
+    with pytest.raises(ValueError, match="0 to 65535"):
+        web_app.resolve_web_server_port(65536)
+
+
 def test_statistics_can_create_missing_report(tmp_path, monkeypatch) -> None:
     from robocap_rerun_tools import dataset_statistics
 

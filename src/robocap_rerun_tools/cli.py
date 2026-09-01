@@ -2201,7 +2201,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     web_parser = sub.add_parser("web", help="Start a local browser UI.")
     web_parser.add_argument("--host", default="127.0.0.1")
-    web_parser.add_argument("--port", type=int, default=7860)
+    web_parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Web server port. Use 0 (default) to select an available port automatically.",
+    )
     web_parser.add_argument("--open", action="store_true", help="Open the browser automatically.")
     web_parser.set_defaults(func=command_web)
     return parser

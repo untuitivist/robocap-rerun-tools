@@ -423,11 +423,12 @@ def test_modelscope_auth_reports_missing_token_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_web_parser_defaults_to_localhost() -> None:
+def test_web_parser_defaults_to_localhost_and_automatic_port() -> None:
     parser = build_parser()
     args = parser.parse_args(["web"])
     assert args.host == "127.0.0.1"
-    assert args.port == 7860
+    assert args.port == 0
+    assert parser.parse_args(["web", "--port", "18080"]).port == 18080
 
 
 def test_package_discovery_excludes_artifacts_by_default(tmp_path: Path) -> None:

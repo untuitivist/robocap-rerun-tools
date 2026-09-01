@@ -53,8 +53,12 @@ start_web.bat
 ```
 
 `start_web.bat` runs `uv sync --extra web`, creates `.venv`, downloads a compatible Python 3.11+
-interpreter when needed, installs all Python dependencies, and opens the Web UI at
-`http://127.0.0.1:7860`. The first sync also downloads the approximately 87 MiB
+interpreter when needed, installs all Python dependencies, and opens the Web UI on an automatically
+selected available localhost port. Each launcher instance selects its own port, so multiple Web UIs
+can run at the same time. The actual URL is printed in that instance's console and opened in the
+default browser. Automatic selection asks the operating system for a free ephemeral port rather than
+scanning Gradio's fixed `7860-7959` range. Pass `robocap-rerun web --port <port>` only when a fixed
+port is required. The first sync also downloads the approximately 87 MiB
 `ffmpeg-binaries-compat` wheel containing FFmpeg and FFprobe. No system Python, FFmpeg installation,
 administrator access, virtual-environment activation, or `PATH` editing is required.
 
