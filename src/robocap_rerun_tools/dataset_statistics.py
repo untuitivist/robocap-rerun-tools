@@ -372,6 +372,11 @@ def format_duration(duration_s: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
+def format_error_free_ratio(clean_duration_s: float, total_duration_s: float) -> str:
+    ratio = clean_duration_s / total_duration_s if total_duration_s > 0 else 0.0
+    return f"{ratio:.2%}"
+
+
 def _markdown_cell(value: str) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
 
@@ -423,11 +428,12 @@ def render_statistics_markdown(
             f"- 总时长：**{format_duration(total_duration_s)}**",
             "",
             (
-                "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 | "
+                "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
+                "Session 数 | "
                 "{Session: Session 时长} | "
                 "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)} |"
             ),
-            "|---|---:|---:|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---:|---|---|",
         ]
     else:
         lines = [
@@ -445,11 +451,12 @@ def render_statistics_markdown(
             "",
             (
                 "| Primitive | Unchecked duration | Frame-count-difference duration | "
-                "Error-free duration | Total duration | Sessions | {Session: duration} | "
+                "Error-free duration | Total duration | Error-free ratio | Sessions | "
+                "{Session: duration} | "
                 "{Session: [anomalies](normal, mocap extra, mocap missing, "
                 "third-person extra, third-person missing)} |"
             ),
-            "|---|---:|---:|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---:|---|---|",
         ]
 
     for primitive in primitives:
@@ -490,6 +497,10 @@ def render_statistics_markdown(
                     format_duration(primitive.frame_difference_duration_s),
                     format_duration(primitive.clean_duration_s),
                     format_duration(primitive.duration_s),
+                    format_error_free_ratio(
+                        primitive.clean_duration_s,
+                        primitive.duration_s,
+                    ),
                     str(len(primitive.sessions)),
                     f"`{_markdown_cell(mapping)}`",
                     f"`{_markdown_cell(anomaly_mapping)}`",

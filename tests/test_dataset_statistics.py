@@ -153,7 +153,10 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert statistics.session_frame_anomaly_labels(rows[1], language="English") == (
         "mocap missing",
     )
-    assert "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 |" in markdown
+    assert (
+        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | Session 数 |"
+        in markdown
+    )
     assert "- 未检查时长：**00:00:10.000**" in markdown
     assert "- 差帧时长：**00:00:10.000**" in markdown
     assert "- 无误时长：**00:00:10.000**" in markdown
@@ -161,9 +164,23 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert "Unchecked duration" in english
     assert "Frame-count-difference duration" in english
     assert "Error-free duration" in english
+    assert "Error-free ratio" in english
     assert "00:00:30.000" in markdown
+    assert (
+        "| P01 | 00:00:00.000 | 00:00:00.000 | 00:00:10.000 | 00:00:10.000 | "
+        "100.00% | 1 |" in markdown
+    )
+    assert (
+        "| P02 | 00:00:00.000 | 00:00:10.000 | 00:00:00.000 | 00:00:10.000 | "
+        "0.00% | 1 |" in markdown
+    )
     assert '"session-clean": "00:00:10.000"' in markdown
     assert "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown
     assert '"session-clean": ["正常"]' in markdown
     assert '"session-problem": ["mocap少帧"]' in markdown
     assert '"session-missing": ["未检查"]' in markdown
+
+
+def test_format_error_free_ratio_handles_zero_total() -> None:
+    assert statistics.format_error_free_ratio(3.0, 4.0) == "75.00%"
+    assert statistics.format_error_free_ratio(0.0, 0.0) == "0.00%"
