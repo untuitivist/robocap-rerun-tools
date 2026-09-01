@@ -131,6 +131,154 @@ def test_third_person_video_start_follows_frame_offset() -> None:
     assert negative.third_person_start_ns == 500
 
 
+def test_third_person_frame_timeline_uses_source_frames_despite_pts_jitter() -> None:
+    reference_timestamps = np.arange(20, dtype=np.int64) * 100
+    timeline = exporter.TimelineContext(
+        alignment_mode="frame",
+        reference_timestamps_ns=reference_timestamps,
+        frame_alignment=FrameAlignment(ratio=8.0, video_frame_offset=5),
+    )
+    source_frames = np.arange(10_000, dtype=np.int64)
+
+    video_frame_indices = timeline.frames_from_video_frames(source_frames)
+    frame_indices = timeline.frames_from_third_person_frames(source_frames)
+
+    np.testing.assert_array_equal(video_frame_indices, source_frames * 8)
+    np.testing.assert_array_equal(frame_indices, source_frames * 8 - 40)
+
+
+def test_third_person_frame_timeline_converts_to_gt_scale_before_offset() -> None:
+    timeline = exporter.TimelineContext(
+        alignment_mode="frame",
+        reference_timestamps_ns=np.arange(20, dtype=np.int64) * 100,
+        frame_alignment=FrameAlignment(ratio=2.4, video_frame_offset=1),
+    )
+    source_frames = np.asarray([0, 1, 2, 3], dtype=np.int64)
+
+    frame_indices = timeline.frames_from_third_person_frames(source_frames)
+
+    np.testing.assert_array_equal(frame_indices, [-2, 0, 3, 5])
+
+
+def test_robocap_video_logging_uses_source_frames_despite_pts_jitter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    frame_timestamps_ns = np.asarray([0, 47_916_667, 79_361_980], dtype=np.int64)
+    real_timeline = exporter.TimelineContext(
+        alignment_mode="frame",
+        reference_timestamps_ns=np.arange(20, dtype=np.int64) * 33_333_333,
+        frame_alignment=FrameAlignment(ratio=8.0),
+    )
+    captured: dict[str, np.ndarray] = {}
+
+    class FakeVideoAsset:
+        def read_frame_timestamps_nanos(self) -> np.ndarray:
+            return frame_timestamps_ns
+
+    class CapturingTimeline:
+        alignment_mode = "frame"
+
+        def frames_from_video_frames(self, source_frames: np.ndarray) -> np.ndarray:
+            captured["source_frames"] = source_frames.copy()
+            return real_timeline.frames_from_video_frames(source_frames)
+
+        def indexes(
+            self,
+            capture_timestamps_ns: np.ndarray,
+            frame_indices: np.ndarray | None = None,
+        ) -> list[object]:
+            captured["capture_timestamps_ns"] = capture_timestamps_ns.copy()
+            assert frame_indices is not None
+            captured["frame_indices"] = frame_indices.copy()
+            return []
+
+    video_path = tmp_path / "video.mp4"
+    spec = exporter.VideoSpec(label="left", entity="video/left", relative_path=video_path.name)
+    artifacts = exporter.ArtifactPaths(
+        root_dir=tmp_path,
+        proxy_dir=tmp_path,
+        inspection_dir=tmp_path,
+        rrd_path=tmp_path / "output.rrd",
+    )
+    monkeypatch.setattr(exporter, "resolve_video_path", lambda *args, **kwargs: video_path)
+    monkeypatch.setattr(exporter, "metadata_comment_us", lambda path: 1)
+    monkeypatch.setattr(exporter.rr, "AssetVideo", lambda path: FakeVideoAsset())
+    monkeypatch.setattr(exporter.rr, "log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(exporter.rr, "send_columns", lambda *args, **kwargs: None)
+
+    exporter.log_video(
+        tmp_path,
+        spec,
+        artifacts,
+        use_proxy=False,
+        proxy_height=540,
+        proxy_crf=28,
+        proxy_bitrate="1400k",
+        ffmpeg="ffmpeg",
+        capture_window=exporter.TimeWindow(
+            start_ns=1_000 + int(frame_timestamps_ns[1]),
+            end_ns=1_000 + int(frame_timestamps_ns[2]),
+        ),
+        timeline=CapturingTimeline(),
+    )
+
+    np.testing.assert_array_equal(captured["source_frames"], [1, 2])
+    np.testing.assert_array_equal(captured["frame_indices"], [8, 16])
+
+
+def test_third_person_video_logging_passes_source_frames_to_frame_timeline(
+    monkeypatch,
+) -> None:
+    frame_timestamps_ns = np.asarray([0, 47_916_667, 79_361_980], dtype=np.int64)
+    reference_timestamps = np.arange(20, dtype=np.int64) * 33_333_333
+    real_timeline = exporter.TimelineContext(
+        alignment_mode="frame",
+        reference_timestamps_ns=reference_timestamps,
+        frame_alignment=FrameAlignment(ratio=8.0, video_frame_offset=5),
+    )
+    captured: dict[str, np.ndarray] = {}
+
+    class FakeVideoAsset:
+        def read_frame_timestamps_nanos(self) -> np.ndarray:
+            return frame_timestamps_ns
+
+    class CapturingTimeline:
+        alignment_mode = "frame"
+
+        def frames_from_third_person_frames(self, source_frames: np.ndarray) -> np.ndarray:
+            captured["source_frames"] = source_frames.copy()
+            return real_timeline.frames_from_third_person_frames(source_frames)
+
+        def indexes(
+            self,
+            capture_timestamps_ns: np.ndarray,
+            frame_indices: np.ndarray | None = None,
+        ) -> list[object]:
+            captured["capture_timestamps_ns"] = capture_timestamps_ns.copy()
+            assert frame_indices is not None
+            captured["frame_indices"] = frame_indices.copy()
+            return []
+
+    monkeypatch.setattr(exporter.rr, "AssetVideo", lambda path: FakeVideoAsset())
+    monkeypatch.setattr(exporter.rr, "log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(exporter.rr, "send_columns", lambda *args, **kwargs: None)
+
+    exporter.log_gt_third_person_video(
+        Path("third-person.mp4"),
+        time_offset_ns=0,
+        start_timestamp_ns=1_000,
+        capture_window=exporter.TimeWindow(
+            start_ns=1_000 + int(frame_timestamps_ns[1]),
+            end_ns=1_000 + int(frame_timestamps_ns[2]),
+        ),
+        timeline=CapturingTimeline(),
+    )
+
+    np.testing.assert_array_equal(captured["source_frames"], [1, 2])
+    np.testing.assert_array_equal(captured["frame_indices"], [-32, -24])
+
+
 def test_exporter_rounds_auto_inferred_ratio_but_preserves_explicit_ratio() -> None:
     marker_track = exporter.GTMarkerTrack(
         label="hand",
@@ -886,7 +1034,7 @@ def test_make_proxy_video_rebuilds_nonempty_unreadable_file(tmp_path: Path, monk
     source = tmp_path / "camera.mp4"
     source.write_bytes(b"source")
     proxy_dir = tmp_path / "proxy"
-    target = proxy_dir / "camera_h540_crf28.mp4"
+    target = proxy_dir / "camera_h540_crf28_f30seq.mp4"
     target.parent.mkdir()
     target.write_bytes(b"truncated")
 
@@ -904,6 +1052,8 @@ def test_make_proxy_video_rebuilds_nonempty_unreadable_file(tmp_path: Path, monk
 
     def fake_run(args, check):
         assert check is True
+        assert "scale=-2:540,settb=expr=1/30,setpts=N" in args
+        assert args[args.index("-fps_mode") + 1] == "passthrough"
         Path(args[-1]).write_bytes(b"complete")
 
     monkeypatch.setattr(exporter.subprocess, "run", fake_run)

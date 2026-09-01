@@ -388,6 +388,17 @@ class TimelineContext:
             self.frame_alignment.ratio,
         )
 
+    def frames_from_video_frames(self, source_frames: np.ndarray) -> np.ndarray:
+        if self.frame_alignment is None:
+            raise ValueError("Video frame mapping requires frame alignment mode.")
+        source_frames = np.asarray(source_frames, dtype=np.float64)
+        return np.rint(source_frames * self.frame_alignment.ratio).astype(np.int64)
+
+    def frames_from_third_person_frames(self, source_frames: np.ndarray) -> np.ndarray:
+        if self.frame_alignment is None:
+            raise ValueError("Third-person frame mapping requires frame alignment mode.")
+        return self.frames_from_video_frames(source_frames) - self.frame_alignment.gt_frame_offset
+
     def gt_frame(self, source_gt_frame: int) -> int:
         if self.frame_alignment is None:
             raise ValueError("GT frame mapping is only available in frame alignment mode.")
@@ -706,7 +717,7 @@ def make_proxy_video(
     source: Path, proxy_dir: Path, height: int, crf: int, bitrate: str, ffmpeg: str
 ) -> Path:
     proxy_dir.mkdir(parents=True, exist_ok=True)
-    target = proxy_dir / f"{source.stem}_h{height}_crf{crf}.mp4"
+    target = proxy_dir / f"{source.stem}_h{height}_crf{crf}_f30seq.mp4"
     if video_file_is_readable(target):
         return target
 
@@ -725,8 +736,11 @@ def make_proxy_video(
             "-map_metadata",
             "0",
             "-vf",
-            f"scale=-2:{height},fps=30",
+            # Keep one output frame per input frame while assigning the agreed 30 FPS time base.
+            f"scale=-2:{height},settb=expr=1/30,setpts=N",
             *ffmpeg_encoder_args(ffmpeg, crf, bitrate),
+            "-fps_mode",
+            "passthrough",
             "-pix_fmt",
             "yuv420p",
             "-movflags",
@@ -1736,15 +1750,22 @@ def log_video(
     rr.log(spec.entity, video_asset, static=True)
 
     frame_timestamps_ns = np.asarray(video_asset.read_frame_timestamps_nanos(), dtype=np.int64)
+    source_frames = np.arange(len(frame_timestamps_ns), dtype=np.int64)
     capture_timestamps_ns = metadata_comment_us(source_path) * 1_000 + frame_timestamps_ns
     mask = time_mask(capture_timestamps_ns, capture_window)
     frame_timestamps_ns = frame_timestamps_ns[mask]
     capture_timestamps_ns = capture_timestamps_ns[mask]
+    source_frames = source_frames[mask]
     if len(capture_timestamps_ns) == 0:
         return
+    frame_indices = (
+        timeline.frames_from_video_frames(source_frames)
+        if timeline.alignment_mode == "frame"
+        else None
+    )
     rr.send_columns(
         spec.entity,
-        indexes=timeline.indexes(capture_timestamps_ns),
+        indexes=timeline.indexes(capture_timestamps_ns, frame_indices),
         columns=rr.VideoFrameReference.columns_nanos(frame_timestamps_ns),
     )
 
@@ -3576,6 +3597,7 @@ def log_gt_third_person_video(
     rr.log(GT_THIRD_PERSON_VIDEO_ENTITY, video_asset, static=True)
 
     frame_timestamps_ns = np.asarray(video_asset.read_frame_timestamps_nanos(), dtype=np.int64)
+    source_frames = np.arange(len(frame_timestamps_ns), dtype=np.int64)
     if start_timestamp_ns is None:
         try:
             start_timestamp_ns = metadata_comment_us(video_path) * 1_000
@@ -3585,11 +3607,17 @@ def log_gt_third_person_video(
     mask = time_mask(capture_timestamps_ns, capture_window)
     frame_timestamps_ns = frame_timestamps_ns[mask]
     capture_timestamps_ns = capture_timestamps_ns[mask]
+    source_frames = source_frames[mask]
     if len(capture_timestamps_ns) == 0:
         return
+    frame_indices = (
+        timeline.frames_from_third_person_frames(source_frames)
+        if timeline.alignment_mode == "frame"
+        else None
+    )
     rr.send_columns(
         GT_THIRD_PERSON_VIDEO_ENTITY,
-        indexes=timeline.indexes(capture_timestamps_ns),
+        indexes=timeline.indexes(capture_timestamps_ns, frame_indices),
         columns=rr.VideoFrameReference.columns_nanos(frame_timestamps_ns),
     )
 

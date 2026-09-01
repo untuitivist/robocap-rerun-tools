@@ -474,10 +474,20 @@ uses the source script's alignment formula unchanged. At ratio 8, `--offset 5` b
 `40`, while `--offset -5` places GT frame 0 at Robocap video frame 5.
 
 Frame-aligned RRD files use `frame` as the primary timeline, expressed at the GT/NOKOV frame
-rate. Robocap video frame `N` is logged at `frame = round(N * ratio)`, and source GT frame `K`
-is logged at `frame = K - round(offset * ratio)`. All videos and sensor samples are mapped onto
-that same integer frame axis from the reference video's timestamps. `capture_time` is retained as
-a secondary timeline for inspection; it is not the default timeline in frame mode.
+rate. The user-facing Robocap-frame offset is converted first as
+`GT offset = round(Robocap offset * ratio)`. Every 30 FPS Robocap source video frame `N` is logged
+at `frame = round(N * ratio)`, source GT frame `K` is logged at `frame = K - GT offset`, and
+third-person source frame `M` is logged at `frame = round(M * ratio) - GT offset`. Therefore,
+at an integer ratio, Robocap frame `N` selects third-person frame `N + Robocap offset`. Video PTS
+jitter cannot change these primary frame positions. Sensors are mapped onto the same integer frame
+axis from the reference video's timestamps. Media timing remains on the secondary `capture_time`
+timeline; raw videos retain their source PTS, while proxies use normalized 30 FPS PTS. It is not the
+default timeline in frame mode.
+
+RRD proxy encoding preserves exactly one output frame for every input frame. It replaces irregular
+container PTS with a strict 30 FPS sequence instead of using an FPS filter that may drop or duplicate
+frames. Source MP4 metadata is retained, and `_f30seq` in the proxy filename prevents reuse of older
+proxy files created with the previous frame-changing filter.
 
 ## MANO Mesh
 
