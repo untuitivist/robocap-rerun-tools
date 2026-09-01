@@ -115,8 +115,9 @@ the Export and Offset tabs. The saved value is restored the next time the Web UI
 
 ## ModelScope Dataset Publishing
 
-The ModelScope tab prepares the current Session for upload. Web staging always uses the CLI's
-compressed-video defaults, and a standalone timestamp inspection HTML is required. Scan the RRD
+The ModelScope tab prepares the current Session for upload. Full-session videos are copied
+byte-for-byte; aligned-intersection crops permit lossless encoding only. A standalone timestamp
+inspection HTML is required. Scan the RRD
 files and select only the recordings that should be included. The generated dataset `README.md` is
 the canonical description of the complete dataset structure and file requirements.
 
@@ -228,7 +229,7 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 
 ## ModelScope 数据集发布
 
-“ModelScope”页用于准备和上传当前 Session。网页准备流程固定使用 CLI 的压缩视频默认值，并强制要求
+“ModelScope”页用于准备和上传当前 Session。完整 Session 视频逐字节复制；对齐交集裁切只允许无损编码。
 已有独立的时间戳检查 HTML。扫描 RRD 后可逐项勾选需要加入数据集的文件。生成的数据集 `README.md`
 是完整数据集结构与文件要求的唯一说明位置。
 
@@ -275,8 +276,8 @@ LANGUAGE_PACKS = {
             "Sequential upload reads remote metadata first and skips existing action/Session "
             "keys. Each remaining Session must satisfy `n:ratio*(n+1):n+1`, then completes "
             "prepare, validation, and upload before the next starts. Upload failures retry three "
-            "times, then skip that Session and continue. It uses compressed full-session "
-            "video, selects BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads `.env`."
+            "times, then skip that Session and continue. It copies full-session video "
+            "byte-for-byte, selects BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads `.env`."
         ),
         "statistics_batch_upload": "Upload new clean Sessions one by one",
         "package_output": "Output zip",
@@ -380,8 +381,8 @@ LANGUAGE_PACKS = {
         "statistics_batch_help": (
             "逐个上传先读取远端 metadata.jsonl，按动作与 Session ID 跳过已上传数据。其余 Session "
             "必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理下一条。上传失败"
-            "会重试 3 次，共 4 次仍失败则跳过并继续。固定使用"
-            "压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；读取 `.env`。"
+            "会重试 3 次，共 4 次仍失败则跳过并继续。完整 Session 视频逐字节复制，默认选择"
+            "BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；读取 `.env`。"
         ),
         "statistics_batch_upload": "逐个上传未上传的无差帧 Session",
         "package_output": "输出 zip",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import ezc3d
@@ -194,6 +195,42 @@ def test_crop_video_uses_frame_trim_without_30_fps_resampling(
     assert "scale=-2:540" in video_filter
     assert "fps=30" not in video_filter
     assert command[command.index("-metadata") + 1] == "comment=1066000"
+
+
+def test_crop_video_lossless_mode_never_uses_lossy_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp4"
+    target = tmp_path / "target.mp4"
+    source.write_bytes(b"source")
+    commands: list[list[str]] = []
+
+    def fail_encoder(command: list[str], check: bool):
+        assert check is True
+        commands.append(command)
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(intersection.subprocess, "run", fail_encoder)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        intersection.crop_video(
+            source,
+            target,
+            "ffmpeg",
+            intersection.FrameSlice(0, 1, 1),
+            raw_video=True,
+            proxy_height=540,
+            proxy_crf=28,
+            proxy_bitrate="1400k",
+            source_capture_start_ns=None,
+            staged_capture_start_ns=None,
+        )
+
+    assert len(commands) == 1
+    command = commands[0]
+    assert command[command.index("-crf") + 1] == "0"
+    assert "scale=-2:540" not in command[command.index("-vf") + 1]
+    assert "libopenh264" not in command
 
 
 def test_crop_c3d_preserves_source_frame_identity_and_crops_all_sample_axes(

@@ -2076,7 +2076,11 @@ def build_parser() -> argparse.ArgumentParser:
     modelscope_stage_parser.add_argument(
         "--raw-video",
         action="store_true",
-        help="Copy original videos instead of compressed proxy MP4.",
+        default=True,
+        help=(
+            "Compatibility flag; ModelScope staging always preserves original video and "
+            "forbids lossy proxy compression."
+        ),
     )
     modelscope_stage_parser.add_argument("--proxy-height", type=int, default=540)
     modelscope_stage_parser.add_argument("--proxy-crf", type=int, default=28)

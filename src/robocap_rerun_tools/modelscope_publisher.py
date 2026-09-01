@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 
 from dotenv import dotenv_values, set_key
 
-from .data_packager import PackagedFile, copy_or_compress_file, discover_package_files, is_video
+from .data_packager import PackagedFile, copy_or_compress_file, discover_package_files
 from .dataset_intersection import (
     AlignedIntersectionPlan,
     DatasetIntersectionError,
@@ -867,6 +867,10 @@ Robocap reference-camera duration per included Segment, never the sum of all cam
 aligned-intersection upload it is the duration of the cropped common timeline. The same value is
 stored in that Session's `manifest.json`.
 
+New ModelScope staging never applies lossy video compression. Full-session video files are copied
+byte-for-byte. Aligned-intersection video is encoded losslessly only when frame-accurate cropping
+requires it. Manifests that describe proxy-compressed video are rejected before upload.
+
 `EgoMotionActions/Demo/<primitive_id>/<session_id>/` contains recordings migrated from the legacy
 non-batched hierarchy. `Demo` is an example archive, not a new-upload destination.
 
@@ -1042,6 +1046,36 @@ def _metadata_duration_s(
     return duration_s
 
 
+def _validate_manifest_video_policy(manifest: object, path: Path) -> None:
+    if not isinstance(manifest, Mapping):
+        raise ModelScopePublisherError(f"Manifest must be a JSON object: {path}")
+    options = manifest.get("options")
+    if not isinstance(options, Mapping) or options.get("raw_video") is not True:
+        raise ModelScopePublisherError(
+            f"ModelScope Session must use original or lossless video: {path}. "
+            "Stage the Session again with the current tool."
+        )
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        raise ModelScopePublisherError(f"Manifest files must be a JSON array: {path}")
+    compressed = [
+        str(item.get("packaged_as") or item.get("source") or "unknown")
+        for item in files
+        if isinstance(item, Mapping)
+        and (
+            item.get("compressed_video") is True
+            or item.get("kind") == "video_proxy"
+            or item.get("kind") == "video_aligned_proxy"
+        )
+    ]
+    if compressed:
+        raise ModelScopePublisherError(
+            f"ModelScope Session contains compressed proxy video in {path}: "
+            + ", ".join(compressed)
+            + ". Stage the Session again with the current tool."
+        )
+
+
 def _metadata_session_location(
     entry: Mapping[str, object],
 ) -> tuple[str, str, str, str | None]:
@@ -1092,7 +1126,7 @@ def stage_session(
     dataset_root: Path | None = None,
     session_id: str | None = None,
     segment: str | None = None,
-    raw_video: bool = False,
+    raw_video: bool = True,
     ffmpeg: str = "ffmpeg",
     ffprobe: str = "ffprobe",
     proxy_height: int = 540,
@@ -1112,6 +1146,10 @@ def stage_session(
     source = session_dir.expanduser().resolve()
     if not source.is_dir():
         raise FileNotFoundError(source)
+    if raw_video is not True:
+        raise ModelScopePublisherError(
+            "ModelScope staging forbids lossy video compression; raw_video must be true."
+        )
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id or source.name)
     root = (dataset_root or default_dataset_root(source)).expanduser().resolve()
@@ -1204,9 +1242,9 @@ def stage_session(
         package_relative = canonical_mocap_relative_path(path, source)
         if progress is not None:
             if intersection_plan is not None:
-                operation = "crop"
+                operation = "crop losslessly"
             else:
-                operation = "compress" if is_video(path) and not raw_video else "copy"
+                operation = "copy"
             progress(f"[{index}/{total_source_files}] {operation} {path.relative_to(source)}")
         if intersection_plan is not None:
             try:
@@ -1370,6 +1408,7 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
         raise ModelScopePublisherError(
             "Staged manifest identity does not match the requested session."
         )
+    _validate_manifest_video_policy(manifest, manifest_path)
     files = manifest.get("files") or []
     device_ids = manifest.get("device_ids") or {}
     alignment = manifest.get("alignment")
@@ -1414,9 +1453,13 @@ def load_staged_dataset(dataset_root: Path) -> StagedDataset:
         _, _, relative_path, batch_id = _metadata_session_location(entry)
         _metadata_duration_s(entry, required=batch_id is None)
         session_dir = root / Path(relative_path)
-        for required in (session_dir / "manifest.json", session_dir / REPORT_NAME):
+        manifest_path = session_dir / "manifest.json"
+        for required in (manifest_path, session_dir / REPORT_NAME):
             if not required.is_file():
                 missing.append(str(required))
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            _validate_manifest_video_policy(manifest, manifest_path)
         session_paths.append(relative_path)
         if batch_id is None:
             pending_session_paths.append(relative_path)
@@ -1702,6 +1745,7 @@ def upload_staged_dataset(
     upload_time: datetime | None = None,
     progress: Callable[[str], None] | None = print,
 ) -> UploadResult:
+    staged = load_staged_dataset(staged.dataset_root)
     resolved = settings or load_modelscope_settings()
     if not resolved.token:
         raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")

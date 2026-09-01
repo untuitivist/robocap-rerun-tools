@@ -261,7 +261,7 @@ def test_package_parser_defaults_to_compressed_video() -> None:
     assert args.proxy_height == 540
 
 
-def test_modelscope_stage_parser_defaults_to_compressed_video() -> None:
+def test_modelscope_stage_parser_requires_original_video() -> None:
     parser = build_parser()
     args = parser.parse_args(
         [
@@ -271,7 +271,7 @@ def test_modelscope_stage_parser_defaults_to_compressed_video() -> None:
             "P01",
         ]
     )
-    assert args.raw_video is False
+    assert args.raw_video is True
     assert args.proxy_height == 540
     assert args.refresh_inspection is False
     assert args.inspection_mocap_ratio == 8

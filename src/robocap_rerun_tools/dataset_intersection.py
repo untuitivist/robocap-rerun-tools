@@ -902,6 +902,7 @@ def _run_aligned_video_encoder(
     crf: int,
     bitrate: str,
     comment_us: int | None,
+    allow_lossy_fallback: bool,
 ) -> None:
     common = [
         ffmpeg,
@@ -933,6 +934,8 @@ def _run_aligned_video_encoder(
     try:
         subprocess.run([*common, *encoder_args(crf, bitrate), *output], check=True)
     except subprocess.CalledProcessError:
+        if not allow_lossy_fallback:
+            raise
         subprocess.run(
             [
                 *common,
@@ -974,6 +977,7 @@ def crop_video(
         crf=0 if raw_video else proxy_crf,
         bitrate=proxy_bitrate,
         comment_us=staged_comment_us,
+        allow_lossy_fallback=not raw_video,
     )
     output_count = len(read_video_frame_timestamps_ns(target))
     if output_count != frames.count:

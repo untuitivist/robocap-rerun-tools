@@ -17,7 +17,8 @@ use `capture_time` as the primary timeline; frame-aligned exports use the intege
 - Load every selected BVH/TRC/CSV/XRS source, including multiple bodies and rigid bodies in one 3D
   world, without creating empty placeholder views.
 - Include selectable third-person video, Robocap video/sensors, robowrist, MAG, and IMU streams.
-- Package sessions with compressed video and stage/upload the documented ModelScope dataset layout.
+- Package sessions for sharing, and stage/upload the documented ModelScope layout using original or
+  losslessly cropped video only.
 - Open generated HTML reports and RRD recordings directly from the Web UI.
 - Scan a collection root recursively and select any detected session from one searchable dropdown.
 - Summarize recording duration by `PXX`, using one Robocap reference video per Segment, and
@@ -145,8 +146,8 @@ relation and completes prepare, clean validation, and upload in an isolated stag
 next starts. An upload failure is retried three times after the initial attempt; after four failed
 attempts the Session is skipped and processing continues. Preparation or clean-validation failure
 also skips only the current Session. Completed uploads are not rolled back, and failed staging data
-is retained for retry. The flow uses compressed full-session video, selects BVH/CSV/TRC/MP4 files
-except paths containing `unnamed`, includes no RRD, and reads the repository from `.env`.
+is retained for retry. The flow copies full-session video byte-for-byte, selects BVH/CSV/TRC/MP4
+files except paths containing `unnamed`, includes no RRD, and reads the repository from `.env`.
 Sessions without an unambiguous `PXX` (or an explicit custom action directory in an
 `EgoMotionActions` hierarchy) are excluded.
 
@@ -239,8 +240,10 @@ robocap-rerun modelscope-auth
 ```
 
 Prepare one session. The staging root is automatically `<session parent>/_modelscope_dataset`; this
-regenerates the inspection HTML, compresses video by default, removes local absolute paths from the
-copied report, and updates the dataset-level metadata. Every new metadata row and Session manifest
+regenerates the inspection HTML, copies full-session video byte-for-byte, removes local absolute
+paths from the copied report, and updates the dataset-level metadata. ModelScope staging rejects
+lossy proxy compression. Frame-aligned intersection staging uses lossless video encoding only when
+frame-accurate cropping requires it. Every new metadata row and Session manifest
 contains numeric `duration_s`: full-session staging sums one Robocap reference camera per included
 Segment, while aligned-intersection staging records the cropped common-timeline duration. Pending
 metadata without a positive finite duration is rejected before upload. Prepared sessions remain
@@ -313,8 +316,9 @@ override the saved repository for one upload.
 
 Add `--create-if-missing --visibility private` only when the tool should create a missing dataset
 repository from the CLI. Uploads use the official `modelscope-hub` resumable cache by default. The
-Web tab always uses the compressed-video defaults and requires an existing repository; it does not
-expose raw-video, proxy encoding, repository creation, visibility, or license controls.
+Web staging requires an existing repository and never applies lossy video compression. Full-session
+video is copied byte-for-byte; aligned-intersection cropping uses lossless encoding and fails instead
+of falling back to a lossy encoder. Repository creation, visibility, and license controls remain CLI-only.
 
 Inspect one session before exporting:
 

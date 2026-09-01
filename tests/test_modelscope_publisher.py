@@ -100,7 +100,6 @@ def stage_fixture(tmp_path: Path) -> publisher.StageResult:
         "p01",
         dataset_root=tmp_path / "dataset",
         segment="segment1",
-        raw_video=True,
         progress=None,
     )
 
@@ -165,6 +164,10 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
     assert str(tmp_path.resolve()) not in report_text
     assert '"sessionPath":"20260803_081935_session39"' in report_text
     manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    video_record = next(item for item in manifest["files"] if item["kind"] == "video_raw")
+    assert manifest["options"]["raw_video"] is True
+    assert video_record["compressed_video"] is False
+    assert video_record["original_bytes"] == video_record["packaged_bytes"]
     motion_record = next(item for item in manifest["files"] if item["kind"] == "data")
     assert motion_record["source"] == "Mocap-NOKOV/motion.trc"
     assert motion_record["packaged_as"] == "mocap/motion.trc"
@@ -222,8 +225,29 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
     assert "required third-person video" in dataset_readme
     assert "numeric `duration_s`" in dataset_readme
     assert "never the sum of all camera views" in normalized_readme
+    assert "never applies lossy video compression" in normalized_readme
+    assert "copied byte-for-byte" in normalized_readme
+    assert "proxy-compressed video are rejected" in normalized_readme
     assert "robowrist_<device_id>_left/" in dataset_readme
     assert "robowrist_<device_id>_right/" in dataset_readme
+
+
+def test_stage_session_rejects_lossy_video_compression(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    write_inspection_report(session)
+
+    with pytest.raises(
+        publisher.ModelScopePublisherError,
+        match="forbids lossy video compression",
+    ):
+        publisher.stage_session(
+            session,
+            "P01",
+            dataset_root=tmp_path / "dataset",
+            raw_video=False,
+            progress=None,
+        )
 
 
 def test_measure_session_duration_s_uses_one_reference_per_selected_segment(
@@ -488,6 +512,25 @@ def test_pending_session_metadata_requires_duration_s(tmp_path: Path) -> None:
     with pytest.raises(
         publisher.ModelScopePublisherError,
         match=r"must include duration_s.*Prepare the Session again",
+    ):
+        publisher.load_staged_dataset(staged.dataset_root)
+
+
+def test_pending_session_rejects_compressed_video_manifest(tmp_path: Path) -> None:
+    staged = stage_fixture(tmp_path)
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    video_record = next(item for item in manifest["files"] if item["kind"] == "video_raw")
+    video_record["kind"] = "video_proxy"
+    video_record["compressed_video"] = True
+    staged.manifest_path.write_text(
+        json.dumps(manifest) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    with pytest.raises(
+        publisher.ModelScopePublisherError,
+        match="contains compressed proxy video",
     ):
         publisher.load_staged_dataset(staged.dataset_root)
 
