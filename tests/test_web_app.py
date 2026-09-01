@@ -44,8 +44,16 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "起始帧（从 0 开始，包含）" in config
     assert "结束帧（从 0 开始，包含）" in config
     assert "生成帧对比图" in config
-    assert "预览" in config
+    assert "使用默认应用打开图片" in config
     assert "输出图片" in config
+    open_image_button = next(
+        component
+        for component in config_data["components"]
+        if component.get("props", {}).get("value") == "使用默认应用打开图片"
+    )
+    assert open_image_button["props"]["interactive"] is False
+    assert "frame_compare_preview" not in web_app.LANGUAGE_PACKS["中文"]
+    assert "frame_compare_preview" not in web_app.LANGUAGE_PACKS["English"]
     assert "补做缺失的检查报告" in config
     assert "全部重做检查报告" in config
     rebuild_all = next(
@@ -593,6 +601,7 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
         "P03",
         [],
         None,
+        "",
         None,
     ]
     assert updates[1]["choices"] == []
@@ -603,6 +612,7 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
     assert updates[8]["interactive"] is True
     assert updates[9]["value"] == "P03"
     assert updates[10]["choices"] == []
+    assert updates[13]["interactive"] is False
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert settings["session_dir"] == str(session)
 
@@ -968,6 +978,40 @@ def test_scan_frame_comparison_videos_returns_relative_labels_and_absolute_value
         ("mocap/third.MOV", str(second.resolve())),
     ]
     assert update["value"] == []
+
+
+def test_open_frame_comparison_image_uses_default_application(tmp_path, monkeypatch) -> None:
+    image = tmp_path / "_artifacts" / "frame_comparison" / "comparison.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"jpeg")
+    opened = []
+    monkeypatch.setattr(web_app, "launch_default_application", opened.append)
+
+    message = web_app.open_frame_comparison_image(str(tmp_path), str(image), "中文")
+
+    assert opened == [image.resolve()]
+    assert "已使用默认应用打开图片" in message
+    assert str(image.resolve()) in message
+
+
+def test_open_frame_comparison_image_rejects_missing_file(tmp_path) -> None:
+    missing = tmp_path / "missing.jpg"
+
+    message = web_app.open_frame_comparison_image(str(tmp_path), str(missing), "English")
+
+    assert message == f"Image does not exist: {missing.resolve()}"
+
+
+def test_open_frame_comparison_image_rejects_file_outside_session_output(tmp_path) -> None:
+    outside = tmp_path / "outside.jpg"
+    outside.write_bytes(b"jpeg")
+
+    message = web_app.open_frame_comparison_image(str(tmp_path), str(outside), "English")
+
+    assert message == (
+        "Image is outside the current Session frame-comparison directory: "
+        f"{outside.resolve()}"
+    )
 
 
 def test_scan_rrd_files_selects_newest_recording(tmp_path) -> None:

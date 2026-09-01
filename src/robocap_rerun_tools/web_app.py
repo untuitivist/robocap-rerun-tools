@@ -300,7 +300,7 @@ LANGUAGE_PACKS = {
         "frame_compare_cell_width": "Cell width",
         "frame_compare_cell_height": "Cell height",
         "frame_compare_generate_button": "Generate frame comparison",
-        "frame_compare_preview": "Preview",
+        "frame_compare_open_button": "Open image in default application",
         "frame_compare_file": "Output image",
         "statistics_mocap_ratio": "Mocap ratio for generated inspections",
         "statistics_fill_missing": "Create missing inspection reports",
@@ -423,7 +423,7 @@ LANGUAGE_PACKS = {
         "frame_compare_cell_width": "单格宽度",
         "frame_compare_cell_height": "单格高度",
         "frame_compare_generate_button": "生成帧对比图",
-        "frame_compare_preview": "预览",
+        "frame_compare_open_button": "使用默认应用打开图片",
         "frame_compare_file": "输出图片",
         "statistics_mocap_ratio": "生成检查报告使用的动捕比例",
         "statistics_fill_missing": "补做缺失的检查报告",
@@ -997,7 +997,8 @@ def select_session(
         gr.update(value=inferred_primitive) if inferred_primitive else gr.update(),
         gr.update(choices=[], value=[]),
         gr.update(value=None),
-        gr.update(value=None),
+        gr.update(value=""),
+        gr.update(interactive=False),
     )
 
 
@@ -1368,7 +1369,12 @@ def generate_frame_comparison(
     cell_width: object,
     cell_height: object,
     language: str,
-) -> Iterator[tuple[str, str | None, str | None]]:
+) -> Iterator[tuple[str, str | None, str, object]]:
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
+
     try:
         session = Path(session_path(session_dir)).resolve()
         progress_stream = iter_frame_comparison(
@@ -1401,7 +1407,7 @@ def generate_frame_comparison(
                         f"{progress.video_path.name}\n"
                         f"Current frame: {progress.frame_index}"
                     )
-                yield status, None, None
+                yield status, None, "", gr.update(interactive=False)
                 continue
 
             result = str(progress.output_path)
@@ -1424,10 +1430,57 @@ def generate_frame_comparison(
                     f"File: {result}\n"
                     f"Size: {size_mib:.2f} MiB"
                 )
-            yield status, result, result
+            yield status, result, result, gr.update(interactive=True)
     except (FrameComparisonError, OSError, ValueError) as exc:
         prefix = "帧对比生成失败" if language == "中文" else "Frame comparison failed"
-        yield f"{prefix}: {exc}", None, None
+        yield f"{prefix}: {exc}", None, "", gr.update(interactive=False)
+
+
+def launch_default_application(path: Path) -> None:
+    if os.name == "nt":
+        startfile = getattr(os, "startfile", None)
+        if startfile is None:
+            raise OSError("Windows default-application launcher is unavailable.")
+        startfile(str(path))
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+        return
+    opener = shutil.which("xdg-open")
+    if opener is None:
+        raise OSError("xdg-open is unavailable.")
+    subprocess.Popen([opener, str(path)])
+
+
+def open_frame_comparison_image(session_dir: str, image_path: str, language: str) -> str:
+    session = Path(session_path(session_dir)).resolve()
+    allowed_directory = (session / "_artifacts" / "frame_comparison").resolve()
+    path = Path((image_path or "").strip().strip('"')).expanduser().resolve()
+    if not path.is_file():
+        message = f"图片不存在：{path}" if language == "中文" else f"Image does not exist: {path}"
+        return message
+    try:
+        path.relative_to(allowed_directory)
+    except ValueError:
+        message = (
+            f"图片不在当前 Session 的帧对比输出目录中：{path}"
+            if language == "中文"
+            else f"Image is outside the current Session frame-comparison directory: {path}"
+        )
+        return message
+    if path.suffix.casefold() not in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}:
+        message = f"不是支持的图片：{path}" if language == "中文" else f"Unsupported image: {path}"
+        return message
+    try:
+        launch_default_application(path)
+    except OSError as exc:
+        prefix = "无法使用默认应用打开图片" if language == "中文" else "Could not open image"
+        return f"{prefix}: {exc}"
+    return (
+        f"已使用默认应用打开图片：\n{path}"
+        if language == "中文"
+        else f"Opened image in the default application:\n{path}"
+    )
 
 
 def optional_text(value: str | None) -> str | None:
@@ -2756,7 +2809,7 @@ def language_updates(language: str):
         gr.update(label=labels["frame_compare_cell_width"]),
         gr.update(label=labels["frame_compare_cell_height"]),
         gr.update(value=labels["frame_compare_generate_button"]),
-        gr.update(label=labels["frame_compare_preview"]),
+        gr.update(value=labels["frame_compare_open_button"]),
         gr.update(label=labels["frame_compare_file"]),
         gr.update(label=labels["statistics_mocap_ratio"]),
         gr.update(label=labels["statistics_fill_missing"]),
@@ -2940,8 +2993,9 @@ def build_app():
             frame_compare_generate_button = gr.Button(
                 labels["frame_compare_generate_button"], variant="primary"
             )
-            frame_compare_preview = gr.Image(
-                label=labels["frame_compare_preview"], type="filepath", height=640
+            frame_compare_output_path = gr.Textbox(value="", visible=False, container=False)
+            frame_compare_open_button = gr.Button(
+                labels["frame_compare_open_button"], interactive=False
             )
             frame_compare_file = gr.File(label=labels["frame_compare_file"])
             frame_compare_scan_button.click(
@@ -2960,7 +3014,17 @@ def build_app():
                     frame_compare_cell_height,
                     language,
                 ],
-                outputs=[output, frame_compare_preview, frame_compare_file],
+                outputs=[
+                    output,
+                    frame_compare_file,
+                    frame_compare_output_path,
+                    frame_compare_open_button,
+                ],
+            )
+            frame_compare_open_button.click(
+                open_frame_comparison_image,
+                inputs=[session_dir, frame_compare_output_path, language],
+                outputs=output,
             )
 
         with gr.Tab("统计 / Statistics"):
@@ -3318,8 +3382,9 @@ def build_app():
             include_robowrist,
             modelscope_primitive,
             frame_compare_videos,
-            frame_compare_preview,
             frame_compare_file,
+            frame_compare_output_path,
+            frame_compare_open_button,
         ]
         session_scan_event = scan_sessions_button.click(
             scan_dataset_sessions,
@@ -3357,7 +3422,7 @@ def build_app():
                 frame_compare_cell_width,
                 frame_compare_cell_height,
                 frame_compare_generate_button,
-                frame_compare_preview,
+                frame_compare_open_button,
                 frame_compare_file,
                 statistics_mocap_ratio,
                 statistics_fill_missing,

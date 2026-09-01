@@ -128,8 +128,9 @@ number of them. Start and end indexes are 0-based and inclusive. The generated J
 per selected video and one row per requested frame; every cell is `960 x 540` by default, preserves
 the source aspect ratio with black padding, and shows `frame X` in its upper-left corner. The full
 image is written to `<session>/_artifacts/frame_comparison/`, while the Web page shows live cell-level
-progress, a preview, and a downloadable file. The canvas is disk-backed so a tall comparison does
-not require keeping its complete RGB data in Python memory.
+progress, a downloadable file, and a button that opens the result in the operating system's default
+image application. The page does not render the tall image inline. The canvas is disk-backed so a
+tall comparison does not require keeping its complete RGB data in Python memory.
 
 CLI-backed actions stream combined stdout/stderr into the Output box about twice per second. The
 box shows status, elapsed time, recent logs, and either parsed `[n/total]`/percentage progress or an
