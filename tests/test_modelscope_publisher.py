@@ -26,6 +26,7 @@ def stub_staged_session_duration(monkeypatch: pytest.MonkeyPatch) -> None:
     ("value", "expected"),
     [
         ("p01", "P01"),
+        ("a07", "A07"),
         ("Walk Sit v2", "Walk Sit v2"),
         ("左转测试", "左转测试"),
         ("custom-动作_01", "custom-动作_01"),
@@ -1189,6 +1190,32 @@ def test_finalize_upload_batch_replaces_same_session_on_same_date(tmp_path: Path
     assert (published / "mocap" / "motion.trc").read_text(encoding="utf-8") == "updated\n"
     manifest = json.loads((published / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["upload_batch_created_at"] == "2026-08-28T20:30:00+00:00"
+
+
+def test_finalize_upload_batch_uses_manual_date_but_keeps_real_start_time(tmp_path: Path) -> None:
+    staged = stage_fixture(tmp_path)
+
+    finalized, batch_id = publisher.finalize_upload_batch(
+        publisher.load_staged_dataset(staged.dataset_root),
+        upload_time=datetime(2026, 9, 1, 12, 34, 56, tzinfo=UTC),
+        upload_date="20260828",
+        progress=None,
+    )
+
+    assert batch_id == "20260828"
+    assert finalized.session_paths == ("EgoMotionActions/20260828/P01/20260803_081935_session39",)
+    manifest = json.loads(
+        (staged.dataset_root / finalized.session_paths[0] / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["upload_batch_created_at"] == "2026-09-01T12:34:56+00:00"
+
+
+@pytest.mark.parametrize("value", ["20260828_120000", "2026-08-28", "20260230"])
+def test_validate_upload_date_rejects_non_date_batch_ids(value: str) -> None:
+    with pytest.raises(ValueError, match="Upload date|valid local date"):
+        publisher.validate_upload_date(value)
 
 
 def test_upload_requires_configured_token(tmp_path: Path) -> None:

@@ -379,6 +379,21 @@ def test_modelscope_upload_parser_uses_resumable_cache() -> None:
     assert args.use_cache is True
     assert args.create_if_missing is False
     assert args.visibility == "private"
+    assert args.upload_date is None
+
+
+def test_modelscope_upload_parser_accepts_manual_upload_date() -> None:
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "modelscope-upload",
+            "Z:/DATASETS/Frodobots/nokov/_modelscope_dataset",
+            "--upload-date",
+            "20260828",
+        ]
+    )
+
+    assert args.upload_date == "20260828"
 
 
 def test_modelscope_upload_repo_id_defaults_to_env_configuration() -> None:

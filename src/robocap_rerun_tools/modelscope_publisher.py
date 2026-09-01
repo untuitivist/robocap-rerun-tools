@@ -50,7 +50,7 @@ UPLOAD_BATCH_FORMAT = "%Y%m%d"
 UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}\Z")
 LEGACY_UPLOAD_BATCH_FORMAT = "%Y%m%d_%H%M%S"
 LEGACY_UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}_\d{6}\Z")
-PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
+PRIMITIVE_ID_PATTERN = re.compile(r"[A-Z]\d{2}\Z")
 PRIMITIVE_ID_INVALID_CHAR_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 WINDOWS_RESERVED_NAMES = {
     "CON",
@@ -183,6 +183,13 @@ def validate_upload_batch_id(value: str) -> str:
     except ValueError as exc:
         raise ValueError(f"Upload batch ID is not a valid local date: {value!r}.") from exc
     return batch_id
+
+
+def validate_upload_date(value: str) -> str:
+    batch_id = value.strip()
+    if not UPLOAD_BATCH_PATTERN.fullmatch(batch_id):
+        raise ValueError(f"Upload date must use {UPLOAD_BATCH_FORMAT}: {value!r}.")
+    return validate_upload_batch_id(batch_id)
 
 
 def upload_batch_id(upload_time: datetime | None = None) -> str:
@@ -856,9 +863,10 @@ configs:
 # EgoMocap Dataset
 
 Each row in `metadata.jsonl` describes one recording. New uploads use
-`EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`, where the batch ID is the uploader's
-local date when upload starts. All pending sessions in one upload operation share that date, while
-`upload_batch_created_at` retains the exact ISO timestamp. A failed upload reuses its assigned date.
+`EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`. The batch ID defaults to the uploader's
+local date when upload starts and may be selected explicitly. All pending sessions in one upload
+operation share that date, while `upload_batch_created_at` retains the exact ISO timestamp. A failed
+upload reuses its assigned date.
 Legacy `YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. The built-in task
 catalog uses `P01` through `P29`, but a safe custom single-directory name is also accepted.
 
@@ -917,7 +925,7 @@ are optional. All other listed capture streams and generated records are require
     <device_id>/
   EgoMotionActions/                             # required action recordings
     <YYYYMMDD>/                                  # uploader-local date for new uploads
-      <primitive_id>/                            # P01-P29 convention or a custom name
+      <primitive_id>/                            # [A-Z]NN convention or a custom name
         <session_id>/
           robocap_<segment>_video_*.mp4          # required six first-person videos
           robocap_<segment>_imu_*.db             # required Robocap IMU
@@ -1482,13 +1490,22 @@ def finalize_upload_batch(
     staged: StagedDataset,
     *,
     upload_time: datetime | None = None,
+    upload_date: str | None = None,
     progress: Callable[[str], None] | None = print,
 ) -> tuple[StagedDataset, str | None]:
+    requested_batch = validate_upload_date(upload_date) if upload_date is not None else None
     entries = _read_metadata(staged.metadata_path)
     parsed = [_metadata_session_location(entry) for entry in entries]
     pending_indices = [index for index, item in enumerate(parsed) if item[3] is None]
     if not pending_indices:
         latest_batch = max(staged.batch_ids, default=None)
+        if requested_batch is not None and any(
+            batch_id != requested_batch for batch_id in staged.batch_ids
+        ):
+            raise ModelScopePublisherError(
+                f"Prepared sessions are already finalized under {staged.batch_ids}; "
+                f"cannot change their upload date to {requested_batch} without restaging."
+            )
         if progress is not None and latest_batch is not None:
             progress(f"No pending sessions; reusing upload batch {latest_batch}.")
         return staged, latest_batch
@@ -1496,7 +1513,7 @@ def finalize_upload_batch(
     moment = upload_time or datetime.now().astimezone()
     if moment.tzinfo is None:
         moment = moment.astimezone()
-    batch_id = upload_batch_id(moment)
+    batch_id = requested_batch or upload_batch_id(moment)
     batch_created_at = moment.isoformat()
     updated_entries = [dict(entry) for entry in entries]
     replacement_root = (
@@ -1743,6 +1760,7 @@ def upload_staged_dataset(
     use_cache: bool = True,
     settings: ModelScopeSettings | None = None,
     upload_time: datetime | None = None,
+    upload_date: str | None = None,
     progress: Callable[[str], None] | None = print,
 ) -> UploadResult:
     staged = load_staged_dataset(staged.dataset_root)
@@ -1777,6 +1795,7 @@ def upload_staged_dataset(
         staged, batch_id = finalize_upload_batch(
             staged,
             upload_time=upload_time,
+            upload_date=upload_date,
             progress=progress,
         )
         allow_patterns = [f"{glob.escape(path)}/**" for path in staged.session_paths]

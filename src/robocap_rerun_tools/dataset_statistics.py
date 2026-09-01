@@ -13,7 +13,7 @@ from .session_layout import discover_mocap_directories
 TIMESTAMP_REPORT_NAME = "timestamp_anomaly_detail_table.html"
 REPORT_PREFIX = "const report="
 REPORT_SUFFIX = "; const eventTypes="
-PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d{2})(?![A-Z0-9])", re.IGNORECASE)
+PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])([A-Z]\d{2})(?![A-Z0-9])", re.IGNORECASE)
 ROBOCAP_VIDEO_PATTERN = re.compile(
     r"^robocap_(?P<segment>.+?)_video_(?P<camera>.+)\.mp4$", re.IGNORECASE
 )
@@ -306,9 +306,11 @@ def summarize_session(
     )
 
 
-def _primitive_sort_key(value: str) -> tuple[int, int | str]:
-    match = re.fullmatch(r"P(\d{2})", value, re.IGNORECASE)
-    return (0, int(match.group(1))) if match else (1, value.casefold())
+def _primitive_sort_key(value: str) -> tuple[int, str, int]:
+    match = re.fullmatch(r"([A-Z])(\d{2})", value, re.IGNORECASE)
+    if match is not None:
+        return 0, match.group(1).upper(), int(match.group(2))
+    return 1, value.casefold(), 0
 
 
 def aggregate_by_primitive(
@@ -394,7 +396,7 @@ def render_statistics_markdown(
             f"- 总时长：**{format_duration(total_duration_s)}**",
             "",
             (
-                "| PXX | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 | "
+                "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 | "
                 "{Session: Session 时长} | "
                 "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)} |"
             ),
@@ -415,7 +417,7 @@ def render_statistics_markdown(
             f"- Total duration: **{format_duration(total_duration_s)}**",
             "",
             (
-                "| PXX | Unchecked duration | Frame-count-difference duration | "
+                "| Primitive | Unchecked duration | Frame-count-difference duration | "
                 "Error-free duration | Total duration | Sessions | {Session: duration} | "
                 "{Session: [anomalies](normal, mocap extra, mocap missing, "
                 "third-person extra, third-person missing)} |"

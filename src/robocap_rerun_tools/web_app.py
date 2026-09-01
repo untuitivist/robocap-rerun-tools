@@ -20,6 +20,7 @@ import webbrowser
 from collections import deque
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
@@ -27,7 +28,9 @@ from robocap_rerun_tools import MEDIA_TOOLS
 from robocap_rerun_tools.session_layout import discover_mocap_directories
 
 DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
-MOCAP_PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d{2})(?![A-Z0-9])", re.IGNORECASE)
+MOCAP_PRIMITIVE_PATTERN = re.compile(
+    r"(?<![A-Z0-9])([A-Z]\d{2})(?![A-Z0-9])", re.IGNORECASE
+)
 SEQUENTIAL_UPLOAD_RETRIES = 3
 
 EN_DOC = """# Robocap Rerun Tools
@@ -125,10 +128,10 @@ Scan the Session Mocap files before staging. The list includes every packageable
 single `mocap*` source directory. Only BVH, CSV, TRC, and MP4 files are selected by default, and any
 relative path containing `unnamed` is left unselected regardless of case. Other detected files stay
 available for manual selection; only checked Mocap files are staged, and at least one must remain.
-When a Session is selected, the action primitive is auto-matched from a standalone `PXX` token in
-the direct `mocap*` directory name, such as `mocap-P03-St-user`. This is only a suggestion. The
-dropdown accepts any safe custom single-directory name, and the manual value takes precedence. No
-match or conflicting matches preserve the current value.
+When a Session is selected, the action primitive is auto-matched from a standalone letter plus two
+digits token in the direct `mocap*` directory name, such as `A01` or `P03`. This is only a suggestion.
+The dropdown accepts any safe custom single-directory name, and the manual value takes precedence.
+No match or conflicting matches preserve the current value.
 
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
@@ -141,10 +144,13 @@ sessions share one uploader-local `YYYYMMDD` date and move to
 `EgoMotionActions/<date>/<primitive>/<session>/`; the exact start time remains in metadata and a
 failed transfer reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain readable.
 `EgoMotionActions/Demo/` is reserved for migrated legacy examples.
-The Statistics tab also uploads clean Sessions sequentially. It reads remote `metadata.jsonl` first
-and skips matching `(primitive_id, session_id)` entries before inspection or staging. Each remaining
-Session must satisfy the exact frame-count relation, uses the curated default Mocap files and no RRD,
-and completes prepare, clean validation, and upload in an isolated staging root before the next one.
+The Statistics tab also uploads clean Sessions sequentially. It reads remote `metadata.jsonl` first.
+The upload date field is initialized to the uploader's current local `YYYYMMDD` and remains editable;
+every Session in one run uses that date. Existing `(primitive_id, session_id)` entries are skipped by
+default. Clearing the skip option uploads them again and replaces their metadata rows. If a different
+date is selected, the prior remote directory is not deleted automatically. Each selected Session must
+satisfy the exact frame-count relation, uses the curated default Mocap files and no RRD, and completes
+prepare, clean validation, and upload in an isolated staging root.
 An upload failure is retried three times after the initial attempt. After four failed attempts, that
 Session is skipped and processing continues; preparation and clean-validation failures also skip only
 the current Session. Completed uploads are not rolled back.
@@ -236,9 +242,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件；默认只
 勾选 BVH、CSV、TRC 与 MP4，并对相对路径中包含 `unnamed` 的文件取消默认勾选（不区分大小写）。其他
 文件仍保留在列表中供手动选择；只有勾选的 Mocap 文件会进入暂存，且至少保留一个。
-选择 Session 时，工具会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动建议动作基元，例如
-`mocap-P03-St-user` 会填入 `P03`。这只是建议值；下拉框允许任意安全的单级目录名，手动输入具有最终
-优先级。没有匹配或出现冲突匹配时保留当前值。
+选择 Session 时，工具会从直属 `mocap*` 目录名中的“一个字母加两位数字”独立片段自动建议动作基元，
+例如 `mocap-A01-St-user` 会填入 `A01`，`mocap-P03-St-user` 会填入 `P03`。这只是建议值；下拉框允许
+任意安全的单级目录名，手动输入具有最终优先级。没有匹配或出现冲突匹配时保留当前值。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
@@ -248,10 +254,12 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用上传电脑本地
 日期 `YYYYMMDD`，并移动到 `EgoMotionActions/<日期>/<动作>/<session>/`；完整开始时间仍保存在元数据
 中，传输失败后重试会复用该日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。
-“统计”页还提供 clean Session 逐个上传。它先读取远端 `metadata.jsonl`，按
-`(primitive_id, session_id)` 跳过已上传数据，且不会对这些数据补检查或暂存。其余 Session 必须满足
-精确帧数关系，使用默认 Mocap 文件且不带 RRD，并在独立暂存根目录中依次完成准备、clean 校验和上传
-后再处理下一条。上传首次失败后会再重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或
+“统计”页还提供 clean Session 逐个上传。它先读取远端 `metadata.jsonl`。上传日期框默认填入上传
+电脑本地当天的 `YYYYMMDD`，允许手工修改；同一次运行的所有 Session 使用同一个日期。默认开启
+“跳过远端已有 Session”，按 `(primitive_id, session_id)` 排除已上传数据；关闭后重新上传并替换
+同键元数据。若改用其他日期，旧远端目录不会自动删除。各 Session 必须满足精确帧数关系，使用默认
+Mocap 文件且不带 RRD，并在独立暂存根目录中依次完成准备、clean 校验和上传。上传首次失败后会再
+重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或
 clean 校验失败也只跳过当前 Session，不会停止后续队列；已经完成的上传不会回滚。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
@@ -273,13 +281,18 @@ LANGUAGE_PACKS = {
         "statistics_fill_missing": "Create missing inspection reports",
         "statistics_button": "Calculate statistics",
         "statistics_batch_help": (
-            "Sequential upload reads remote metadata first and skips existing action/Session "
-            "keys. Each remaining Session must satisfy `n:ratio*(n+1):n+1`, then completes "
+            "Sequential upload reads remote metadata first. The editable date is initialized to "
+            "today's local `YYYYMMDD`, and every Session in this run uses it. Existing Sessions "
+            "are skipped by default; clear the skip option to upload them again and replace matching "
+            "metadata rows. A different date leaves the old remote directory untouched. Each selected "
+            "Session must satisfy `n:ratio*(n+1):n+1`, then completes "
             "prepare, validation, and upload before the next starts. Upload failures retry three "
             "times, then skip that Session and continue. It copies full-session video "
             "byte-for-byte, selects BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads `.env`."
         ),
-        "statistics_batch_upload": "Upload new clean Sessions one by one",
+        "statistics_upload_date": "Upload date (YYYYMMDD)",
+        "statistics_skip_existing": "Skip existing remote Sessions",
+        "statistics_batch_upload": "Upload clean Sessions one by one",
         "package_output": "Output zip",
         "package_height": "Proxy height",
         "package_crf": "Proxy CRF",
@@ -332,7 +345,9 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "Open web viewer",
         "viewer_rrd_file": "RRD file",
         "viewer_port": "Web viewer port (0 = auto)",
-        "modelscope_primitive": "Action primitive (PXX auto-suggestion; custom value allowed)",
+        "modelscope_primitive": (
+            "Action primitive ([A-Z]NN auto-suggestion; custom value allowed)"
+        ),
         "modelscope_repo_id": "ModelScope dataset repo (owner/name; blank keeps saved value)",
         "modelscope_endpoint": "ModelScope endpoint",
         "modelscope_revision": "Revision",
@@ -379,12 +394,17 @@ LANGUAGE_PACKS = {
         "statistics_fill_missing": "补做缺失的检查报告",
         "statistics_button": "统计根目录",
         "statistics_batch_help": (
-            "逐个上传先读取远端 metadata.jsonl，按动作与 Session ID 跳过已上传数据。其余 Session "
-            "必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理下一条。上传失败"
+            "逐个上传先读取远端 metadata.jsonl。日期框默认填入本地当天的 `YYYYMMDD`，允许修改；"
+            "本次所有 Session 使用同一日期。默认勾选跳过远端已有 Session；取消勾选后重新上传并"
+            "替换同键元数据。改用其他日期不会删除旧远端目录。"
+            "选中的 Session 必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理"
+            "下一条。上传失败"
             "会重试 3 次，共 4 次仍失败则跳过并继续。完整 Session 视频逐字节复制，默认选择"
             "BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；读取 `.env`。"
         ),
-        "statistics_batch_upload": "逐个上传未上传的无差帧 Session",
+        "statistics_upload_date": "上传日期（YYYYMMDD）",
+        "statistics_skip_existing": "跳过远端已有 Session",
+        "statistics_batch_upload": "逐个上传无差帧 Session",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
         "package_crf": "压缩 CRF",
@@ -435,7 +455,7 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "打开 Web Viewer",
         "viewer_rrd_file": "RRD 文件",
         "viewer_port": "Web Viewer 端口（0 = 自动）",
-        "modelscope_primitive": "动作基元（从 mocap* 自动建议 PXX，可任意自定义）",
+        "modelscope_primitive": "动作基元（从 mocap* 自动建议 A01/P01 等，可任意自定义）",
         "modelscope_repo_id": "ModelScope 数据集仓库（owner/name；留空保留已保存值）",
         "modelscope_endpoint": "ModelScope 站点",
         "modelscope_revision": "分支 / Revision",
@@ -540,10 +560,7 @@ class LiveCommandOutput:
             line = line[-(STREAM_LOG_MAX_CHARS - 1) :]
         self.lines.append(line)
         self.character_count += len(line) + 1
-        while (
-            len(self.lines) > STREAM_LOG_MAX_LINES
-            or self.character_count > STREAM_LOG_MAX_CHARS
-        ):
+        while len(self.lines) > STREAM_LOG_MAX_LINES or self.character_count > STREAM_LOG_MAX_CHARS:
             removed = self.lines.popleft()
             self.character_count -= len(removed) + 1
             self.dropped_lines += 1
@@ -869,9 +886,7 @@ def scan_dataset_sessions(
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
 
     root = dataset_root_path(dataset_root)
     sessions = discover_session_directories(root)
@@ -922,9 +937,7 @@ def select_session(
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
 
     save_session_browser_settings(dataset_root, session_dir, settings_path)
     inferred_primitive = infer_modelscope_primitive(session_dir)
@@ -1328,9 +1341,7 @@ def scan_files(
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
     robowrist_update = gr.update(
         value=bool(include_robowrist and has_robowrist),
         interactive=has_robowrist,
@@ -1404,9 +1415,7 @@ def scan_rrd_files(session_dir: str) -> tuple[str, object]:
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
     return summary, gr.update(choices=choices, value=choices[0] if choices else None)
 
 
@@ -1427,9 +1436,7 @@ def scan_modelscope_rrd_files(session_dir: str, segment: str) -> tuple[str, obje
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
     return summary, gr.update(choices=choices, value=choices)
 
 
@@ -1463,9 +1470,7 @@ def scan_modelscope_mocap_files(session_dir: str) -> tuple[str, object]:
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
     return summary, gr.update(choices=choices, value=default_selection)
 
 
@@ -1497,9 +1502,7 @@ def scan_timestamp_reports(session_dir: str) -> tuple[str, object]:
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
     return summary, gr.update(choices=choices, value=choices[0] if choices else None)
 
 
@@ -1773,9 +1776,7 @@ def infer_batch_modelscope_primitive(dataset_root: Path, session_dir: Path) -> s
                 break
     if len(action_parts) < 2:
         return None
-    if action_parts[0].casefold() == "demo" or re.fullmatch(
-        r"\d{8}(?:_\d{6})?", action_parts[0]
-    ):
+    if action_parts[0].casefold() == "demo" or re.fullmatch(r"\d{8}(?:_\d{6})?", action_parts[0]):
         if len(action_parts) < 3:
             return None
         candidate = action_parts[1]
@@ -1831,11 +1832,26 @@ def sequential_modelscope_dataset_root(
     return dataset_root / "_modelscope_dataset" / "sequential" / primitive / resolved_session
 
 
+def current_modelscope_upload_date() -> str:
+    return datetime.now().astimezone().strftime("%Y%m%d")
+
+
+def resolve_modelscope_upload_date(value: object | None) -> str:
+    from robocap_rerun_tools.modelscope_publisher import validate_upload_date
+
+    requested = current_modelscope_upload_date() if value is None else str(value).strip()
+    if not requested:
+        raise ValueError("Upload date is required and must use YYYYMMDD.")
+    return validate_upload_date(requested)
+
+
 def bulk_upload_clean_modelscope_sessions(
     dataset_root: object,
     mocap_ratio: int,
     fill_missing_reports: bool,
     language: str = "中文",
+    upload_date: object | None = None,
+    skip_existing: bool = True,
 ) -> Iterator[str]:
     from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
@@ -1850,6 +1866,7 @@ def bulk_upload_clean_modelscope_sessions(
     )
 
     root = dataset_root_path(dataset_root)
+    selected_upload_date = resolve_modelscope_upload_date(upload_date)
     try:
         ratio = int(mocap_ratio)
     except (TypeError, ValueError) as exc:
@@ -1888,10 +1905,17 @@ def bulk_upload_clean_modelscope_sessions(
     sessions = discover_session_directories(root)
     add(f"统计根目录：{root}" if is_chinese else f"Statistics root: {root}")
     add(
-        f"识别到 Session：{len(sessions)}"
+        (
+            f"上传日期：{selected_upload_date}；"
+            f"跳过远端已有 Session：{'是' if skip_existing else '否（重新上传并覆盖元数据）'}"
+        )
         if is_chinese
-        else f"Detected sessions: {len(sessions)}"
+        else (
+            f"Upload date: {selected_upload_date}; skip existing remote Sessions: "
+            f"{'yes' if skip_existing else 'no (re-upload and replace metadata)'}"
+        )
     )
+    add(f"识别到 Session：{len(sessions)}" if is_chinese else f"Detected sessions: {len(sessions)}")
     if not sessions:
         add("未发现 Session。" if is_chinese else "No sessions were discovered.")
         yield render()
@@ -1955,16 +1979,24 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
 
-    remote_skipped = [
-        item for item in identified if (item[1], item[2]) in remote_keys
-    ]
-    pending = [item for item in identified if (item[1], item[2]) not in remote_keys]
+    remote_existing = [item for item in identified if (item[1], item[2]) in remote_keys]
+    if skip_existing:
+        remote_skipped = remote_existing
+        pending = [item for item in identified if (item[1], item[2]) not in remote_keys]
+    else:
+        remote_skipped = []
+        pending = identified
+    replacement_candidates = len(remote_existing) if not skip_existing else 0
     add(
-        f"远端索引：{len(remote_keys)}；已上传跳过：{len(remote_skipped)}；待处理：{len(pending)}"
+        (
+            f"远端索引：{len(remote_keys)}；替换候选：{replacement_candidates}；"
+            f"已上传跳过：{len(remote_skipped)}；待处理：{len(pending)}"
+        )
         if is_chinese
         else (
-            f"Remote index: {len(remote_keys)}; already uploaded: {len(remote_skipped)}; "
-            f"remaining: {len(pending)}"
+            f"Remote index: {len(remote_keys)}; replacement candidates: "
+            f"{replacement_candidates}; already uploaded: "
+            f"{len(remote_skipped)}; remaining: {len(pending)}"
         )
     )
     for session, primitive, session_id in remote_skipped:
@@ -2001,9 +2033,7 @@ def bulk_upload_clean_modelscope_sessions(
         return
 
     references = [
-        reference
-        for session, _, _ in pending
-        for reference in discover_segment_references(session)
+        reference for session, _, _ in pending for reference in discover_segment_references(session)
     ]
     missing = [reference for reference in references if not reference.report_path.is_file()]
     if fill_missing_reports:
@@ -2035,7 +2065,7 @@ def bulk_upload_clean_modelscope_sessions(
                 )
 
     ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
-    candidates: list[tuple[Path, str, str, list[Path]]] = []
+    candidates: list[tuple[Path, str, str, list[Path], bool]] = []
     for index, (session, primitive, session_id) in enumerate(pending, start=1):
         add(
             f"[{index}/{len(pending)}] 筛选：{session.name}"
@@ -2057,22 +2087,29 @@ def bulk_upload_clean_modelscope_sessions(
             excluded.append(f"{session}: no default-selected BVH/CSV/TRC/MP4 Mocap file")
             yield render()
             continue
-        candidates.append((session, primitive, session_id, mocap_files))
+        key = (primitive, session_id)
+        is_replacement = key in remote_keys
+        candidates.append((session, primitive, session_id, mocap_files, is_replacement))
         yield render()
 
+    replacement_count = sum(1 for item in candidates if item[4])
+    new_count = len(candidates) - replacement_count
     add(
         (
-            f"新上传候选：{len(candidates)}；已上传跳过：{len(remote_skipped)}；"
+            f"候选：{len(candidates)}（新增 {new_count}，替换 {replacement_count}）；"
+            f"已上传跳过：{len(remote_skipped)}；"
             f"本地排除：{len(excluded)}"
         )
         if is_chinese
         else (
-            f"New upload candidates: {len(candidates)}; already uploaded: "
+            f"Candidates: {len(candidates)} ({new_count} new, {replacement_count} replacement); "
+            "already uploaded: "
             f"{len(remote_skipped)}; locally excluded: {len(excluded)}"
         )
     )
-    for session, primitive, session_id, _ in candidates:
-        add(f"+ {primitive}/{session_id}: {session}")
+    for session, primitive, session_id, _, is_replacement in candidates:
+        action = "replace" if is_replacement else "new"
+        add(f"+ {primitive}/{session_id}: {session} [{action}, date={selected_upload_date}]")
     for reason in excluded:
         add(f"- {reason}")
     yield render()
@@ -2085,11 +2122,16 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
 
-    completed = 0
+    completed_new = 0
+    completed_replacements = 0
     failed_items = 0
-    for index, (session, primitive, session_id, mocap_files) in enumerate(
-        candidates, start=1
-    ):
+    for index, (
+        session,
+        primitive,
+        session_id,
+        mocap_files,
+        is_replacement,
+    ) in enumerate(candidates, start=1):
         staged_root = sequential_modelscope_dataset_root(root, primitive, session_id)
         args = [
             "modelscope-stage",
@@ -2156,9 +2198,15 @@ def bulk_upload_clean_modelscope_sessions(
         )
 
         upload_attempts = SEQUENTIAL_UPLOAD_RETRIES + 1
+        upload_args = [
+            "modelscope-upload",
+            str(staged_root),
+            "--upload-date",
+            selected_upload_date,
+        ]
         for attempt in range(1, upload_attempts + 1):
             upload_result = yield from command_step(
-                ["modelscope-upload", str(staged_root)],
+                upload_args,
                 (
                     f"[{index}/{len(candidates)}] 上传尝试 {attempt}/{upload_attempts}："
                     f"{primitive}/{session_id}"
@@ -2195,23 +2243,33 @@ def bulk_upload_clean_modelscope_sessions(
             )
             yield render()
             continue
-        completed += 1
+        if is_replacement:
+            completed_replacements += 1
+        else:
+            completed_new += 1
         add(
-            f"[{index}/{len(candidates)}] 上传完成：{primitive}/{session_id}"
+            f"[{index}/{len(candidates)}] 上传完成：{primitive}/{session_id} "
+            f"（{'替换' if is_replacement else '新增'}，日期 {selected_upload_date}）"
             if is_chinese
-            else f"[{index}/{len(candidates)}] Upload complete: {primitive}/{session_id}"
+            else (
+                f"[{index}/{len(candidates)}] Upload complete: {primitive}/{session_id} "
+                f"({'replacement' if is_replacement else 'new'}, "
+                f"date {selected_upload_date})"
+            )
         )
         yield render()
 
     add(
         (
-            f"逐个处理完成：新上传 {completed}；失败跳过 {failed_items}；"
+            f"逐个处理完成：新增 {completed_new}；替换 {completed_replacements}；"
+            f"失败跳过 {failed_items}；"
             f"已上传跳过 {len(remote_skipped)}；本地排除 {len(excluded)}。"
         )
         if is_chinese
         else (
-            f"Sequential processing complete: {completed} new; {failed_items} failed and "
-            f"skipped; {len(remote_skipped)} already uploaded; {len(excluded)} locally excluded."
+            f"Sequential processing complete: {completed_new} new; "
+            f"{completed_replacements} replaced; {failed_items} failed and skipped; "
+            f"{len(remote_skipped)} already uploaded; {len(excluded)} locally excluded."
         )
     )
     yield render()
@@ -2511,9 +2569,7 @@ def language_updates(language: str):
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
 
     labels = language_values(language)
     return [
@@ -2530,6 +2586,8 @@ def language_updates(language: str):
         gr.update(label=labels["statistics_fill_missing"]),
         gr.update(value=labels["statistics_button"]),
         gr.update(value=labels["statistics_batch_help"]),
+        gr.update(label=labels["statistics_upload_date"]),
+        gr.update(label=labels["statistics_skip_existing"]),
         gr.update(value=labels["statistics_batch_upload"]),
         gr.update(label=labels["package_output"]),
         gr.update(label=labels["package_height"]),
@@ -2607,15 +2665,12 @@ def build_app():
     try:
         import gradio as gr
     except ImportError as exc:
-        raise RuntimeError(
-            "Web UI requires Gradio. Install it with: uv sync --extra web"
-        ) from exc
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
 
     labels = language_values("中文")
+    initial_upload_date = current_modelscope_upload_date()
     default_offset = load_default_offset()
-    initial_dataset_root, initial_session_choices, initial_session = (
-        load_session_browser_settings()
-    )
+    initial_dataset_root, initial_session_choices, initial_session = load_session_browser_settings()
     initial_modelscope_primitive = infer_modelscope_primitive(initial_session) or "P01"
     try:
         from robocap_rerun_tools.modelscope_publisher import load_modelscope_settings
@@ -2662,9 +2717,7 @@ def build_app():
                     value=8,
                     scale=2,
                 )
-                inspect_button = gr.Button(
-                    labels["inspect_button"], variant="primary", scale=1
-                )
+                inspect_button = gr.Button(labels["inspect_button"], variant="primary", scale=1)
             inspect_event = inspect_button.click(
                 inspect_session,
                 inputs=[session_dir, segment, inspect_mocap_ratio],
@@ -2715,7 +2768,22 @@ def build_app():
                 outputs=[output, statistics_result],
             )
             statistics_batch_help = gr.Markdown(labels["statistics_batch_help"])
-            statistics_batch_upload = gr.Button(labels["statistics_batch_upload"])
+            with gr.Row():
+                statistics_upload_date = gr.Textbox(
+                    label=labels["statistics_upload_date"],
+                    value=initial_upload_date,
+                    placeholder="YYYYMMDD",
+                    scale=2,
+                )
+                statistics_skip_existing = gr.Checkbox(
+                    label=labels["statistics_skip_existing"],
+                    value=True,
+                    scale=2,
+                )
+                statistics_batch_upload = gr.Button(
+                    labels["statistics_batch_upload"],
+                    scale=1,
+                )
             statistics_batch_upload.click(
                 bulk_upload_clean_modelscope_sessions,
                 inputs=[
@@ -2723,6 +2791,8 @@ def build_app():
                     statistics_mocap_ratio,
                     statistics_fill_missing,
                     language,
+                    statistics_upload_date,
+                    statistics_skip_existing,
                 ],
                 outputs=output,
             )
@@ -2801,9 +2871,7 @@ def build_app():
                     value=default_offset,
                     precision=0,
                 )
-            modelscope_intersection_help = gr.Markdown(
-                labels["modelscope_intersection_help"]
-            )
+            modelscope_intersection_help = gr.Markdown(labels["modelscope_intersection_help"])
             with gr.Row():
                 modelscope_refresh_inspection = gr.Checkbox(
                     label=labels["modelscope_refresh_inspection"], value=True
@@ -3057,6 +3125,8 @@ def build_app():
                 statistics_fill_missing,
                 statistics_button,
                 statistics_batch_help,
+                statistics_upload_date,
+                statistics_skip_existing,
                 statistics_batch_upload,
                 package_output,
                 package_height,

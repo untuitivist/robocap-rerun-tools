@@ -28,7 +28,8 @@ def fake_cli_stream(captured: list[str], output: str = "Done.", returncode: int 
     return stream
 
 
-def test_web_app_builds_with_report_viewer() -> None:
+def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
+    monkeypatch.setattr(web_app, "current_modelscope_upload_date", lambda: "20260901")
     app = web_app.build_app()
     config_data = app.get_config_file()
     config = json.dumps(config_data, ensure_ascii=False)
@@ -40,8 +41,22 @@ def test_web_app_builds_with_report_viewer() -> None:
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
     assert "补做缺失的检查报告" in config
     assert "统计根目录" in config
-    assert "逐个上传未上传的无差帧 Session" in config
-    assert "动作基元（从 mocap* 自动建议 PXX，可任意自定义）" in config
+    assert "逐个上传无差帧 Session" in config
+    assert "上传日期（YYYYMMDD）" in config
+    assert "跳过远端已有 Session" in config
+    skip_existing = next(
+        component
+        for component in config_data["components"]
+        if component.get("props", {}).get("label") == "跳过远端已有 Session"
+    )
+    assert skip_existing["props"]["value"] is True
+    upload_date = next(
+        component
+        for component in config_data["components"]
+        if component.get("props", {}).get("label") == "上传日期（YYYYMMDD）"
+    )
+    assert upload_date["props"]["value"] == "20260901"
+    assert "动作基元（从 mocap* 自动建议 A01/P01 等，可任意自定义）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
     assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
@@ -97,7 +112,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     uploaded = tmp_path / "EgoMotionActions" / "P01" / "session-uploaded"
     problem = tmp_path / "EgoMotionActions" / "P02" / "session-problem"
     clean_one = tmp_path / "EgoMotionActions" / "P03" / "session-clean-one"
-    clean_two = tmp_path / "EgoMotionActions" / "P04" / "session-clean-two"
+    clean_two = tmp_path / "EgoMotionActions" / "A04" / "session-clean-two"
     for session in (uploaded, problem, clean_one, clean_two):
         mocap = session / "mocap"
         mocap.mkdir(parents=True)
@@ -159,31 +174,31 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     monkeypatch.setattr(web_app, "stream_cli_command", fake_stream)
 
     output = collect_stream(
-        web_app.bulk_upload_clean_modelscope_sessions(tmp_path, 8, True, "中文")
+        web_app.bulk_upload_clean_modelscope_sessions(tmp_path, 8, True, "中文", "20260901", True)
     )
 
-    assert [command[0] for command in commands] == [
-        "modelscope-auth",
-        "modelscope-stage",
-        "modelscope-upload",
-        "modelscope-upload",
-        "modelscope-upload",
-        "modelscope-upload",
-        "modelscope-stage",
-        "modelscope-upload",
-    ]
-    expected_roots = [
-        tmp_path.resolve() / "_modelscope_dataset" / "sequential" / "P03" / "session-clean-one",
-        tmp_path.resolve() / "_modelscope_dataset" / "sequential" / "P04" / "session-clean-two",
-    ]
-    for stage, session, primitive, staged_root in zip(
-        (commands[1], commands[6]),
-        (clean_one, clean_two),
-        ("P03", "P04"),
-        expected_roots,
-        strict=True,
-    ):
-        assert stage[1] == str(session.resolve())
+    assert commands[0] == ["modelscope-auth"]
+    stage_commands = [command for command in commands if command[0] == "modelscope-stage"]
+    upload_commands = [command for command in commands if command[0] == "modelscope-upload"]
+    expected_roots = {
+        "P03": tmp_path.resolve()
+        / "_modelscope_dataset"
+        / "sequential"
+        / "P03"
+        / "session-clean-one",
+        "A04": tmp_path.resolve()
+        / "_modelscope_dataset"
+        / "sequential"
+        / "A04"
+        / "session-clean-two",
+    }
+    expected_stages = {
+        str(clean_one.resolve()): ("P03", expected_roots["P03"]),
+        str(clean_two.resolve()): ("A04", expected_roots["A04"]),
+    }
+    assert len(stage_commands) == len(expected_stages)
+    for stage in stage_commands:
+        primitive, staged_root = expected_stages[stage[1]]
         assert stage[stage.index("--primitive-id") + 1] == primitive
         assert stage[stage.index("--dataset-root") + 1] == str(staged_root)
         selected = [stage[index + 1] for index, item in enumerate(stage) if item == "--mocap-file"]
@@ -191,11 +206,21 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
             str(Path("mocap") / "body.trc"),
             str(Path("mocap") / "third.mp4"),
         }
-    assert commands[2:6] == [
-        ["modelscope-upload", str(expected_roots[0])],
-    ] * 4
-    assert commands[7] == ["modelscope-upload", str(expected_roots[1])]
-    assert validated_roots == expected_roots
+    expected_failed_upload = [
+        "modelscope-upload",
+        str(expected_roots["P03"]),
+        "--upload-date",
+        "20260901",
+    ]
+    expected_successful_upload = [
+        "modelscope-upload",
+        str(expected_roots["A04"]),
+        "--upload-date",
+        "20260901",
+    ]
+    assert upload_commands.count(expected_failed_upload) == 4
+    assert upload_commands.count(expected_successful_upload) == 1
+    assert set(validated_roots) == set(expected_roots.values())
     assert uploaded not in summarized
     assert set(summarized) == {problem.resolve(), clean_one.resolve(), clean_two.resolve()}
     assert "已上传跳过：1" in output
@@ -203,7 +228,78 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     assert "session-problem: unchecked or frame-count difference" in output
     assert "开始第 3/3 次重试" in output
     assert "共尝试 4 次仍失败，跳过 P03/session-clean-one" in output
-    assert "逐个处理完成：新上传 1；失败跳过 1；已上传跳过 1；本地排除 1" in output
+    assert "逐个处理完成：新增 1；替换 0；失败跳过 1；已上传跳过 1；本地排除 1" in output
+
+
+def test_modelscope_upload_date_defaults_to_today_and_accepts_manual(monkeypatch) -> None:
+    monkeypatch.setattr(web_app, "current_modelscope_upload_date", lambda: "20260901")
+
+    assert web_app.resolve_modelscope_upload_date(None) == "20260901"
+    assert web_app.resolve_modelscope_upload_date("20260828") == "20260828"
+    with pytest.raises(ValueError, match="required"):
+        web_app.resolve_modelscope_upload_date("")
+    with pytest.raises(ValueError, match="Upload date"):
+        web_app.resolve_modelscope_upload_date("2026-09-01")
+
+
+def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
+    tmp_path, monkeypatch
+) -> None:
+    from robocap_rerun_tools import cli, dataset_statistics, modelscope_publisher
+
+    session = tmp_path / "EgoMotionActions" / "P01" / "session-uploaded"
+    mocap = session / "mocap"
+    mocap.mkdir(parents=True)
+    (session / "robocap_segment1_video_left.mp4").write_bytes(b"raw-video")
+    (mocap / "body.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    (mocap / "third.mp4").write_bytes(b"raw-third-person")
+    report = dataset_statistics.timestamp_report_path(session, "segment1")
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        '<script>const report={"ratio":8,"referenceFrames":9,'
+        '"mocapFrames":80,"thirdFrames":10}; const eventTypes=[];</script>',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dataset_statistics, "probe_video_duration", lambda *_args: (10.0, None))
+    monkeypatch.setattr(cli, "resolve_ffprobe", lambda *_args: "ffprobe")
+    monkeypatch.setattr(
+        modelscope_publisher,
+        "fetch_remote_session_keys",
+        lambda: frozenset({("P01", "session-uploaded")}),
+    )
+    monkeypatch.setattr(
+        web_app,
+        "validate_pending_modelscope_frame_counts",
+        lambda _root: ("_prepared/only-session",),
+    )
+    commands: list[list[str]] = []
+
+    def fake_stream(args):
+        commands.append(list(args))
+        yield "Done."
+        return web_app.StreamCommandResult(0, "Done.", "Done.")
+
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_stream)
+
+    output = collect_stream(
+        web_app.bulk_upload_clean_modelscope_sessions(
+            tmp_path,
+            8,
+            True,
+            "中文",
+            "20260901",
+            False,
+        )
+    )
+
+    assert [command[0] for command in commands] == [
+        "modelscope-auth",
+        "modelscope-stage",
+        "modelscope-upload",
+    ]
+    assert commands[-1][-2:] == ["--upload-date", "20260901"]
+    assert "替换候选：1" in output
+    assert "逐个处理完成：新增 0；替换 1" in output
 
 
 def test_batch_primitive_supports_explicit_custom_action_hierarchy(tmp_path) -> None:
@@ -252,7 +348,7 @@ def test_pending_modelscope_validation_rejects_frame_difference(tmp_path, monkey
 
 def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypatch) -> None:
     session = tmp_path / "session08"
-    (session / "mocap-P08-St-user").mkdir(parents=True)
+    (session / "mocap-a08-St-user").mkdir(parents=True)
     monkeypatch.setattr(
         web_app,
         "load_session_browser_settings",
@@ -267,10 +363,11 @@ def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypat
     primitive = next(
         component
         for component in config["components"]
-        if component["props"].get("label") == "动作基元（从 mocap* 自动建议 PXX，可任意自定义）"
+        if component["props"].get("label")
+        == "动作基元（从 mocap* 自动建议 A01/P01 等，可任意自定义）"
     )
 
-    assert primitive["props"]["value"] == "P08"
+    assert primitive["props"]["value"] == "A08"
     assert primitive["props"]["allow_custom_value"] is True
 
 
@@ -400,8 +497,8 @@ def test_modelscope_primitive_inference_ignores_missing_or_ambiguous_matches(tmp
     assert web_app.infer_modelscope_primitive(no_match) is None
 
     ambiguous = tmp_path / "ambiguous"
-    (ambiguous / "mocap-P01-take01").mkdir(parents=True)
-    (ambiguous / "mocap-P02-take02").mkdir()
+    (ambiguous / "mocap-A01-take01").mkdir(parents=True)
+    (ambiguous / "mocap-B02-take02").mkdir()
     assert web_app.infer_modelscope_primitive(ambiguous) is None
 
     updates = web_app.select_session(tmp_path, no_match, tmp_path / "web.json")

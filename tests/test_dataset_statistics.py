@@ -49,15 +49,15 @@ def test_discover_segment_references_uses_one_video_per_segment(tmp_path: Path) 
 
 
 def test_infer_action_primitive_uses_path_and_mocap_directory(tmp_path: Path) -> None:
-    from_path = tmp_path / "EgoMotionActions" / "P04" / "session04"
+    from_path = tmp_path / "EgoMotionActions" / "A04" / "session04"
     from_path.mkdir(parents=True)
     from_mocap = tmp_path / "session03"
-    (from_mocap / "mocap-P03-St-user").mkdir(parents=True)
-    conflicting = tmp_path / "P04" / "session-conflict"
-    (conflicting / "mocap-P03-St-user").mkdir(parents=True)
+    (from_mocap / "mocap-b03-St-user").mkdir(parents=True)
+    conflicting = tmp_path / "A04" / "session-conflict"
+    (conflicting / "mocap-B03-St-user").mkdir(parents=True)
 
-    assert statistics.infer_action_primitive(tmp_path, from_path) == "P04"
-    assert statistics.infer_action_primitive(tmp_path, from_mocap) == "P03"
+    assert statistics.infer_action_primitive(tmp_path, from_path) == "A04"
+    assert statistics.infer_action_primitive(tmp_path, from_mocap) == "B03"
     assert (
         statistics.infer_action_primitive(tmp_path, conflicting) == statistics.UNASSIGNED_PRIMITIVE
     )
@@ -139,7 +139,7 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert statistics.session_frame_anomaly_labels(rows[1], language="English") == (
         "mocap missing",
     )
-    assert "| PXX | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 |" in markdown
+    assert "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | Session 数 |" in markdown
     assert "- 未检查时长：**00:00:10.000**" in markdown
     assert "- 差帧时长：**00:00:10.000**" in markdown
     assert "- 无误时长：**00:00:10.000**" in markdown

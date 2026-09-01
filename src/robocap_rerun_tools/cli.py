@@ -1952,9 +1952,13 @@ def command_modelscope_upload(args: argparse.Namespace) -> int:
         ModelScopePublisherError,
         load_staged_dataset,
         upload_staged_dataset,
+        validate_upload_date,
     )
 
     try:
+        selected_upload_date = (
+            validate_upload_date(args.upload_date) if args.upload_date is not None else None
+        )
         print("ModelScope upload stage: validate prepared dataset")
         staged = load_staged_dataset(args.dataset_root)
         print("ModelScope upload stage: authenticate and upload files")
@@ -1968,6 +1972,7 @@ def command_modelscope_upload(args: argparse.Namespace) -> int:
             commit_message=args.commit_message,
             max_workers=args.max_workers,
             use_cache=args.use_cache,
+            upload_date=selected_upload_date,
         )
     except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
         print(f"ModelScope upload failed: {exc}", file=sys.stderr)
@@ -2068,7 +2073,10 @@ def build_parser() -> argparse.ArgumentParser:
     modelscope_stage_parser.add_argument(
         "--primitive-id",
         required=True,
-        help="Action directory name; PXX is the built-in convention, not a required format.",
+        help=(
+            "Action directory name; [A-Z]NN is the compact convention, P01-P29 are built in, "
+            "and custom names are accepted."
+        ),
     )
     modelscope_stage_parser.add_argument("--dataset-root", type=Path, default=None)
     modelscope_stage_parser.add_argument("--session-id", default=None)
@@ -2171,6 +2179,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="ModelScope owner/name; defaults to MODELSCOPE_REPO_ID from .env.",
     )
     modelscope_upload_parser.add_argument("--revision", default="master")
+    modelscope_upload_parser.add_argument(
+        "--upload-date",
+        default=None,
+        help=(
+            "Optional YYYYMMDD destination date. Omit to use the uploader's current local date; "
+            "an already-finalized retry keeps its original date."
+        ),
+    )
     modelscope_upload_parser.add_argument("--create-if-missing", action="store_true")
     modelscope_upload_parser.add_argument(
         "--visibility", choices=("private", "internal", "public"), default="private"

@@ -21,7 +21,8 @@ use `capture_time` as the primary timeline; frame-aligned exports use the intege
   losslessly cropped video only.
 - Open generated HTML reports and RRD recordings directly from the Web UI.
 - Scan a collection root recursively and select any detected session from one searchable dropdown.
-- Summarize recording duration by `PXX`, using one Robocap reference video per Segment, and
+- Summarize recording duration by action primitive, including compact IDs such as `A01` or `P03`,
+  using one Robocap reference video per Segment, and
   optionally create inspection reports that are missing before calculating unchecked/problem time.
 
 ## Session Layout
@@ -126,7 +127,7 @@ embedded for offline sharing. The `Reports` tab scans these files and opens the 
 the default browser; the output box prints the generated path instead of duplicating the report.
 
 The `Statistics` tab scans every detected Session under the collection root and groups duration by
-the unique `PXX` token found in the Session path or direct `mocap*` directory. Each Segment is timed
+the unique `[A-Z]NN` token found in the Session path or direct `mocap*` directory. Each Segment is timed
 from one Robocap reference video, so multiple cameras are never added repeatedly. Missing inspection
 reports can be created serially with the selected 8/4 Mocap ratio before aggregation. The result
 separates unchecked, frame-count-difference, and error-free duration, then shows total duration,
@@ -139,16 +140,20 @@ counts that do not satisfy `n:ratio*(n+1):(n+1)`; error-free covers valid report
 Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
-The same tab uploads clean Sessions one by one. It first reads the target repository's remote
-`metadata.jsonl`; matching `(primitive_id, session_id)` entries are skipped before missing-report
-generation, staging, or video processing. Each remaining Session must satisfy the frame-count
-relation and completes prepare, clean validation, and upload in an isolated staging root before the
-next starts. An upload failure is retried three times after the initial attempt; after four failed
-attempts the Session is skipped and processing continues. Preparation or clean-validation failure
-also skips only the current Session. Completed uploads are not rolled back, and failed staging data
-is retained for retry. The flow copies full-session video byte-for-byte, selects BVH/CSV/TRC/MP4
-files except paths containing `unnamed`, includes no RRD, and reads the repository from `.env`.
-Sessions without an unambiguous `PXX` (or an explicit custom action directory in an
+The same tab uploads clean Sessions one by one. Its `YYYYMMDD` field starts with the uploader's local
+date and can be edited; every Session in that run uses the selected date. It first reads the target
+repository's remote `metadata.jsonl`. `Skip existing remote Sessions` is enabled by default, so
+matching `(primitive_id, session_id)` entries are excluded before missing-report generation, staging,
+or video processing. Clear the option to upload those Sessions again and replace their metadata rows.
+Choosing a different date does not delete the old remote directory. Each selected Session must
+satisfy the frame-count relation and completes prepare, clean validation, and upload in an isolated
+staging root before the next starts. An upload failure is retried three times after the initial
+attempt; after four failed attempts the Session is skipped and processing continues. Preparation or
+clean-validation failure also skips only the current Session. Completed uploads are not rolled back,
+and failed staging data is retained for retry. The flow copies full-session video byte-for-byte,
+selects BVH/CSV/TRC/MP4 files except paths containing `unnamed`, includes no RRD, and reads the
+repository from `.env`.
+Sessions without an unambiguous `[A-Z]NN` token (or an explicit custom action directory in an
 `EgoMotionActions` hierarchy) are excluded.
 
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
@@ -196,8 +201,8 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
   raw_calibration/                       # required: maintained by calibration workflow
     <device_id>/                         # files are resolved by explicit device ID
   EgoMotionActions/                      # generated action data
-    <YYYYMMDD>/                          # uploader-local date for new uploads
-      <primitive_id>/                    # P01-P29 convention or a custom action name
+    <YYYYMMDD>/                          # selected upload date; defaults to uploader-local date
+      <primitive_id>/                    # [A-Z]NN convention or a custom action name
         <session_id>/
           robocap_<segment>_video_*.mp4       # required: six first-person cameras
           robocap_<segment>_imu_*.db          # required: Robocap IMU
@@ -281,10 +286,11 @@ or absolute path. Omitting it in the CLI preserves the compatibility behavior of
 packageable Mocap file. Preparing the same Session again synchronizes the canonical staged `mocap/`
 directory with the current selection, so a previously selected file does not remain.
 
-Selecting a Session auto-matches its action primitive from a standalone `PXX` token in the direct
-`mocap*` directory name. For example, `mocap-P03-St-user` suggests `P03`. This is only a default:
-the editable dropdown accepts any safe single-directory name, and a manual value takes precedence.
-A missing or conflicting match leaves its current value unchanged.
+Selecting a Session auto-matches its action primitive from a standalone letter plus two digits token
+in the direct `mocap*` directory name. For example, `mocap-A01-St-user` suggests `A01`, while
+`mocap-P03-St-user` suggests `P03`. This is only a default: the editable dropdown accepts any safe
+single-directory name, and a manual value takes precedence. A missing or conflicting match leaves
+its current value unchanged.
 
 RRD selection works the same way but allows an empty selection. The Web tab scans the selected
 Segment, and the repeatable CLI option is `--rrd-file`; `--include-rrd` remains available when every
@@ -301,11 +307,15 @@ that have not changed:
 robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
 
-When upload starts, every pending session receives the uploader's local date and is moved to
-`EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`. The exact ISO start time remains in
-`upload_batch_created_at`. The manifest and `metadata.jsonl` paths are updated atomically before
-transfer. If transfer fails, retrying reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain
-readable but are no longer generated. `_prepared/` is excluded from upload.
+Use `--upload-date YYYYMMDD` to select the destination date explicitly. The Statistics tab always
+passes the value shown in its upload-date field.
+
+When upload starts, every pending session receives the selected date, which defaults to the uploader's
+local date, and is moved to `EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`. The exact ISO
+start time remains in `upload_batch_created_at`. The manifest and `metadata.jsonl` paths are updated
+atomically before transfer. If transfer fails, retrying reuses the assigned date. Legacy
+`YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. `_prepared/` is excluded from
+upload.
 `EgoMotionActions/Demo/` is reserved for recordings migrated from the legacy non-batched layout.
 The uploader downloads and merges the existing remote `metadata.jsonl` before committing the new
 index, so unrelated batches and Demo rows are retained. Local `(primitive_id, session_id)` rows
