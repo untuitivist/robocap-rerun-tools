@@ -50,7 +50,8 @@ UPLOAD_BATCH_FORMAT = "%Y%m%d"
 UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}\Z")
 LEGACY_UPLOAD_BATCH_FORMAT = "%Y%m%d_%H%M%S"
 LEGACY_UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}_\d{6}\Z")
-PRIMITIVE_ID_PATTERN = re.compile(r"[A-Z]\d{2}\Z")
+PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
+FALLBACK_PRIMITIVE_ID_PATTERN = re.compile(r"[A-OQ-Z]\d{2}\Z")
 PRIMITIVE_ID_INVALID_CHAR_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 WINDOWS_RESERVED_NAMES = {
     "CON",
@@ -148,7 +149,9 @@ def validate_primitive_id(value: str) -> str:
         raise ValueError("Primitive ID must not use a reserved Windows device name.")
 
     canonical_id = primitive_id.upper()
-    if PRIMITIVE_ID_PATTERN.fullmatch(canonical_id):
+    if PRIMITIVE_ID_PATTERN.fullmatch(canonical_id) or FALLBACK_PRIMITIVE_ID_PATTERN.fullmatch(
+        canonical_id
+    ):
         return canonical_id
     return primitive_id
 

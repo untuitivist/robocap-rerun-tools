@@ -13,7 +13,13 @@ from .session_layout import discover_mocap_directories
 TIMESTAMP_REPORT_NAME = "timestamp_anomaly_detail_table.html"
 REPORT_PREFIX = "const report="
 REPORT_SUFFIX = "; const eventTypes="
-PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])([A-Z]\d{2})(?![A-Z0-9])", re.IGNORECASE)
+PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d{2})(?![A-Z0-9])", re.IGNORECASE)
+FALLBACK_PRIMITIVE_PATTERN = re.compile(
+    r"(?<![A-Z0-9])([A-OQ-Z]\d{2})(?![A-Z0-9])", re.IGNORECASE
+)
+MOCAP_FALLBACK_PRIMITIVE_PATTERN = re.compile(
+    r"^mocap[-_]([A-Z]\d{2})(?=[-_]|$)", re.IGNORECASE
+)
 ROBOCAP_VIDEO_PATTERN = re.compile(
     r"^robocap_(?P<segment>.+?)_video_(?P<camera>.+)\.mp4$", re.IGNORECASE
 )
@@ -134,17 +140,36 @@ def discover_segment_references(session_dir: Path) -> tuple[SegmentReference, ..
 
 
 def infer_action_primitive(dataset_root: Path, session_dir: Path) -> str:
-    matches: set[str] = set()
     try:
         relative_parts = session_dir.resolve().relative_to(dataset_root.resolve()).parts
     except (OSError, ValueError):
         relative_parts = (session_dir.name,)
 
+    matches: set[str] = set()
     for part in relative_parts:
         matches.update(match.group(1).upper() for match in PRIMITIVE_PATTERN.finditer(part))
     for mocap_dir in discover_mocap_directories(session_dir):
         matches.update(
             match.group(1).upper() for match in PRIMITIVE_PATTERN.finditer(mocap_dir.name)
+        )
+    if matches:
+        return next(iter(matches)) if len(matches) == 1 else UNASSIGNED_PRIMITIVE
+
+    mocap_matches = {
+        match.group(1).upper()
+        for mocap_dir in discover_mocap_directories(session_dir)
+        if (match := MOCAP_FALLBACK_PRIMITIVE_PATTERN.search(mocap_dir.name)) is not None
+    }
+    if mocap_matches:
+        return (
+            next(iter(mocap_matches))
+            if len(mocap_matches) == 1
+            else UNASSIGNED_PRIMITIVE
+        )
+
+    for part in relative_parts:
+        matches.update(
+            match.group(1).upper() for match in FALLBACK_PRIMITIVE_PATTERN.finditer(part)
         )
     return next(iter(matches)) if len(matches) == 1 else UNASSIGNED_PRIMITIVE
 
@@ -306,11 +331,13 @@ def summarize_session(
     )
 
 
-def _primitive_sort_key(value: str) -> tuple[int, str, int]:
-    match = re.fullmatch(r"([A-Z])(\d{2})", value, re.IGNORECASE)
+def _primitive_sort_key(value: str) -> tuple[int, int | str]:
+    match = re.fullmatch(r"P(\d{2})", value, re.IGNORECASE)
     if match is not None:
-        return 0, match.group(1).upper(), int(match.group(2))
-    return 1, value.casefold(), 0
+        return 0, int(match.group(1))
+    if re.fullmatch(r"[A-OQ-Z]\d{2}", value, re.IGNORECASE):
+        return 1, value.upper()
+    return 2, value.casefold()
 
 
 def aggregate_by_primitive(

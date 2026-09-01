@@ -348,7 +348,7 @@ def test_pending_modelscope_validation_rejects_frame_difference(tmp_path, monkey
 
 def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypatch) -> None:
     session = tmp_path / "session08"
-    (session / "mocap-a08-St-user").mkdir(parents=True)
+    (session / "mocap-P08-St-user").mkdir(parents=True)
     monkeypatch.setattr(
         web_app,
         "load_session_browser_settings",
@@ -367,7 +367,7 @@ def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypat
         == "动作基元（从 mocap* 自动建议 A01/P01 等，可任意自定义）"
     )
 
-    assert primitive["props"]["value"] == "A08"
+    assert primitive["props"]["value"] == "P08"
     assert primitive["props"]["allow_custom_value"] is True
 
 
@@ -496,10 +496,29 @@ def test_modelscope_primitive_inference_ignores_missing_or_ambiguous_matches(tmp
     (no_match / "mocap-take01").mkdir(parents=True)
     assert web_app.infer_modelscope_primitive(no_match) is None
 
-    ambiguous = tmp_path / "ambiguous"
-    (ambiguous / "mocap-A01-take01").mkdir(parents=True)
-    (ambiguous / "mocap-B02-take02").mkdir()
-    assert web_app.infer_modelscope_primitive(ambiguous) is None
+    named = tmp_path / "named"
+    (named / "mocap-L01-S07-wangyang-10p").mkdir(parents=True)
+    assert web_app.infer_modelscope_primitive(named) == "L01"
+
+    s_action = tmp_path / "s-action"
+    (s_action / "mocap-S01-S07-wangyang-10p").mkdir(parents=True)
+    assert web_app.infer_modelscope_primitive(s_action) == "S01"
+
+    p_precedence = tmp_path / "p-precedence"
+    (p_precedence / "mocap-L01-S07-wangyang-10p").mkdir(parents=True)
+    (p_precedence / "mocap-P02-S07-wangyang-10p").mkdir()
+    assert web_app.infer_modelscope_primitive(p_precedence) == "P02"
+
+    p_ambiguous = tmp_path / "p-ambiguous"
+    (p_ambiguous / "mocap-A01-S07-user-10p").mkdir(parents=True)
+    (p_ambiguous / "mocap-P01-take01").mkdir()
+    (p_ambiguous / "mocap-P02-take02").mkdir()
+    assert web_app.infer_modelscope_primitive(p_ambiguous) is None
+
+    fallback_ambiguous = tmp_path / "fallback-ambiguous"
+    (fallback_ambiguous / "mocap-A01-S07-user-10p").mkdir(parents=True)
+    (fallback_ambiguous / "mocap-B02-S07-user-10p").mkdir()
+    assert web_app.infer_modelscope_primitive(fallback_ambiguous) is None
 
     updates = web_app.select_session(tmp_path, no_match, tmp_path / "web.json")
     assert "value" not in updates[-1]

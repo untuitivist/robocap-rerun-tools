@@ -49,17 +49,31 @@ def test_discover_segment_references_uses_one_video_per_segment(tmp_path: Path) 
 
 
 def test_infer_action_primitive_uses_path_and_mocap_directory(tmp_path: Path) -> None:
-    from_path = tmp_path / "EgoMotionActions" / "A04" / "session04"
-    from_path.mkdir(parents=True)
+    from_p_path = tmp_path / "EgoMotionActions" / "P04" / "session04"
+    (from_p_path / "mocap-L01-S07-wangyang-10p").mkdir(parents=True)
+    from_fallback_path = tmp_path / "EgoMotionActions" / "A04" / "session04"
+    from_fallback_path.mkdir(parents=True)
     from_mocap = tmp_path / "session03"
-    (from_mocap / "mocap-b03-St-user").mkdir(parents=True)
-    conflicting = tmp_path / "A04" / "session-conflict"
-    (conflicting / "mocap-B03-St-user").mkdir(parents=True)
+    (from_mocap / "mocap-L01-S07-wangyang-10p").mkdir(parents=True)
+    s_action = tmp_path / "session-s-action"
+    (s_action / "mocap-S01-S07-wangyang-10p").mkdir(parents=True)
+    p_conflicting = tmp_path / "P04" / "session-p-conflict"
+    (p_conflicting / "mocap-P03-St-user").mkdir(parents=True)
+    fallback_conflicting = tmp_path / "session-fallback-conflict"
+    (fallback_conflicting / "mocap-A04-S07-user-10p").mkdir(parents=True)
+    (fallback_conflicting / "mocap-B03-S07-user-10p").mkdir()
 
-    assert statistics.infer_action_primitive(tmp_path, from_path) == "A04"
-    assert statistics.infer_action_primitive(tmp_path, from_mocap) == "B03"
+    assert statistics.infer_action_primitive(tmp_path, from_p_path) == "P04"
+    assert statistics.infer_action_primitive(tmp_path, from_fallback_path) == "A04"
+    assert statistics.infer_action_primitive(tmp_path, from_mocap) == "L01"
+    assert statistics.infer_action_primitive(tmp_path, s_action) == "S01"
     assert (
-        statistics.infer_action_primitive(tmp_path, conflicting) == statistics.UNASSIGNED_PRIMITIVE
+        statistics.infer_action_primitive(tmp_path, p_conflicting)
+        == statistics.UNASSIGNED_PRIMITIVE
+    )
+    assert (
+        statistics.infer_action_primitive(tmp_path, fallback_conflicting)
+        == statistics.UNASSIGNED_PRIMITIVE
     )
 
 

@@ -28,8 +28,9 @@ from robocap_rerun_tools import MEDIA_TOOLS
 from robocap_rerun_tools.session_layout import discover_mocap_directories
 
 DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
-MOCAP_PRIMITIVE_PATTERN = re.compile(
-    r"(?<![A-Z0-9])([A-Z]\d{2})(?![A-Z0-9])", re.IGNORECASE
+MOCAP_PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d{2})(?![A-Z0-9])", re.IGNORECASE)
+MOCAP_FALLBACK_PRIMITIVE_PATTERN = re.compile(
+    r"^mocap[-_]([A-Z]\d{2})(?=[-_]|$)", re.IGNORECASE
 )
 SEQUENTIAL_UPLOAD_RETRIES = 3
 
@@ -128,10 +129,12 @@ Scan the Session Mocap files before staging. The list includes every packageable
 single `mocap*` source directory. Only BVH, CSV, TRC, and MP4 files are selected by default, and any
 relative path containing `unnamed` is left unselected regardless of case. Other detected files stay
 available for manual selection; only checked Mocap files are staged, and at least one must remain.
-When a Session is selected, the action primitive is auto-matched from a standalone letter plus two
-digits token in the direct `mocap*` directory name, such as `A01` or `P03`. This is only a suggestion.
-The dropdown accepts any safe custom single-directory name, and the manual value takes precedence.
-No match or conflicting matches preserve the current value.
+Compact action IDs use `mocap-<action:[A-Z]NN>-S<session>-<collector>-<count>p`. When a Session is
+selected, the original standalone `PXX` search in direct `mocap*` directory names runs first and is
+unchanged. Only when no `PXX` exists does the fallback read the first action field after `mocap-` or
+`mocap_`. In `mocap-L01-S07-wangyang-10p`, the action is `L01`, `S07` is the Session number,
+`wangyang` is the collector, and `10p` is the repetition count. Only the first field participates in
+action matching. This is a suggestion; a manual custom value takes precedence.
 
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
@@ -242,9 +245,11 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件；默认只
 勾选 BVH、CSV、TRC 与 MP4，并对相对路径中包含 `unnamed` 的文件取消默认勾选（不区分大小写）。其他
 文件仍保留在列表中供手动选择；只有勾选的 Mocap 文件会进入暂存，且至少保留一个。
-选择 Session 时，工具会从直属 `mocap*` 目录名中的“一个字母加两位数字”独立片段自动建议动作基元，
-例如 `mocap-A01-St-user` 会填入 `A01`，`mocap-P03-St-user` 会填入 `P03`。这只是建议值；下拉框允许
-任意安全的单级目录名，手动输入具有最终优先级。没有匹配或出现冲突匹配时保留当前值。
+紧凑动作 ID 统一使用 `mocap-<动作:[A-Z]NN>-S<Session序号>-<采集员>-<次数>p`。选择 Session 时，
+原有的直属 `mocap*` 目录名独立 `PXX` 搜索会优先执行且语义不变。只有完全没有 `PXX` 时，后备规则
+才读取紧跟 `mocap-` 或 `mocap_` 的第一个动作字段。对于 `mocap-L01-S07-wangyang-10p`，动作是
+`L01`，`S07` 是 Session 序号，`wangyang` 是采集员，`10p` 是重复次数；只有第一个字段参与动作
+匹配。这只是建议值，手动输入的安全自定义值具有最终优先级。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
@@ -925,6 +930,13 @@ def infer_modelscope_primitive(session_dir: object) -> str | None:
         match.group(1).upper()
         for mocap_dir in discover_mocap_directories(candidate)
         if (match := MOCAP_PRIMITIVE_PATTERN.search(mocap_dir.name)) is not None
+    }
+    if matches:
+        return next(iter(matches)) if len(matches) == 1 else None
+    matches = {
+        match.group(1).upper()
+        for mocap_dir in discover_mocap_directories(candidate)
+        if (match := MOCAP_FALLBACK_PRIMITIVE_PATTERN.search(mocap_dir.name)) is not None
     }
     return next(iter(matches)) if len(matches) == 1 else None
 

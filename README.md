@@ -127,8 +127,10 @@ embedded for offline sharing. The `Reports` tab scans these files and opens the 
 the default browser; the output box prints the generated path instead of duplicating the report.
 
 The `Statistics` tab scans every detected Session under the collection root and groups duration by
-the unique `[A-Z]NN` token found in the Session path or direct `mocap*` directory. Each Segment is timed
-from one Robocap reference video, so multiple cameras are never added repeatedly. Missing inspection
+action primitive. Its original standalone `PXX` search across the Session path and direct `mocap*`
+directory is unchanged and takes precedence. With no `PXX`, an explicit `[A-Z]NN` action directory or
+the first token after `mocap-`/`mocap_` is used. Each Segment is timed from one Robocap reference
+video, so multiple cameras are never added repeatedly. Missing inspection
 reports can be created serially with the selected 8/4 Mocap ratio before aggregation. The result
 separates unchecked, frame-count-difference, and error-free duration, then shows total duration,
 Session count, a
@@ -286,11 +288,13 @@ or absolute path. Omitting it in the CLI preserves the compatibility behavior of
 packageable Mocap file. Preparing the same Session again synchronizes the canonical staged `mocap/`
 directory with the current selection, so a previously selected file does not remain.
 
-Selecting a Session auto-matches its action primitive from a standalone letter plus two digits token
-in the direct `mocap*` directory name. For example, `mocap-A01-St-user` suggests `A01`, while
-`mocap-P03-St-user` suggests `P03`. This is only a default: the editable dropdown accepts any safe
-single-directory name, and a manual value takes precedence. A missing or conflicting match leaves
-its current value unchanged.
+Compact action IDs use `mocap-<action:[A-Z]NN>-S<session>-<collector>-<count>p`. Selecting a Session
+first applies the unchanged standalone `PXX` search to direct `mocap*` directory names. If no `PXX`
+exists, the fallback reads only the first action field immediately after `mocap-` or `mocap_`. Thus
+`mocap-L01-S07-wangyang-10p` suggests `L01`; `S07` is the Session number, `wangyang` is the collector,
+and `10p` is the repetition count. This is only a default: the editable dropdown accepts any safe
+single-directory name, and a manual value takes precedence. A missing or conflicting match leaves its
+current value unchanged.
 
 RRD selection works the same way but allows an empty selection. The Web tab scans the selected
 Segment, and the repeatable CLI option is `--rrd-file`; `--include-rrd` remains available when every
