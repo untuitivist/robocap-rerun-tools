@@ -39,6 +39,13 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "数据集根目录" in config
     assert "扫描 Session" in config
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
+    assert "帧对比 / Frame Comparison" in config
+    assert "视频（每个勾选的视频占一列）" in config
+    assert "起始帧（从 0 开始，包含）" in config
+    assert "结束帧（从 0 开始，包含）" in config
+    assert "生成帧对比图" in config
+    assert "预览" in config
+    assert "输出图片" in config
     assert "补做缺失的检查报告" in config
     assert "全部重做检查报告" in config
     rebuild_all = next(
@@ -584,6 +591,9 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
         "",
         True,
         "P03",
+        [],
+        None,
+        None,
     ]
     assert updates[1]["choices"] == []
     assert updates[3]["choices"] == []
@@ -592,6 +602,7 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
     assert updates[6]["choices"] == []
     assert updates[8]["interactive"] is True
     assert updates[9]["value"] == "P03"
+    assert updates[10]["choices"] == []
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert settings["session_dir"] == str(session)
 
@@ -626,7 +637,7 @@ def test_modelscope_primitive_inference_ignores_missing_or_ambiguous_matches(tmp
     assert web_app.infer_modelscope_primitive(fallback_ambiguous) is None
 
     updates = web_app.select_session(tmp_path, no_match, tmp_path / "web.json")
-    assert "value" not in updates[-1]
+    assert "value" not in updates[9]
 
 
 def test_run_process_does_not_set_a_timeout(monkeypatch) -> None:
@@ -936,6 +947,27 @@ def test_scan_files_reflects_detected_robowrist_streams(tmp_path) -> None:
     assert preserved_off[4]["interactive"] is True
     assert detected_on[4]["value"] is True
     assert detected_on[4]["interactive"] is True
+
+
+def test_scan_frame_comparison_videos_returns_relative_labels_and_absolute_values(tmp_path) -> None:
+    first = tmp_path / "capture" / "left.mp4"
+    first.parent.mkdir()
+    first.write_bytes(b"")
+    second = tmp_path / "mocap" / "third.MOV"
+    second.parent.mkdir()
+    second.write_bytes(b"")
+    generated = tmp_path / "_artifacts" / "proxy.mp4"
+    generated.parent.mkdir()
+    generated.write_bytes(b"")
+
+    summary, update = web_app.scan_frame_comparison_videos(str(tmp_path), "中文")
+
+    assert "检测到视频：2" in summary
+    assert update["choices"] == [
+        ("capture/left.mp4", str(first.resolve())),
+        ("mocap/third.MOV", str(second.resolve())),
+    ]
+    assert update["value"] == []
 
 
 def test_scan_rrd_files_selects_newest_recording(tmp_path) -> None:

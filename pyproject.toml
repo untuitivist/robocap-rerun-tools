@@ -29,6 +29,7 @@ dev = [
 ]
 web = [
   "gradio>=4.44",
+  "pillow>=10",
 ]
 
 [project.scripts]

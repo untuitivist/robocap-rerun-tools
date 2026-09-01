@@ -25,6 +25,11 @@ from pathlib import Path
 from typing import TextIO
 
 from robocap_rerun_tools import MEDIA_TOOLS
+from robocap_rerun_tools.frame_comparison import (
+    FrameComparisonError,
+    discover_video_files,
+    iter_frame_comparison,
+)
 from robocap_rerun_tools.session_layout import discover_mocap_directories
 
 DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
@@ -288,6 +293,15 @@ LANGUAGE_PACKS = {
         "output": "Output",
         "inspect_mocap_ratio": "Inspection Mocap ratio (8: 240 FPS, 4: 120 FPS)",
         "inspect_button": "Inspect",
+        "frame_compare_scan_button": "Scan videos",
+        "frame_compare_videos": "Videos (one output column per selected video)",
+        "frame_compare_start_frame": "Start frame (0-based, inclusive)",
+        "frame_compare_end_frame": "End frame (0-based, inclusive)",
+        "frame_compare_cell_width": "Cell width",
+        "frame_compare_cell_height": "Cell height",
+        "frame_compare_generate_button": "Generate frame comparison",
+        "frame_compare_preview": "Preview",
+        "frame_compare_file": "Output image",
         "statistics_mocap_ratio": "Mocap ratio for generated inspections",
         "statistics_fill_missing": "Create missing inspection reports",
         "statistics_rebuild_all": "Rebuild all inspection reports",
@@ -402,6 +416,15 @@ LANGUAGE_PACKS = {
         "output": "输出",
         "inspect_mocap_ratio": "检查动捕比例（8：240 FPS，4：120 FPS）",
         "inspect_button": "检查",
+        "frame_compare_scan_button": "扫描视频",
+        "frame_compare_videos": "视频（每个勾选的视频占一列）",
+        "frame_compare_start_frame": "起始帧（从 0 开始，包含）",
+        "frame_compare_end_frame": "结束帧（从 0 开始，包含）",
+        "frame_compare_cell_width": "单格宽度",
+        "frame_compare_cell_height": "单格高度",
+        "frame_compare_generate_button": "生成帧对比图",
+        "frame_compare_preview": "预览",
+        "frame_compare_file": "输出图片",
         "statistics_mocap_ratio": "生成检查报告使用的动捕比例",
         "statistics_fill_missing": "补做缺失的检查报告",
         "statistics_rebuild_all": "全部重做检查报告",
@@ -972,6 +995,9 @@ def select_session(
         gr.update(value=""),
         gr.update(value=True, interactive=True),
         gr.update(value=inferred_primitive) if inferred_primitive else gr.update(),
+        gr.update(choices=[], value=[]),
+        gr.update(value=None),
+        gr.update(value=None),
     )
 
 
@@ -1312,6 +1338,96 @@ def session_path(value: str) -> str:
     if not path.is_dir():
         raise ValueError(f"Session path is not a directory: {path}")
     return str(path)
+
+
+def scan_frame_comparison_videos(session_dir: str, language: str) -> tuple[str, object]:
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
+
+    session = Path(session_path(session_dir)).resolve()
+    try:
+        videos = discover_video_files(session)
+    except FrameComparisonError as exc:
+        return str(exc), gr.update(choices=[], value=[])
+    choices = [(video.relative_to(session).as_posix(), str(video)) for video in videos]
+    if language == "中文":
+        lines = [f"Session：{session}", f"检测到视频：{len(videos)}"]
+    else:
+        lines = [f"Session: {session}", f"Detected videos: {len(videos)}"]
+    lines.extend(f"- {label}" for label, _value in choices)
+    return "\n".join(lines), gr.update(choices=choices, value=[])
+
+
+def generate_frame_comparison(
+    session_dir: str,
+    selected_videos: list[str] | None,
+    start_frame: object,
+    end_frame: object,
+    cell_width: object,
+    cell_height: object,
+    language: str,
+) -> Iterator[tuple[str, str | None, str | None]]:
+    try:
+        session = Path(session_path(session_dir)).resolve()
+        progress_stream = iter_frame_comparison(
+            selected_videos or [],
+            start_frame,
+            end_frame,
+            cell_width=cell_width,
+            cell_height=cell_height,
+            output_dir=session / "_artifacts" / "frame_comparison",
+        )
+        for progress in progress_stream:
+            ratio = progress.completed / progress.total
+            width = 30
+            filled = min(width, max(0, round(width * ratio)))
+            bar = "#" * filled + "-" * (width - filled)
+            if progress.output_path is None:
+                if language == "中文":
+                    status = (
+                        "状态：生成中\n"
+                        f"[{bar}] {ratio * 100:5.1f}% {progress.completed}/{progress.total}\n"
+                        f"视频：{progress.video_index}/{progress.video_count} "
+                        f"{progress.video_path.name}\n"
+                        f"当前帧：{progress.frame_index}"
+                    )
+                else:
+                    status = (
+                        "Status: RUNNING\n"
+                        f"[{bar}] {ratio * 100:5.1f}% {progress.completed}/{progress.total}\n"
+                        f"Video: {progress.video_index}/{progress.video_count} "
+                        f"{progress.video_path.name}\n"
+                        f"Current frame: {progress.frame_index}"
+                    )
+                yield status, None, None
+                continue
+
+            result = str(progress.output_path)
+            size_mib = progress.output_path.stat().st_size / (1024 * 1024)
+            if language == "中文":
+                status = (
+                    "状态：已完成\n"
+                    f"[{bar}] 100.0% {progress.total}/{progress.total}\n"
+                    f"列数：{progress.video_count}\n"
+                    f"帧范围：{start_frame}-{end_frame}（包含）\n"
+                    f"文件：{result}\n"
+                    f"大小：{size_mib:.2f} MiB"
+                )
+            else:
+                status = (
+                    "Status: COMPLETED\n"
+                    f"[{bar}] 100.0% {progress.total}/{progress.total}\n"
+                    f"Columns: {progress.video_count}\n"
+                    f"Frame range: {start_frame}-{end_frame} (inclusive)\n"
+                    f"File: {result}\n"
+                    f"Size: {size_mib:.2f} MiB"
+                )
+            yield status, result, result
+    except (FrameComparisonError, OSError, ValueError) as exc:
+        prefix = "帧对比生成失败" if language == "中文" else "Frame comparison failed"
+        yield f"{prefix}: {exc}", None, None
 
 
 def optional_text(value: str | None) -> str | None:
@@ -2633,6 +2749,15 @@ def language_updates(language: str):
         gr.update(label=labels["output"]),
         gr.update(label=labels["inspect_mocap_ratio"]),
         gr.update(value=labels["inspect_button"]),
+        gr.update(value=labels["frame_compare_scan_button"]),
+        gr.update(label=labels["frame_compare_videos"]),
+        gr.update(label=labels["frame_compare_start_frame"]),
+        gr.update(label=labels["frame_compare_end_frame"]),
+        gr.update(label=labels["frame_compare_cell_width"]),
+        gr.update(label=labels["frame_compare_cell_height"]),
+        gr.update(value=labels["frame_compare_generate_button"]),
+        gr.update(label=labels["frame_compare_preview"]),
+        gr.update(label=labels["frame_compare_file"]),
         gr.update(label=labels["statistics_mocap_ratio"]),
         gr.update(label=labels["statistics_fill_missing"]),
         gr.update(label=labels["statistics_rebuild_all"]),
@@ -2792,6 +2917,50 @@ def build_app():
             )
             inspect_event.then(
                 timestamp_report_choices, inputs=[session_dir], outputs=[report_html_file]
+            )
+
+        with gr.Tab("帧对比 / Frame Comparison"):
+            frame_compare_scan_button = gr.Button(labels["frame_compare_scan_button"])
+            frame_compare_videos = gr.CheckboxGroup(
+                label=labels["frame_compare_videos"], choices=[], value=[]
+            )
+            with gr.Row():
+                frame_compare_start_frame = gr.Number(
+                    label=labels["frame_compare_start_frame"], value=0, precision=0
+                )
+                frame_compare_end_frame = gr.Number(
+                    label=labels["frame_compare_end_frame"], value=59, precision=0
+                )
+                frame_compare_cell_width = gr.Number(
+                    label=labels["frame_compare_cell_width"], value=960, precision=0
+                )
+                frame_compare_cell_height = gr.Number(
+                    label=labels["frame_compare_cell_height"], value=540, precision=0
+                )
+            frame_compare_generate_button = gr.Button(
+                labels["frame_compare_generate_button"], variant="primary"
+            )
+            frame_compare_preview = gr.Image(
+                label=labels["frame_compare_preview"], type="filepath", height=640
+            )
+            frame_compare_file = gr.File(label=labels["frame_compare_file"])
+            frame_compare_scan_button.click(
+                scan_frame_comparison_videos,
+                inputs=[session_dir, language],
+                outputs=[output, frame_compare_videos],
+            )
+            frame_compare_generate_button.click(
+                generate_frame_comparison,
+                inputs=[
+                    session_dir,
+                    frame_compare_videos,
+                    frame_compare_start_frame,
+                    frame_compare_end_frame,
+                    frame_compare_cell_width,
+                    frame_compare_cell_height,
+                    language,
+                ],
+                outputs=[output, frame_compare_preview, frame_compare_file],
             )
 
         with gr.Tab("统计 / Statistics"):
@@ -3148,6 +3317,9 @@ def build_app():
             nokov_source,
             include_robowrist,
             modelscope_primitive,
+            frame_compare_videos,
+            frame_compare_preview,
+            frame_compare_file,
         ]
         session_scan_event = scan_sessions_button.click(
             scan_dataset_sessions,
@@ -3178,6 +3350,15 @@ def build_app():
                 output,
                 inspect_mocap_ratio,
                 inspect_button,
+                frame_compare_scan_button,
+                frame_compare_videos,
+                frame_compare_start_frame,
+                frame_compare_end_frame,
+                frame_compare_cell_width,
+                frame_compare_cell_height,
+                frame_compare_generate_button,
+                frame_compare_preview,
+                frame_compare_file,
                 statistics_mocap_ratio,
                 statistics_fill_missing,
                 statistics_rebuild_all,

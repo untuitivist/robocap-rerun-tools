@@ -20,6 +20,8 @@ use `capture_time` as the primary timeline; frame-aligned exports use the intege
 - Package sessions for sharing, and stage/upload the documented ModelScope layout using original or
   losslessly cropped video only.
 - Open generated HTML reports and RRD recordings directly from the Web UI.
+- Build a labeled frame-comparison JPEG whose columns are selected videos and whose rows are an
+  inclusive frame range.
 - Scan a collection root recursively and select any detected session from one searchable dropdown.
 - Summarize recording duration by action primitive, including compact IDs such as `A01` or `P03`,
   using one Robocap reference video per Segment, and
@@ -120,6 +122,14 @@ A session is recognized when its root directly contains at least one `robocap_*`
 Generated analysis/artifact/dataset trees, calibration data, virtual environments, and build trees
 are excluded. The collection root and last selected Session are restored after a Web UI restart.
 Changing Session clears file selections derived from the previous Session before any new operation.
+
+The `Frame Comparison` tab scans supported videos under the selected Session and lets you choose any
+number of them. Start and end indexes are 0-based and inclusive. The generated JPEG has one column
+per selected video and one row per requested frame; every cell is `960 x 540` by default, preserves
+the source aspect ratio with black padding, and shows `frame X` in its upper-left corner. The full
+image is written to `<session>/_artifacts/frame_comparison/`, while the Web page shows live cell-level
+progress, a preview, and a downloadable file. The canvas is disk-backed so a tall comparison does
+not require keeping its complete RGB data in Python memory.
 
 CLI-backed actions stream combined stdout/stderr into the Output box about twice per second. The
 box shows status, elapsed time, recent logs, and either parsed `[n/total]`/percentage progress or an
