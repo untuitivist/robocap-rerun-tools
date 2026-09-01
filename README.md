@@ -135,7 +135,10 @@ action primitive. Its original standalone `PXX` search across the Session path a
 directory is unchanged and takes precedence. With no `PXX`, an explicit `[A-Z]NN` action directory or
 the first token after `mocap-`/`mocap_` is used. Each Segment is timed from one Robocap reference
 video, so multiple cameras are never added repeatedly. Missing inspection
-reports can be created serially with the selected 8/4 Mocap ratio before aggregation. The result
+reports can be created serially with the selected 8/4 Mocap ratio before aggregation. Enable
+`Rebuild all inspection reports` to rerun inspection for every Segment in the current scope even
+when its HTML already exists; this takes precedence over the missing-only option and also applies to
+sequential clean-Session upload. The result
 separates unchecked, frame-count-difference, and error-free duration, then shows total duration,
 Session count, a
 `{Session: duration}` map, and a per-Session frame-anomaly list for each action. The anomaly list

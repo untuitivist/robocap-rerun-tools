@@ -67,6 +67,9 @@ diffs between adjacent valid rows and lists every timestamp/frame-index anomaly 
 Choose the Mocap/Robocap inspection ratio before running it: `8` checks Mocap at 240 FPS with
 `8*(n+1)` expected frames, while `4` checks 120 FPS with `4*(n+1)`. Video remains 30 FPS and
 third-person video remains `n+1` in both modes.
+The Statistics tab can create only missing inspection reports or rebuild every report in its current
+scope. `Rebuild all inspection reports` takes precedence when both options are enabled, and the same
+choice applies to sequential clean-Session upload.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
 control is turned off and disabled instead of pretending that wrist data can be exported.
 Only GT formats that are present create views. BVH/TRC/CSV/XRS skeleton views are arranged from left
@@ -206,6 +209,9 @@ frame_index 异常及其上下行。
 已用时间、进度条和最近日志；`[当前/总数]`、百分比以及 tqdm 使用的回车刷新都能识别，总量未知时
 显示持续变化的进度条。任务不设置超时，同时限制保留的旧日志量，避免浏览器会话内存持续增长。
 
+“统计”页既可只补做缺失的检查报告，也可重做当前范围内的全部报告。两个选项同时开启时，
+“全部重做检查报告”优先；逐个上传无差帧 Session 时使用同一选择。
+
 ## 对齐公式
 
 帧对齐使用：
@@ -282,8 +288,9 @@ LANGUAGE_PACKS = {
         "output": "Output",
         "inspect_mocap_ratio": "Inspection Mocap ratio (8: 240 FPS, 4: 120 FPS)",
         "inspect_button": "Inspect",
-        "statistics_mocap_ratio": "Mocap ratio for missing inspections",
+        "statistics_mocap_ratio": "Mocap ratio for generated inspections",
         "statistics_fill_missing": "Create missing inspection reports",
+        "statistics_rebuild_all": "Rebuild all inspection reports",
         "statistics_button": "Calculate statistics",
         "statistics_batch_help": (
             "Sequential upload reads remote metadata first. The editable date is initialized to "
@@ -395,8 +402,9 @@ LANGUAGE_PACKS = {
         "output": "输出",
         "inspect_mocap_ratio": "检查动捕比例（8：240 FPS，4：120 FPS）",
         "inspect_button": "检查",
-        "statistics_mocap_ratio": "补做检查使用的动捕比例",
+        "statistics_mocap_ratio": "生成检查报告使用的动捕比例",
         "statistics_fill_missing": "补做缺失的检查报告",
+        "statistics_rebuild_all": "全部重做检查报告",
         "statistics_button": "统计根目录",
         "statistics_batch_help": (
             "逐个上传先读取远端 metadata.jsonl。日期框默认填入本地当天的 `YYYYMMDD`，允许修改；"
@@ -1636,11 +1644,20 @@ def inspect_session(session_dir: str, segment: str, mocap_ratio: int = 8) -> Ite
     yield f"{result.rendered}\n\nTimestamp anomaly HTML: `{report_path}`"
 
 
+def inspection_report_mode(fill_missing_reports: bool, rebuild_all_reports: bool) -> str:
+    if rebuild_all_reports:
+        return "all"
+    if fill_missing_reports:
+        return "missing"
+    return "none"
+
+
 def calculate_dataset_statistics(
     dataset_root: object,
     mocap_ratio: int,
     fill_missing_reports: bool,
     language: str = "中文",
+    rebuild_all_reports: bool = False,
 ) -> Iterator[tuple[str, str]]:
     from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
@@ -1696,45 +1713,54 @@ def calculate_dataset_statistics(
     else:
         add(f"Reference-video segments: {len(references)}")
         add(f"Missing inspection reports: {len(missing)}")
+    report_mode = inspection_report_mode(fill_missing_reports, rebuild_all_reports)
+    reports_to_generate = (
+        references if report_mode == "all" else missing if report_mode == "missing" else []
+    )
+    if report_mode == "all":
+        add(
+            f"检查报告处理：全部重做，共 {len(reports_to_generate)} 个。"
+            if is_chinese
+            else f"Inspection reports: rebuild all {len(reports_to_generate)}."
+        )
     yield output(), ""
 
-    if fill_missing_reports:
-        for index, reference in enumerate(missing, start=1):
-            label = f"{reference.session_dir.name}/{reference.segment}"
-            prefix = (
-                f"[{index}/{len(missing)}] 补做检查：{label}"
-                if is_chinese
-                else f"[{index}/{len(missing)}] Create inspection: {label}"
-            )
-            command = stream_cli_command(
-                [
-                    "inspect",
-                    str(reference.session_dir),
-                    "--segment",
-                    reference.segment,
-                    "--mocap-ratio",
-                    str(ratio),
-                ]
-            )
-            result: StreamCommandResult | None = None
-            try:
-                while True:
-                    try:
-                        current = next(command)
-                    except StopIteration as stop:
-                        result = stop.value
-                        break
-                    yield output(f"{prefix}\n\n{current}"), ""
-            except OSError as exc:
-                add(f"{prefix}: {exc}")
-                continue
+    for index, reference in enumerate(reports_to_generate, start=1):
+        label = f"{reference.session_dir.name}/{reference.segment}"
+        if is_chinese:
+            action = "重做检查" if report_mode == "all" else "补做检查"
+        else:
+            action = "Rebuild inspection" if report_mode == "all" else "Create inspection"
+        prefix = f"[{index}/{len(reports_to_generate)}] {action}: {label}"
+        command = stream_cli_command(
+            [
+                "inspect",
+                str(reference.session_dir),
+                "--segment",
+                reference.segment,
+                "--mocap-ratio",
+                str(ratio),
+            ]
+        )
+        result: StreamCommandResult | None = None
+        try:
+            while True:
+                try:
+                    current = next(command)
+                except StopIteration as stop:
+                    result = stop.value
+                    break
+                yield output(f"{prefix}\n\n{current}"), ""
+        except OSError as exc:
+            add(f"{prefix}: {exc}")
+            continue
 
-            if result is not None and result.returncode == 0 and reference.report_path.is_file():
-                add(f"{prefix}: OK")
-            else:
-                returncode = result.returncode if result is not None else "unknown"
-                add(f"{prefix}: failed (exit {returncode})")
-            yield output(), ""
+        if result is not None and result.returncode == 0 and reference.report_path.is_file():
+            add(f"{prefix}: OK")
+        else:
+            returncode = result.returncode if result is not None else "unknown"
+            add(f"{prefix}: failed (exit {returncode})")
+        yield output(), ""
 
     ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
     session_statistics = []
@@ -1872,6 +1898,7 @@ def bulk_upload_clean_modelscope_sessions(
     language: str = "中文",
     upload_date: object | None = None,
     skip_existing: bool = True,
+    rebuild_all_reports: bool = False,
 ) -> Iterator[str]:
     from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
@@ -2056,33 +2083,37 @@ def bulk_upload_clean_modelscope_sessions(
         reference for session, _, _ in pending for reference in discover_segment_references(session)
     ]
     missing = [reference for reference in references if not reference.report_path.is_file()]
-    if fill_missing_reports:
-        for index, reference in enumerate(missing, start=1):
-            label = (
-                f"[{index}/{len(missing)}] 补做检查：{reference.session_dir.name}/{reference.segment}"
+    report_mode = inspection_report_mode(fill_missing_reports, rebuild_all_reports)
+    reports_to_generate = (
+        references if report_mode == "all" else missing if report_mode == "missing" else []
+    )
+    for index, reference in enumerate(reports_to_generate, start=1):
+        if is_chinese:
+            action = "重做检查" if report_mode == "all" else "补做检查"
+        else:
+            action = "Rebuild inspection" if report_mode == "all" else "Create inspection"
+        separator = "：" if is_chinese else ": "
+        label = (
+            f"[{index}/{len(reports_to_generate)}] {action}{separator}"
+            f"{reference.session_dir.name}/{reference.segment}"
+        )
+        result = yield from command_step(
+            [
+                "inspect",
+                str(reference.session_dir),
+                "--segment",
+                reference.segment,
+                "--mocap-ratio",
+                str(ratio),
+            ],
+            label,
+        )
+        if result.returncode != 0:
+            add(
+                "检查失败；该 Session 将被排除。"
                 if is_chinese
-                else (
-                    f"[{index}/{len(missing)}] Create inspection: "
-                    f"{reference.session_dir.name}/{reference.segment}"
-                )
+                else "Inspection failed; this Session will be excluded."
             )
-            result = yield from command_step(
-                [
-                    "inspect",
-                    str(reference.session_dir),
-                    "--segment",
-                    reference.segment,
-                    "--mocap-ratio",
-                    str(ratio),
-                ],
-                label,
-            )
-            if result.returncode != 0:
-                add(
-                    "检查失败；该 Session 将被排除。"
-                    if is_chinese
-                    else "Inspection failed; this Session will be excluded."
-                )
 
     ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
     candidates: list[tuple[Path, str, str, list[Path], bool]] = []
@@ -2604,6 +2635,7 @@ def language_updates(language: str):
         gr.update(value=labels["inspect_button"]),
         gr.update(label=labels["statistics_mocap_ratio"]),
         gr.update(label=labels["statistics_fill_missing"]),
+        gr.update(label=labels["statistics_rebuild_all"]),
         gr.update(value=labels["statistics_button"]),
         gr.update(value=labels["statistics_batch_help"]),
         gr.update(label=labels["statistics_upload_date"]),
@@ -2773,6 +2805,9 @@ def build_app():
                 statistics_fill_missing = gr.Checkbox(
                     label=labels["statistics_fill_missing"], value=True, scale=2
                 )
+                statistics_rebuild_all = gr.Checkbox(
+                    label=labels["statistics_rebuild_all"], value=False, scale=2
+                )
                 statistics_button = gr.Button(
                     labels["statistics_button"], variant="primary", scale=1
                 )
@@ -2784,6 +2819,7 @@ def build_app():
                     statistics_mocap_ratio,
                     statistics_fill_missing,
                     language,
+                    statistics_rebuild_all,
                 ],
                 outputs=[output, statistics_result],
             )
@@ -2813,6 +2849,7 @@ def build_app():
                     language,
                     statistics_upload_date,
                     statistics_skip_existing,
+                    statistics_rebuild_all,
                 ],
                 outputs=output,
             )
@@ -3143,6 +3180,7 @@ def build_app():
                 inspect_button,
                 statistics_mocap_ratio,
                 statistics_fill_missing,
+                statistics_rebuild_all,
                 statistics_button,
                 statistics_batch_help,
                 statistics_upload_date,

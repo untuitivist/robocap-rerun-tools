@@ -40,6 +40,13 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "扫描 Session" in config
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
     assert "补做缺失的检查报告" in config
+    assert "全部重做检查报告" in config
+    rebuild_all = next(
+        component
+        for component in config_data["components"]
+        if component.get("props", {}).get("label") == "全部重做检查报告"
+    )
+    assert rebuild_all["props"]["value"] is False
     assert "统计根目录" in config
     assert "逐个上传无差帧 Session" in config
     assert "上传日期（YYYYMMDD）" in config
@@ -146,6 +153,50 @@ def test_statistics_can_create_missing_report(tmp_path, monkeypatch) -> None:
     assert "00:00:12.500" in final_markdown
 
 
+def test_statistics_can_rebuild_existing_report(tmp_path, monkeypatch) -> None:
+    from robocap_rerun_tools import dataset_statistics
+
+    session = tmp_path / "20260827_062420_session146"
+    (session / "mocap-P01-St-user").mkdir(parents=True)
+    (session / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    report = dataset_statistics.timestamp_report_path(session, "segment1")
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        '<script>const report={"ratio":8,"referenceFrames":9,'
+        '"mocapFrames":80,"thirdFrames":10}; const eventTypes=[];</script>',
+        encoding="utf-8",
+    )
+    captured: list[list[str]] = []
+
+    def fake_stream(args):
+        captured.append(args)
+        yield "inspection running"
+        return web_app.StreamCommandResult(0, "inspection done", "inspection done")
+
+    monkeypatch.setattr(web_app, "stream_cli_command", fake_stream)
+    monkeypatch.setattr(
+        dataset_statistics,
+        "probe_video_duration",
+        lambda path, ffprobe: (12.5, None),
+    )
+
+    snapshots = list(
+        web_app.calculate_dataset_statistics(
+            tmp_path,
+            8,
+            True,
+            "中文",
+            rebuild_all_reports=True,
+        )
+    )
+
+    assert captured == [
+        ["inspect", str(session.resolve()), "--segment", "segment1", "--mocap-ratio", "8"]
+    ]
+    assert "全部重做" in snapshots[-1][0]
+    assert "重做检查" in snapshots[-1][0]
+
+
 def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatch) -> None:
     from robocap_rerun_tools import cli, dataset_statistics, modelscope_publisher
 
@@ -214,10 +265,24 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     monkeypatch.setattr(web_app, "stream_cli_command", fake_stream)
 
     output = collect_stream(
-        web_app.bulk_upload_clean_modelscope_sessions(tmp_path, 8, True, "中文", "20260901", True)
+        web_app.bulk_upload_clean_modelscope_sessions(
+            tmp_path,
+            8,
+            True,
+            "中文",
+            "20260901",
+            True,
+            rebuild_all_reports=True,
+        )
     )
 
     assert commands[0] == ["modelscope-auth"]
+    inspect_commands = [command for command in commands if command[0] == "inspect"]
+    assert {Path(command[1]) for command in inspect_commands} == {
+        problem.resolve(),
+        clean_one.resolve(),
+        clean_two.resolve(),
+    }
     stage_commands = [command for command in commands if command[0] == "modelscope-stage"]
     upload_commands = [command for command in commands if command[0] == "modelscope-upload"]
     expected_roots = {
