@@ -30,6 +30,10 @@ from robocap_rerun_tools.frame_comparison import (
     discover_video_files,
     iter_frame_comparison,
 )
+from robocap_rerun_tools.mocap_metadata import (
+    build_mocap_capture_metadata,
+    parse_mocap_capture_directory,
+)
 from robocap_rerun_tools.session_layout import discover_mocap_directories
 
 DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
@@ -38,6 +42,16 @@ MOCAP_FALLBACK_PRIMITIVE_PATTERN = re.compile(
     r"^mocap[-_]([A-Z]\d{2})(?=[-_]|$)", re.IGNORECASE
 )
 SEQUENTIAL_UPLOAD_RETRIES = 3
+STATISTICS_MOCAP_METADATA_HEADERS = [
+    "Update",
+    "Session",
+    "Mocap directory",
+    "Action ID",
+    "Collection Session index",
+    "Collector",
+    "Repetition count",
+    "Parse status",
+]
 
 EN_DOC = """# Robocap Rerun Tools
 
@@ -75,6 +89,8 @@ third-person video remains `n+1` in both modes.
 The Statistics tab can create only missing inspection reports or rebuild every report in its current
 scope. `Rebuild all inspection reports` takes precedence when both options are enabled, and the same
 choice applies to sequential clean-Session upload.
+It also scans compact Mocap directory metadata into an editable table. Selected rows can update the
+remote `metadata.jsonl` and matching Session manifests in one commit without uploading videos.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
 control is turned off and disabled instead of pretending that wrist data can be exported.
 Only GT formats that are present create views. BVH/TRC/CSV/XRS skeleton views are arranged from left
@@ -141,8 +157,9 @@ Compact action IDs use `mocap-<action:[A-Z]NN>-S<session>-<collector>-<count>p`.
 selected, the original standalone `PXX` search in direct `mocap*` directory names runs first and is
 unchanged. Only when no `PXX` exists does the fallback read the first action field after `mocap-` or
 `mocap_`. In `mocap-L01-S07-wangyang-10p`, the action is `L01`, `S07` is the Session number,
-`wangyang` is the collector, and `10p` is the repetition count. Only the first field participates in
-action matching. This is a suggestion; a manual custom value takes precedence.
+`wangyang` is the collector, and `10p` is the repetition count. The first field participates in
+action matching; a complete name also records all four fields under `mocap_capture` in new manifests
+and dataset-index rows. This is a suggestion; a manual custom primitive value takes precedence.
 
 `MODELSCOPE_API_TOKEN`, `MODELSCOPE_ENDPOINT`, and `MODELSCOPE_REPO_ID` are stored in the
 repository-local `.env` file. The token field never displays the saved value; leaving it blank
@@ -216,6 +233,8 @@ frame_index 异常及其上下行。
 
 “统计”页既可只补做缺失的检查报告，也可重做当前范围内的全部报告。两个选项同时开启时，
 “全部重做检查报告”优先；逐个上传无差帧 Session 时使用同一选择。
+该页还会把紧凑 Mocap 目录名解析为可编辑表格；勾选后的行可一次提交更新远端
+`metadata.jsonl` 与对应 Session manifest，不会重新上传视频。
 
 ## 对齐公式
 
@@ -260,7 +279,8 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 原有的直属 `mocap*` 目录名独立 `PXX` 搜索会优先执行且语义不变。只有完全没有 `PXX` 时，后备规则
 才读取紧跟 `mocap-` 或 `mocap_` 的第一个动作字段。对于 `mocap-L01-S07-wangyang-10p`，动作是
 `L01`，`S07` 是 Session 序号，`wangyang` 是采集员，`10p` 是重复次数；只有第一个字段参与动作
-匹配。这只是建议值，手动输入的安全自定义值具有最终优先级。
+匹配；完整目录名的四项内容还会写入新 manifest 与数据集索引的 `mocap_capture`。动作下拉框仍
+只是建议值，手动输入的安全自定义 primitive 具有最终优先级。
 
 `MODELSCOPE_API_TOKEN`、`MODELSCOPE_ENDPOINT` 与 `MODELSCOPE_REPO_ID` 保存在仓库根目录的
 `.env`。网页不会回显已保存 token 的内容；token 输入框留空时保留原值。先执行“准备 Session”，
@@ -306,6 +326,16 @@ LANGUAGE_PACKS = {
         "statistics_fill_missing": "Create missing inspection reports",
         "statistics_rebuild_all": "Rebuild all inspection reports",
         "statistics_button": "Calculate statistics",
+        "statistics_mocap_metadata": "Mocap directory metadata",
+        "statistics_mocap_metadata_help": (
+            "Rows are parsed from `mocap-<action:[A-Z]NN>-S<index>-<collector>-<count>p`. "
+            "Edit Action ID, Collection Session index, Collector, or Repetition count, select the "
+            "rows to update, then batch-update the remote `metadata.jsonl` and Session manifests. "
+            "Session and Mocap directory identify the local source and must not be edited. This "
+            "operation updates metadata only; it does not upload videos or move remote directories."
+        ),
+        "statistics_mocap_metadata_refresh": "Scan Mocap naming metadata",
+        "statistics_mocap_metadata_update": "Batch update remote Mocap metadata",
         "statistics_batch_help": (
             "Sequential upload reads remote metadata first. The editable date is initialized to "
             "today's local `YYYYMMDD`, and every Session in this run uses it. Existing Sessions "
@@ -429,6 +459,15 @@ LANGUAGE_PACKS = {
         "statistics_fill_missing": "补做缺失的检查报告",
         "statistics_rebuild_all": "全部重做检查报告",
         "statistics_button": "统计根目录",
+        "statistics_mocap_metadata": "Mocap 命名元数据",
+        "statistics_mocap_metadata_help": (
+            "按 `mocap-<动作:[A-Z]NN>-S<序号>-<采集员>-<次数>p` 解析。可修改动作、采集 Session "
+            "序号、采集员和重复次数；勾选需要更新的行后，批量同步到远端 `metadata.jsonl` 与各 "
+            "Session 的 `manifest.json`。Session 和 Mocap 目录用于定位本地数据，不可修改。该操作"
+            "只更新元数据，不上传视频，也不移动远端目录。"
+        ),
+        "statistics_mocap_metadata_refresh": "扫描 Mocap 命名元数据",
+        "statistics_mocap_metadata_update": "批量更新远端 Mocap 元数据",
         "statistics_batch_help": (
             "逐个上传先读取远端 metadata.jsonl。日期框默认填入本地当天的 `YYYYMMDD`，允许修改；"
             "本次所有 Session 使用同一日期。默认勾选跳过远端已有 Session；取消勾选后重新上传并"
@@ -1821,6 +1860,251 @@ def inspection_report_mode(fill_missing_reports: bool, rebuild_all_reports: bool
     return "none"
 
 
+def _statistics_session_label(dataset_root: Path, session_dir: Path) -> str:
+    try:
+        relative = session_dir.resolve().relative_to(dataset_root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return session_dir.name
+    return relative if relative != "." else session_dir.name
+
+
+def statistics_mocap_metadata_rows(dataset_root: object) -> list[list[object]]:
+    root = dataset_root_path(dataset_root)
+    rows: list[list[object]] = []
+    for session in discover_session_directories(root):
+        session_label = _statistics_session_label(root, session)
+        mocap_dirs = discover_mocap_directories(session)
+        primitive = infer_batch_modelscope_primitive(root, session)
+        if not mocap_dirs:
+            rows.append(
+                [False, session_label, "", "", None, "", None, "MISSING mocap* directory"]
+            )
+            continue
+        ambiguous = len(mocap_dirs) > 1
+        for mocap_dir in mocap_dirs:
+            capture = parse_mocap_capture_directory(mocap_dir.name)
+            if capture is None:
+                rows.append(
+                    [
+                        False,
+                        session_label,
+                        mocap_dir.name,
+                        "",
+                        None,
+                        "",
+                        None,
+                        "INVALID expected mocap-[A-Z]NN-S<index>-<collector>-<count>p",
+                    ]
+                )
+                continue
+            if ambiguous:
+                status = "AMBIGUOUS multiple mocap* directories"
+            elif primitive is None:
+                status = "UNRESOLVED remote primitive_id"
+            else:
+                status = f"OK remote key {primitive}/{session.name}"
+            rows.append(
+                [
+                    not ambiguous and primitive is not None,
+                    session_label,
+                    capture.source_directory,
+                    capture.action_id,
+                    capture.collection_session_index,
+                    capture.collector,
+                    capture.repetition_count,
+                    status,
+                ]
+            )
+    return rows
+
+
+def scan_statistics_mocap_metadata(
+    dataset_root: object,
+    language: str,
+) -> tuple[str, list[list[object]]]:
+    root = dataset_root_path(dataset_root)
+    rows = statistics_mocap_metadata_rows(root)
+    selected = sum(bool(row[0]) for row in rows)
+    if language == "中文":
+        message = f"Mocap 命名元数据：共 {len(rows)} 行，可更新 {selected} 行。"
+    else:
+        message = f"Mocap naming metadata: {len(rows)} row(s), {selected} updateable."
+    return message, rows
+
+
+def _dataframe_rows(value: object) -> list[list[object]]:
+    if value is None:
+        return []
+    if hasattr(value, "values") and hasattr(value.values, "tolist"):
+        value = value.values.tolist()
+    elif hasattr(value, "tolist"):
+        value = value.tolist()
+    if not isinstance(value, list):
+        raise TypeError("Mocap metadata table must be a two-dimensional table.")
+    rows: list[list[object]] = []
+    for row in value:
+        if not isinstance(row, (list, tuple)):
+            raise TypeError("Mocap metadata table contains an invalid row.")
+        rows.append(list(row))
+    return rows
+
+
+def _table_row_selected(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def build_remote_mocap_metadata_updates(
+    dataset_root: object,
+    table: object,
+) -> tuple[object, ...]:
+    from robocap_rerun_tools.modelscope_publisher import (
+        RemoteMocapMetadataUpdate,
+        validate_session_id,
+    )
+
+    root = dataset_root_path(dataset_root)
+    sessions = discover_session_directories(root)
+    sessions_by_label = {
+        _statistics_session_label(root, session): session for session in sessions
+    }
+    updates: list[RemoteMocapMetadataUpdate] = []
+    seen: set[tuple[str, str]] = set()
+    for row_number, row in enumerate(_dataframe_rows(table), start=1):
+        if not row or not _table_row_selected(row[0]):
+            continue
+        if len(row) < len(STATISTICS_MOCAP_METADATA_HEADERS):
+            raise ValueError(f"Mocap metadata row {row_number} has missing columns.")
+        session_label = str(row[1]).strip().replace("\\", "/")
+        session = sessions_by_label.get(session_label)
+        if session is None:
+            raise ValueError(
+                f"Mocap metadata row {row_number} refers to an unknown Session: {session_label}"
+            )
+        mocap_name = str(row[2]).strip()
+        mocap_dirs = discover_mocap_directories(session)
+        if len(mocap_dirs) != 1 or mocap_dirs[0].name != mocap_name:
+            raise ValueError(
+                f"Mocap metadata row {row_number} no longer matches the Session's unique "
+                "mocap* directory. Scan the table again."
+            )
+        primitive = infer_batch_modelscope_primitive(root, session)
+        if primitive is None:
+            raise ValueError(
+                f"Mocap metadata row {row_number} has no unambiguous remote primitive_id."
+            )
+        session_id = validate_session_id(session.name)
+        key = (primitive, session_id)
+        if key in seen:
+            raise ValueError(f"Duplicate selected remote Session: {primitive}/{session_id}.")
+        seen.add(key)
+        capture = build_mocap_capture_metadata(
+            mocap_name,
+            row[3],
+            row[4],
+            row[5],
+            row[6],
+        )
+        updates.append(RemoteMocapMetadataUpdate(primitive, session_id, capture))
+    if not updates:
+        raise ValueError("Select at least one valid Mocap metadata row to update.")
+    return tuple(updates)
+
+
+def batch_update_remote_mocap_metadata(
+    dataset_root: object,
+    table: object,
+    repo_id: str,
+    revision: str,
+    use_cache: bool,
+    max_workers: int,
+    language: str,
+) -> Iterator[str]:
+    from robocap_rerun_tools.modelscope_publisher import (
+        ModelScopePublisherError,
+        update_remote_mocap_metadata,
+    )
+
+    is_chinese = language == "中文"
+    try:
+        updates = build_remote_mocap_metadata_updates(dataset_root, table)
+        workers = int(max_workers)
+        if float(max_workers) != workers or workers < 1:
+            raise ValueError("ModelScope max workers must be a positive integer.")
+    except (OSError, TypeError, ValueError) as exc:
+        yield f"元数据校验失败：{exc}" if is_chinese else f"Metadata validation failed: {exc}"
+        return
+
+    events: queue.Queue[object] = queue.Queue()
+    finished = object()
+    outcome: dict[str, object] = {}
+
+    def progress(message: str) -> None:
+        events.put(str(message))
+
+    def worker() -> None:
+        try:
+            outcome["result"] = update_remote_mocap_metadata(
+                updates,
+                repo_id or None,
+                revision=revision,
+                max_workers=workers,
+                use_cache=bool(use_cache),
+                progress=progress,
+            )
+        except (OSError, ValueError, ModelScopePublisherError) as exc:
+            outcome["error"] = exc
+        finally:
+            events.put(finished)
+
+    history: deque[str] = deque(maxlen=STREAM_LOG_MAX_LINES)
+    history.append(
+        f"准备更新 {len(updates)} 条远端 Mocap 元数据。"
+        if is_chinese
+        else f"Preparing {len(updates)} remote Mocap metadata update(s)."
+    )
+    yield "\n".join(history)
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    while True:
+        event = events.get()
+        if event is finished:
+            break
+        history.extend(line for line in str(event).splitlines() if line.strip())
+        yield "\n".join(history)
+    thread.join()
+
+    error = outcome.get("error")
+    if error is not None:
+        history.append(
+            f"远端元数据更新失败：{error}"
+            if is_chinese
+            else f"Remote metadata update failed: {error}"
+        )
+        yield "\n".join(history)
+        return
+
+    result = outcome["result"]
+    updated = len(result.updated_keys)
+    unchanged = len(result.unchanged_keys)
+    missing = len(result.missing_keys)
+    if is_chinese:
+        history.append(
+            f"远端元数据更新完成：更新 {updated}，无需变更 {unchanged}，远端不存在 {missing}。"
+        )
+        history.append(f"数据集：{result.repo_url}；分支：{result.revision}")
+    else:
+        history.append(
+            f"Remote metadata update complete: {updated} updated, {unchanged} unchanged, "
+            f"{missing} missing remotely."
+        )
+        history.append(f"Dataset: {result.repo_url}; revision: {result.revision}")
+    for primitive, session_id in result.missing_keys:
+        history.append(f"- missing: {primitive}/{session_id}")
+    yield "\n".join(history)
+
+
 def calculate_dataset_statistics(
     dataset_root: object,
     mocap_ratio: int,
@@ -2815,6 +3099,10 @@ def language_updates(language: str):
         gr.update(label=labels["statistics_fill_missing"]),
         gr.update(label=labels["statistics_rebuild_all"]),
         gr.update(value=labels["statistics_button"]),
+        gr.update(value=labels["statistics_mocap_metadata_help"]),
+        gr.update(value=labels["statistics_mocap_metadata_refresh"]),
+        gr.update(value=labels["statistics_mocap_metadata_update"]),
+        gr.update(label=labels["statistics_mocap_metadata"]),
         gr.update(value=labels["statistics_batch_help"]),
         gr.update(label=labels["statistics_upload_date"]),
         gr.update(label=labels["statistics_skip_existing"]),
@@ -3045,7 +3333,7 @@ def build_app():
                     labels["statistics_button"], variant="primary", scale=1
                 )
             statistics_result = gr.Markdown(elem_id="statistics-result")
-            statistics_button.click(
+            statistics_event = statistics_button.click(
                 calculate_dataset_statistics,
                 inputs=[
                     dataset_root,
@@ -3055,6 +3343,35 @@ def build_app():
                     statistics_rebuild_all,
                 ],
                 outputs=[output, statistics_result],
+            )
+            statistics_mocap_metadata_help = gr.Markdown(
+                labels["statistics_mocap_metadata_help"]
+            )
+            with gr.Row():
+                statistics_mocap_metadata_refresh = gr.Button(
+                    labels["statistics_mocap_metadata_refresh"]
+                )
+                statistics_mocap_metadata_update = gr.Button(
+                    labels["statistics_mocap_metadata_update"],
+                    variant="primary",
+                )
+            statistics_mocap_metadata = gr.Dataframe(
+                headers=STATISTICS_MOCAP_METADATA_HEADERS,
+                datatype=["bool", "str", "str", "str", "number", "str", "number", "str"],
+                value=[],
+                type="array",
+                interactive=True,
+                label=labels["statistics_mocap_metadata"],
+            )
+            statistics_event.then(
+                statistics_mocap_metadata_rows,
+                inputs=[dataset_root],
+                outputs=[statistics_mocap_metadata],
+            )
+            statistics_mocap_metadata_refresh.click(
+                scan_statistics_mocap_metadata,
+                inputs=[dataset_root, language],
+                outputs=[output, statistics_mocap_metadata],
             )
             statistics_batch_help = gr.Markdown(labels["statistics_batch_help"])
             with gr.Row():
@@ -3216,6 +3533,19 @@ def build_app():
                     modelscope_revision,
                     modelscope_use_cache,
                     modelscope_max_workers,
+                ],
+                outputs=output,
+            )
+            statistics_mocap_metadata_update.click(
+                batch_update_remote_mocap_metadata,
+                inputs=[
+                    dataset_root,
+                    statistics_mocap_metadata,
+                    modelscope_repo_id,
+                    modelscope_revision,
+                    modelscope_use_cache,
+                    modelscope_max_workers,
+                    language,
                 ],
                 outputs=output,
             )
@@ -3428,6 +3758,10 @@ def build_app():
                 statistics_fill_missing,
                 statistics_rebuild_all,
                 statistics_button,
+                statistics_mocap_metadata_help,
+                statistics_mocap_metadata_refresh,
+                statistics_mocap_metadata_update,
+                statistics_mocap_metadata,
                 statistics_batch_help,
                 statistics_upload_date,
                 statistics_skip_existing,

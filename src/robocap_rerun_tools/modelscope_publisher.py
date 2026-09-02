@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ from .dataset_intersection import (
     stage_aligned_file,
 )
 from .dataset_statistics import discover_segment_references, probe_video_duration
+from .mocap_metadata import MocapCaptureMetadata, parse_mocap_capture_directory
 from .session_layout import (
     CANONICAL_MOCAP_DIR_NAME,
     canonical_mocap_relative_path,
@@ -99,6 +101,7 @@ class StageResult:
     left_device_id: str | None = None
     right_device_id: str | None = None
     alignment: dict[str, object] | None = None
+    mocap_capture: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -130,6 +133,24 @@ class UploadResult:
     uploaded_path: str
     session_count: int
     batch_id: str | None = None
+
+
+@dataclass(frozen=True)
+class RemoteMocapMetadataUpdate:
+    primitive_id: str
+    session_id: str
+    mocap_capture: MocapCaptureMetadata
+
+
+@dataclass(frozen=True)
+class RemoteMocapMetadataUpdateResult:
+    repo_id: str
+    repo_url: str
+    revision: str
+    username: str
+    updated_keys: tuple[tuple[str, str], ...]
+    unchanged_keys: tuple[tuple[str, str], ...]
+    missing_keys: tuple[tuple[str, str], ...]
 
 
 def validate_primitive_id(value: str) -> str:
@@ -878,6 +899,13 @@ Robocap reference-camera duration per included Segment, never the sum of all cam
 aligned-intersection upload it is the duration of the cropped common timeline. The same value is
 stored in that Session's `manifest.json`.
 
+When the source directory follows
+`mocap-<action:[A-Z]NN>-S<collection-session-index>-<collector>-<count>p`, both the dataset index and
+Session manifest contain a `mocap_capture` object with `source_directory`, `action_id`,
+`collection_session_index`, `collector`, and `repetition_count`. Generic `mocap*` names remain valid
+and omit this optional object. Metadata-only corrections update the index and matching manifests in
+one commit without moving Session directories or uploading capture files again.
+
 New ModelScope staging never applies lossy video compression. Full-session video files are copied
 byte-for-byte. Aligned-intersection video is encoded losslessly only when frame-accurate cropping
 requires it. Manifests that describe proxy-compressed video are rejected before upload.
@@ -1167,6 +1195,7 @@ def stage_session(
     relative_session = prepared_session_path(primitive, resolved_session_id)
     target = root / Path(relative_session)
     _validate_stage_locations(source, root, target)
+    mocap_capture = parse_mocap_capture_directory(require_mocap_directory(source).name)
     device_ids = discover_device_ids(source, ffprobe)
 
     report_source = inspection_report or find_inspection_report(source, segment)
@@ -1241,6 +1270,7 @@ def stage_session(
             left_device_id=device_ids["left"],
             right_device_id=device_ids["right"],
             alignment=(intersection_plan.as_manifest() if intersection_plan else None),
+            mocap_capture=(mocap_capture.as_record() if mocap_capture else None),
         )
 
     target.mkdir(parents=True, exist_ok=True)
@@ -1339,6 +1369,8 @@ def stage_session(
         },
         "files": file_records,
     }
+    if mocap_capture is not None:
+        manifest["mocap_capture"] = mocap_capture.as_record()
     if intersection_plan is not None:
         manifest["alignment"] = intersection_plan.as_manifest()
     manifest_path.write_text(
@@ -1359,6 +1391,8 @@ def stage_session(
         "file_count": len(file_records),
         "packaged_bytes": total_bytes,
     }
+    if mocap_capture is not None:
+        metadata_record["mocap_capture"] = mocap_capture.as_record()
     if intersection_plan is not None:
         metadata_record["alignment"] = intersection_plan.as_metadata()
     metadata_path = _update_metadata(root, metadata_record)
@@ -1379,6 +1413,7 @@ def stage_session(
         left_device_id=device_ids["left"],
         right_device_id=device_ids["right"],
         alignment=(intersection_plan.as_manifest() if intersection_plan else None),
+        mocap_capture=(mocap_capture.as_record() if mocap_capture else None),
     )
 
 
@@ -1423,6 +1458,7 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
     files = manifest.get("files") or []
     device_ids = manifest.get("device_ids") or {}
     alignment = manifest.get("alignment")
+    mocap_capture = manifest.get("mocap_capture")
     if not isinstance(device_ids, dict):
         raise ModelScopePublisherError("Staged manifest device_ids must be a JSON object.")
     total_bytes = sum(
@@ -1444,6 +1480,7 @@ def load_staged_session(dataset_root: Path, primitive_id: str, session_id: str) 
         left_device_id=_clean_device_id(device_ids.get("left")),
         right_device_id=_clean_device_id(device_ids.get("right")),
         alignment=alignment if isinstance(alignment, dict) else None,
+        mocap_capture=mocap_capture if isinstance(mocap_capture, dict) else None,
     )
 
 
@@ -1748,6 +1785,163 @@ def fetch_remote_session_keys(
         raise ModelScopePublisherError(
             f"ModelScope metadata lookup failed: {_redacted_error(exc, resolved.token)}"
         ) from exc
+
+
+def update_remote_mocap_metadata(
+    updates: Sequence[RemoteMocapMetadataUpdate],
+    repo_id: str | None = None,
+    *,
+    revision: str = "master",
+    max_workers: int | None = None,
+    use_cache: bool = True,
+    settings: ModelScopeSettings | None = None,
+    progress: Callable[[str], None] | None = print,
+) -> RemoteMocapMetadataUpdateResult:
+    if not updates:
+        raise ValueError("Select at least one Mocap metadata row to update.")
+    if max_workers is not None and max_workers < 1:
+        raise ValueError("max_workers must be positive.")
+
+    resolved = settings or load_modelscope_settings()
+    if not resolved.token:
+        raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")
+    repository = _resolve_repository(resolved, repo_id)
+    target_revision = revision.strip() or "master"
+    repo_url = f"{resolved.endpoint.rstrip('/')}/datasets/{repository}"
+
+    normalized_updates: dict[tuple[str, str], MocapCaptureMetadata] = {}
+    for update in updates:
+        key = (
+            validate_primitive_id(update.primitive_id),
+            validate_session_id(update.session_id),
+        )
+        if key in normalized_updates:
+            raise ValueError(f"Duplicate Mocap metadata update for {key[0]}/{key[1]}.")
+        normalized_updates[key] = update.mocap_capture
+
+    try:
+        api = _hub_api(resolved)
+        username = _username(api.whoami())
+        if not api.repo_exists(repository, "dataset"):
+            raise ModelScopePublisherError(f"Dataset repository does not exist: {repository}.")
+        remote_document = _download_remote_metadata(api, repository, target_revision)
+        entries = _read_metadata_document(remote_document, f"remote {METADATA_NAME}")
+        entry_indices: dict[tuple[str, str], int] = {}
+        entry_locations: dict[tuple[str, str], str] = {}
+        for index, entry in enumerate(entries):
+            primitive, session_id, relative_path, _ = _metadata_session_location(entry)
+            key = (primitive, session_id)
+            if key in entry_indices:
+                raise ModelScopePublisherError(
+                    f"Remote {METADATA_NAME} contains duplicate Session {primitive}/{session_id}."
+                )
+            entry_indices[key] = index
+            entry_locations[key] = relative_path
+
+        missing = tuple(sorted(set(normalized_updates) - set(entry_indices)))
+        unchanged: list[tuple[str, str]] = []
+        changed: list[tuple[str, str]] = []
+        with tempfile.TemporaryDirectory(prefix="robocap-mocap-metadata-") as temporary:
+            upload_root = Path(temporary)
+            available_keys = sorted(set(normalized_updates) & set(entry_indices))
+            for item_number, key in enumerate(available_keys, start=1):
+                relative_path = entry_locations[key]
+                manifest_repo_path = f"{relative_path}/manifest.json"
+                if progress is not None:
+                    progress(
+                        f"[{item_number}/{len(available_keys)}] inspect {manifest_repo_path}"
+                    )
+                downloaded_manifest = api.download_file(
+                    repository,
+                    "dataset",
+                    manifest_repo_path,
+                    revision=target_revision,
+                    force=True,
+                )
+                try:
+                    manifest = json.loads(Path(downloaded_manifest).read_text(encoding="utf-8"))
+                except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                    raise ModelScopePublisherError(
+                        f"Invalid remote manifest {manifest_repo_path}: {exc}"
+                    ) from exc
+                if not isinstance(manifest, dict):
+                    raise ModelScopePublisherError(
+                        f"Remote manifest must be a JSON object: {manifest_repo_path}"
+                    )
+                if (
+                    manifest.get("primitive_id") != key[0]
+                    or manifest.get("session_id") != key[1]
+                ):
+                    raise ModelScopePublisherError(
+                        f"Remote manifest identity does not match {key[0]}/{key[1]}: "
+                        f"{manifest_repo_path}"
+                    )
+                record = normalized_updates[key].as_record()
+                metadata_matches = entries[entry_indices[key]].get("mocap_capture") == record
+                manifest_matches = manifest.get("mocap_capture") == record
+                if metadata_matches and manifest_matches:
+                    unchanged.append(key)
+                    continue
+
+                entries[entry_indices[key]] = dict(entries[entry_indices[key]])
+                entries[entry_indices[key]]["mocap_capture"] = record
+                manifest["mocap_capture"] = record
+                local_manifest = upload_root / Path(manifest_repo_path)
+                local_manifest.parent.mkdir(parents=True, exist_ok=True)
+                local_manifest.write_text(
+                    json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                changed.append(key)
+
+            if not changed:
+                return RemoteMocapMetadataUpdateResult(
+                    repository,
+                    repo_url,
+                    target_revision,
+                    username,
+                    (),
+                    tuple(sorted(unchanged)),
+                    missing,
+                )
+
+            (upload_root / METADATA_NAME).write_text(
+                _metadata_document(entries),
+                encoding="utf-8",
+                newline="\n",
+            )
+            if progress is not None:
+                progress(
+                    f"Commit {len(changed)} Session manifest(s) and {METADATA_NAME}."
+                )
+            api.upload_folder(
+                repository,
+                "dataset",
+                upload_root,
+                path_in_repo="",
+                revision=target_revision,
+                commit_message=f"Update Mocap capture metadata for {len(changed)} session(s)",
+                max_workers=max_workers,
+                use_cache=use_cache,
+                disable_tqdm=False,
+            )
+    except ModelScopePublisherError:
+        raise
+    except Exception as exc:
+        raise ModelScopePublisherError(
+            f"ModelScope Mocap metadata update failed: {_redacted_error(exc, resolved.token)}"
+        ) from exc
+
+    return RemoteMocapMetadataUpdateResult(
+        repository,
+        repo_url,
+        target_revision,
+        username,
+        tuple(sorted(changed)),
+        tuple(sorted(unchanged)),
+        missing,
+    )
 
 
 def upload_staged_dataset(

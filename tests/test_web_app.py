@@ -508,6 +508,63 @@ def test_discover_session_directories_finds_direct_and_nested_sessions(tmp_path)
     )
 
 
+def test_statistics_mocap_metadata_rows_are_editable_without_changing_remote_identity(
+    tmp_path: Path,
+) -> None:
+    session = tmp_path / "session01"
+    mocap = session / "mocap-L01-S07-wangyang-10p"
+    mocap.mkdir(parents=True)
+    (mocap / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    (session / "robocap_segment1_video_left.mp4").write_bytes(b"video")
+
+    rows = web_app.statistics_mocap_metadata_rows(tmp_path)
+
+    assert rows == [
+        [
+            True,
+            "session01",
+            "mocap-L01-S07-wangyang-10p",
+            "L01",
+            7,
+            "wangyang",
+            10,
+            "OK remote key L01/session01",
+        ]
+    ]
+    rows[0][3:7] = ["L02", 8, "li-ming", 12]
+    updates = web_app.build_remote_mocap_metadata_updates(tmp_path, rows)
+
+    assert len(updates) == 1
+    assert updates[0].primitive_id == "L01"
+    assert updates[0].session_id == "session01"
+    assert updates[0].mocap_capture.as_record() == {
+        "source_directory": "mocap-L01-S07-wangyang-10p",
+        "action_id": "L02",
+        "collection_session_index": 8,
+        "collector": "li-ming",
+        "repetition_count": 12,
+    }
+
+
+def test_statistics_mocap_metadata_marks_invalid_and_ambiguous_directories(
+    tmp_path: Path,
+) -> None:
+    invalid = tmp_path / "invalid"
+    (invalid / "mocap-take01").mkdir(parents=True)
+    (invalid / "robocap_segment1_video_left.mp4").write_bytes(b"video")
+    ambiguous = tmp_path / "ambiguous"
+    (ambiguous / "mocap-A01-S01-user-1p").mkdir(parents=True)
+    (ambiguous / "mocap-A01-S02-user-1p").mkdir()
+    (ambiguous / "robocap_segment1_video_left.mp4").write_bytes(b"video")
+
+    rows = web_app.statistics_mocap_metadata_rows(tmp_path)
+
+    assert len(rows) == 3
+    assert all(row[0] is False for row in rows)
+    assert any(str(row[7]).startswith("INVALID") for row in rows)
+    assert sum(str(row[7]).startswith("AMBIGUOUS") for row in rows) == 2
+
+
 def test_discover_session_directories_excludes_generated_and_calibration_trees(tmp_path) -> None:
     valid = tmp_path / "source" / "20260821_040000_session81"
     ignored_roots = [

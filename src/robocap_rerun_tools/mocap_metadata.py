@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import re
+from dataclasses import asdict, dataclass
+
+MOCAP_CAPTURE_DIRECTORY_PATTERN = re.compile(
+    r"^mocap-(?P<action>[A-Z]\d{2})-S(?P<session>\d+)-"
+    r"(?P<collector>.+)-(?P<count>\d+)p$",
+    re.IGNORECASE,
+)
+MOCAP_ACTION_ID_PATTERN = re.compile(r"[A-Z]\d{2}\Z")
+INVALID_COLLECTOR_PATTERN = re.compile(r"[\\/\x00-\x1f\x7f]")
+
+
+@dataclass(frozen=True)
+class MocapCaptureMetadata:
+    source_directory: str
+    action_id: str
+    collection_session_index: int
+    collector: str
+    repetition_count: int
+
+    def as_record(self) -> dict[str, object]:
+        return asdict(self)
+
+
+def validate_mocap_action_id(value: object) -> str:
+    action_id = str(value).strip().upper()
+    if MOCAP_ACTION_ID_PATTERN.fullmatch(action_id) is None:
+        raise ValueError("Mocap action ID must match [A-Z]NN, for example L01.")
+    return action_id
+
+
+def _integer_field(value: object, label: str, *, minimum: int) -> int:
+    if isinstance(value, bool):
+        raise TypeError(f"{label} must be an integer greater than or equal to {minimum}.")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label} must be an integer greater than or equal to {minimum}."
+        ) from exc
+    if not number.is_integer() or number < minimum:
+        raise ValueError(f"{label} must be an integer greater than or equal to {minimum}.")
+    return int(number)
+
+
+def build_mocap_capture_metadata(
+    source_directory: object,
+    action_id: object,
+    collection_session_index: object,
+    collector: object,
+    repetition_count: object,
+) -> MocapCaptureMetadata:
+    directory = str(source_directory).strip()
+    if not directory or directory in {".", ".."} or "/" in directory or "\\" in directory:
+        raise ValueError("Mocap source directory must be one direct directory name.")
+    resolved_collector = str(collector).strip()
+    if not resolved_collector or INVALID_COLLECTOR_PATTERN.search(resolved_collector):
+        raise ValueError("Mocap collector must be non-empty and cannot contain path separators.")
+    return MocapCaptureMetadata(
+        source_directory=directory,
+        action_id=validate_mocap_action_id(action_id),
+        collection_session_index=_integer_field(
+            collection_session_index,
+            "Mocap collection Session index",
+            minimum=0,
+        ),
+        collector=resolved_collector,
+        repetition_count=_integer_field(
+            repetition_count,
+            "Mocap repetition count",
+            minimum=1,
+        ),
+    )
+
+
+def parse_mocap_capture_directory(name: str) -> MocapCaptureMetadata | None:
+    match = MOCAP_CAPTURE_DIRECTORY_PATTERN.fullmatch(name)
+    if match is None:
+        return None
+    return build_mocap_capture_metadata(
+        name,
+        match.group("action"),
+        match.group("session"),
+        match.group("collector"),
+        match.group("count"),
+    )

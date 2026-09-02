@@ -160,6 +160,14 @@ counts that do not satisfy `n:ratio*(n+1):(n+1)`; error-free covers valid report
 Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
+The same Statistics run scans direct `mocap*` directory names into an editable table. A complete
+`mocap-<action:[A-Z]NN>-S<session-index>-<collector>-<count>p` name yields the action ID, numeric
+collection Session index, collector, and repetition count. Invalid or ambiguous names remain visible
+but are not selected for remote updates. After editing metadata values, `Batch update remote Mocap
+metadata` updates the matching remote `metadata.jsonl` row and Session `manifest.json` together in
+one ModelScope commit. Session and Mocap-directory cells are stable local identifiers; the operation
+does not rename directories, move remote data, or upload videos.
+
 The same tab uploads clean Sessions one by one. Its `YYYYMMDD` field starts with the uploader's local
 date and can be edited; every Session in that run uses the selected date. It first reads the target
 repository's remote `metadata.jsonl`. `Skip existing remote Sessions` is enabled by default, so
@@ -313,6 +321,10 @@ exists, the fallback reads only the first action field immediately after `mocap-
 and `10p` is the repetition count. This is only a default: the editable dropdown accepts any safe
 single-directory name, and a manual value takes precedence. A missing or conflicting match leaves its
 current value unchanged.
+
+When the complete compact format matches, new staging also records all four parsed values and the
+original directory name under `mocap_capture` in both `manifest.json` and `metadata.jsonl`. Generic
+names such as `mocap/` remain supported and simply omit this optional object.
 
 RRD selection works the same way but allows an empty selection. The Web tab scans the selected
 Segment, and the repeatable CLI option is `--rrd-file`; `--include-rrd` remains available when every

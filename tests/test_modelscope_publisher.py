@@ -13,6 +13,7 @@ from robocap_rerun_tools.dataset_intersection import (
     FileFrameSlice,
     FrameSlice,
 )
+from robocap_rerun_tools.mocap_metadata import build_mocap_capture_metadata
 
 REAL_MEASURE_SESSION_DURATION_S = publisher.measure_session_duration_s
 
@@ -231,6 +232,37 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
     assert "proxy-compressed video are rejected" in normalized_readme
     assert "robowrist_<device_id>_left/" in dataset_readme
     assert "robowrist_<device_id>_right/" in dataset_readme
+
+
+def test_stage_session_records_compact_mocap_directory_metadata(tmp_path: Path) -> None:
+    session = tmp_path / "session-compact"
+    mocap_dir = session / "mocap-L01-S07-wangyang-10p"
+    mocap_dir.mkdir(parents=True)
+    (mocap_dir / "motion.trc").write_text("Frame#\tTime\n", encoding="utf-8")
+    write_inspection_report(session)
+
+    staged = publisher.stage_session(
+        session,
+        "L01",
+        dataset_root=tmp_path / "dataset",
+        progress=None,
+    )
+
+    expected = {
+        "source_directory": "mocap-L01-S07-wangyang-10p",
+        "action_id": "L01",
+        "collection_session_index": 7,
+        "collector": "wangyang",
+        "repetition_count": 10,
+    }
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    metadata = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
+    assert manifest["mocap_capture"] == expected
+    assert metadata["mocap_capture"] == expected
+    assert staged.mocap_capture == expected
+    assert publisher.load_staged_session(
+        staged.dataset_root, staged.primitive_id, staged.session_id
+    ).mocap_capture == expected
 
 
 def test_stage_session_rejects_lossy_video_compression(tmp_path: Path) -> None:
@@ -1226,6 +1258,73 @@ def test_upload_requires_configured_token(tmp_path: Path) -> None:
 
     with pytest.raises(publisher.ModelScopePublisherError, match="not configured"):
         publisher.upload_staged_session(staged, "owner/egomocap", settings=settings)
+
+
+def test_update_remote_mocap_metadata_updates_index_and_manifest_in_one_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_path = "EgoMotionActions/20260828/L01/session-one"
+    metadata_path = tmp_path / "remote" / publisher.METADATA_NAME
+    manifest_path = tmp_path / "remote" / session_path / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "primitive_id": "L01",
+                "session_id": "session-one",
+                "upload_batch_id": "20260828",
+                "session_path": session_path,
+                "manifest": f"{session_path}/manifest.json",
+                "inspection_html": f"{session_path}/{publisher.REPORT_NAME}",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest_path.write_text(
+        json.dumps({"primitive_id": "L01", "session_id": "session-one"}) + "\n",
+        encoding="utf-8",
+    )
+    uploaded: dict[str, str] = {}
+
+    class FakeApi:
+        def whoami(self):
+            return SimpleNamespace(username="dataset-owner")
+
+        def repo_exists(self, *_args):
+            return True
+
+        def download_file(self, _repo, _kind, path, **_kwargs):
+            return tmp_path / "remote" / Path(path)
+
+        def upload_folder(self, _repo, _kind, local_root, **kwargs):
+            root = Path(local_root)
+            for path in root.rglob("*"):
+                if path.is_file():
+                    uploaded[path.relative_to(root).as_posix()] = path.read_text(encoding="utf-8")
+            assert kwargs["commit_message"] == "Update Mocap capture metadata for 1 session(s)"
+
+    monkeypatch.setattr(publisher, "_hub_api", lambda _settings: FakeApi())
+    settings = publisher.ModelScopeSettings(
+        "secret", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/egomocap"
+    )
+    capture = build_mocap_capture_metadata(
+        "mocap-L01-S07-wangyang-10p", "L02", 8, "li-ming", 12
+    )
+
+    result = publisher.update_remote_mocap_metadata(
+        [publisher.RemoteMocapMetadataUpdate("L01", "session-one", capture)],
+        settings=settings,
+        progress=None,
+    )
+
+    assert result.updated_keys == (("L01", "session-one"),)
+    assert result.unchanged_keys == ()
+    assert result.missing_keys == ()
+    uploaded_metadata = json.loads(uploaded[publisher.METADATA_NAME])
+    uploaded_manifest = json.loads(uploaded[f"{session_path}/manifest.json"])
+    assert uploaded_metadata["mocap_capture"] == capture.as_record()
+    assert uploaded_manifest["mocap_capture"] == capture.as_record()
 
 
 def test_fetch_remote_session_keys_uses_metadata_index(

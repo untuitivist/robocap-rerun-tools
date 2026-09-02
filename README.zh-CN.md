@@ -109,6 +109,7 @@ start_web.bat
 - 中文/英文切换
 - 检查帧率、漏帧和异常时间戳，并快捷打开独立 HTML 报告
 - 按 `PXX` 分别统计未检查、差帧、无误和总时长、Session 数及逐 Session 帧数异常
+- 解析、编辑并批量同步紧凑 `mocap-*` 目录元数据
 - 默认压缩视频的数据打包
 - time/frame RRD 导出、offset 检查和 offset sweep
 - RRD Web Viewer
@@ -153,11 +154,18 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 多帧/少帧、第三人称多帧/少帧，并合并同一 Session 多个 Segment 的类别。时间戳 diff、推算丢帧、
 缺失时间戳和 frame_index 等其他问题不改变这项帧数分类。
 
+同一次统计还会按 `mocap-<动作:[A-Z]NN>-S<Session序号>-<采集员>-<次数>p` 解析直属 Mocap
+目录，并显示可编辑表格。格式完整且每个 Session 只有一个 Mocap 目录时默认勾选；缺失、格式错误或
+存在多个目录的行会保留用于检查，但不会默认更新。修改动作、采集 Session 序号、采集员或重复次数后，
+“批量更新远端 Mocap 元数据”会在一次 ModelScope 提交中同步修改远端 `metadata.jsonl` 和对应
+Session 的 `manifest.json`。该操作不重传视频、不移动远端目录，Session 与 Mocap 目录两列只用于
+稳定定位，不应修改。以后准备的新 Session 也会自动把完整命名写入两处的 `mocap_capture` 字段。
+
 同一页可逐个上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，按
 `(primitive_id, session_id)` 跳过已上传项；这些项不会补报告、暂存或处理视频。其余 Session 必须满足
 上述帧数关系，并在独立暂存根目录中依次完成准备、clean 校验和上传后才开始下一条。上传首次失败后
 会再重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或 clean 校验失败也只跳过当前 Session，
-不停止后续队列，且不回滚已完成上传。该流程固定使用压缩的完整 Session，默认选择 BVH/CSV/TRC/MP4
+不停止后续队列，且不回滚已完成上传。该流程将完整 Session 视频逐字节复制，默认选择 BVH/CSV/TRC/MP4
 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
 `PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会排除。
 
