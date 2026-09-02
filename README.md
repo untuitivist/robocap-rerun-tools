@@ -161,8 +161,9 @@ Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
 The same Statistics run scans direct `mocap*` directory names into an editable table. A complete
-`mocap-<action:[A-Z]NN>-S<session-index>-<participant>-<count>p` name yields the action ID, numeric
-collection Session index, participant, and repetition count. Invalid or ambiguous names remain visible
+`mocap-<action:[A-Z]NN>-S<session-index>-<participant>-<count>p[<numeric-suffix>]` name yields the
+action ID, numeric collection Session index, participant, and repetition count. An optional numeric
+suffix after `p` is ignored during field parsing. Invalid or ambiguous names remain visible
 but are not selected for remote updates. After editing metadata values, `Batch update remote Mocap
 metadata` updates the matching remote `metadata.jsonl` row and Session `manifest.json` together in
 one ModelScope commit. Session and Mocap-directory cells are stable local identifiers; the operation
@@ -314,7 +315,9 @@ or absolute path. Omitting it in the CLI preserves the compatibility behavior of
 packageable Mocap file. Preparing the same Session again synchronizes the canonical staged `mocap/`
 directory with the current selection, so a previously selected file does not remain.
 
-Compact action IDs use `mocap-<action:[A-Z]NN>-S<session>-<participant>-<count>p`. Selecting a Session
+Compact action IDs use
+`mocap-<action:[A-Z]NN>-S<session>-<participant>-<count>p[<numeric-suffix>]`. An optional numeric
+suffix after `p` distinguishes directories but is ignored during field parsing. Selecting a Session
 first applies the unchanged standalone `PXX` search to direct `mocap*` directory names. If no `PXX`
 exists, the fallback reads only the first action field immediately after `mocap-` or `mocap_`. Thus
 `mocap-L01-S07-wangyang-10p` suggests `L01`; `S07` is the Session number, `wangyang` is the participant,

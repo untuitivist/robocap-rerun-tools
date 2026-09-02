@@ -900,11 +900,14 @@ aligned-intersection upload it is the duration of the cropped common timeline. T
 stored in that Session's `manifest.json`.
 
 When the source directory follows
-`mocap-<action:[A-Z]NN>-S<collection-session-index>-<participant>-<count>p`, both the dataset index and
+`mocap-<action:[A-Z]NN>-S<collection-session-index>-<participant>-<count>p[<numeric-suffix>]`, both
+the dataset index and
 Session manifest contain a `mocap_capture` object with `source_directory`, `action_id`,
 `collection_session_index`, `participant`, and `repetition_count`. Generic `mocap*` names remain valid
-and omit this optional object. Metadata-only corrections update the index and matching manifests in
-one commit without moving Session directories or uploading capture files again.
+and omit this optional object. An optional numeric suffix after `p` is retained only in
+`source_directory` and does not change `repetition_count`. Metadata-only corrections update the index
+and matching manifests in one commit without moving Session directories or uploading capture files
+again.
 
 New ModelScope staging never applies lossy video compression. Full-session video files are copied
 byte-for-byte. Aligned-intersection video is encoded losslessly only when frame-accurate cropping

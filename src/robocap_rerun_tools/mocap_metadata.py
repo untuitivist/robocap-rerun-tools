@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 
 MOCAP_CAPTURE_DIRECTORY_PATTERN = re.compile(
     r"^mocap-(?P<action>[A-Z]\d{2})-S(?P<session>\d+)-"
-    r"(?P<participant>.+)-(?P<count>\d+)p$",
+    r"(?P<participant>.+)-(?P<count>\d+)p\d*$",
     re.IGNORECASE,
 )
 MOCAP_ACTION_ID_PATTERN = re.compile(r"[A-Z]\d{2}\Z")

@@ -21,6 +21,18 @@ def test_parse_mocap_capture_directory_extracts_all_fields() -> None:
     }
 
 
+@pytest.mark.parametrize("suffix", ["1", "2", "001"])
+def test_parse_mocap_capture_directory_ignores_numeric_suffix_after_p(suffix: str) -> None:
+    name = f"mocap-L01-S07-wang-yang-10p{suffix}"
+
+    metadata = parse_mocap_capture_directory(name)
+
+    assert metadata is not None
+    assert metadata.source_directory == name
+    assert metadata.participant == "wang-yang"
+    assert metadata.repetition_count == 10
+
+
 @pytest.mark.parametrize(
     "name",
     [
@@ -28,6 +40,7 @@ def test_parse_mocap_capture_directory_extracts_all_fields() -> None:
         "mocap-L01",
         "mocap-L1-S07-wangyang-10p",
         "mocap-L01-S07-wangyang",
+        "mocap-L01-S07-wangyang-10p-copy",
         "other-L01-S07-wangyang-10p",
     ],
 )

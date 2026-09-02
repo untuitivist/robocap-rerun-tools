@@ -153,7 +153,9 @@ Scan the Session Mocap files before staging. The list includes every packageable
 single `mocap*` source directory. Only BVH, CSV, TRC, and MP4 files are selected by default, and any
 relative path containing `unnamed` is left unselected regardless of case. Other detected files stay
 available for manual selection; only checked Mocap files are staged, and at least one must remain.
-Compact action IDs use `mocap-<action:[A-Z]NN>-S<session>-<participant>-<count>p`. When a Session is
+Compact action IDs use `mocap-<action:[A-Z]NN>-S<session>-<participant>-<count>p[<numeric-suffix>]`.
+An optional numeric suffix after `p` distinguishes directories and is ignored during field parsing.
+When a Session is
 selected, the original standalone `PXX` search in direct `mocap*` directory names runs first and is
 unchanged. Only when no `PXX` exists does the fallback read the first action field after `mocap-` or
 `mocap_`. In `mocap-L01-S07-wangyang-10p`, the action is `L01`, `S07` is the Session number,
@@ -275,7 +277,9 @@ Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOK
 准备前还要扫描当前 Session 的 Mocap 文件。列表会显示唯一 `mocap*` 源目录下所有可打包文件；默认只
 勾选 BVH、CSV、TRC 与 MP4，并对相对路径中包含 `unnamed` 的文件取消默认勾选（不区分大小写）。其他
 文件仍保留在列表中供手动选择；只有勾选的 Mocap 文件会进入暂存，且至少保留一个。
-紧凑动作 ID 统一使用 `mocap-<动作:[A-Z]NN>-S<Session序号>-<参与者>-<次数>p`。选择 Session 时，
+紧凑动作 ID 统一使用
+`mocap-<动作:[A-Z]NN>-S<Session序号>-<参与者>-<次数>p[<数字后缀>]`。`p` 后的可选数字仅用于区分
+目录，不参与字段解析。选择 Session 时，
 原有的直属 `mocap*` 目录名独立 `PXX` 搜索会优先执行且语义不变。只有完全没有 `PXX` 时，后备规则
 才读取紧跟 `mocap-` 或 `mocap_` 的第一个动作字段。对于 `mocap-L01-S07-wangyang-10p`，动作是
 `L01`，`S07` 是 Session 序号，`wangyang` 是参与者，`10p` 是重复次数；只有第一个字段参与动作
@@ -328,7 +332,8 @@ LANGUAGE_PACKS = {
         "statistics_button": "Calculate statistics",
         "statistics_mocap_metadata": "Mocap directory metadata",
         "statistics_mocap_metadata_help": (
-            "Rows are parsed from `mocap-<action:[A-Z]NN>-S<index>-<participant>-<count>p`. "
+            "Rows are parsed from `mocap-<action:[A-Z]NN>-S<index>-<participant>-"
+            "<count>p[<numeric-suffix>]`; an optional numeric suffix after `p` is ignored. "
             "Edit Action ID, Collection Session index, Participant, or Repetition count, select the "
             "rows to update, then batch-update the remote `metadata.jsonl` and Session manifests. "
             "Session and Mocap directory identify the local source and must not be edited. This "
@@ -461,7 +466,8 @@ LANGUAGE_PACKS = {
         "statistics_button": "统计根目录",
         "statistics_mocap_metadata": "Mocap 命名元数据",
         "statistics_mocap_metadata_help": (
-            "按 `mocap-<动作:[A-Z]NN>-S<序号>-<参与者>-<次数>p` 解析。可修改动作、采集 Session "
+            "按 `mocap-<动作:[A-Z]NN>-S<序号>-<参与者>-<次数>p[<数字后缀>]` 解析；`p` 后的"
+            "可选数字不参与字段解析。可修改动作、采集 Session "
             "序号、参与者和重复次数；勾选需要更新的行后，批量同步到远端 `metadata.jsonl` 与各 "
             "Session 的 `manifest.json`。Session 和 Mocap 目录用于定位本地数据，不可修改。该操作"
             "只更新元数据，不上传视频，也不移动远端目录。"
@@ -1893,7 +1899,8 @@ def statistics_mocap_metadata_rows(dataset_root: object) -> list[list[object]]:
                         None,
                         "",
                         None,
-                        "INVALID expected mocap-[A-Z]NN-S<index>-<participant>-<count>p",
+                        "INVALID expected mocap-[A-Z]NN-S<index>-<participant>-"
+                        "<count>p[<numeric-suffix>]",
                     ]
                 )
                 continue
