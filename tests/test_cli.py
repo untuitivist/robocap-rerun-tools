@@ -65,6 +65,8 @@ def test_export_parser_accepts_frame_offset() -> None:
             "8",
             "--offset",
             "40",
+            "--third-person-offset",
+            "-3",
             "--robocap-start-frame",
             "100",
             "--robocap-end-frame",
@@ -74,6 +76,7 @@ def test_export_parser_accepts_frame_offset() -> None:
     assert args.mode == "frame"
     assert args.ratio == "8"
     assert args.offset == 40
+    assert args.third_person_offset == -3
     assert args.robocap_start_frame == 100
     assert args.robocap_end_frame == 250
 
@@ -654,10 +657,10 @@ def test_ffprobe_video_requests_capture_comment_metadata(tmp_path: Path, monkeyp
 def test_web_language_values_include_docs() -> None:
     assert "中文说明" in web_app.language_values("中文")["doc"]
     assert "Basic Workflow" in web_app.language_values("English")["doc"]
-    assert "前移" in web_app.language_values("中文")["offset_help"]
-    assert "后移" in web_app.language_values("中文")["offset_help"]
-    assert "advances NOKOV/GT" in web_app.language_values("English")["offset_help"]
-    assert "delays NOKOV/GT" in web_app.language_values("English")["offset_help"]
+    assert "round(N*ratio)+round(O*ratio)" in web_app.language_values("中文")["offset_help"]
+    assert "第三人称 Offset `T`" in web_app.language_values("中文")["offset_help"]
+    assert "Mocap Offset `O`" in web_app.language_values("English")["offset_help"]
+    assert "third-person frame `N+T`" in web_app.language_values("English")["offset_help"]
 
 
 def test_web_default_offset_persists_and_synchronizes(tmp_path: Path) -> None:
@@ -731,6 +734,7 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
         "mode": "frame",
         "ratio": "auto",
         "offset": -5,
+        "third_person_offset": 2,
         "limit_robocap_frames": True,
         "robocap_start_frame": 10,
         "robocap_end_frame": 20,
@@ -756,6 +760,7 @@ def test_web_export_forwards_sensor_filters(tmp_path: Path, monkeypatch) -> None
     assert captured[captured.index("--retarget-model") + 1] == "none"
     assert "--mano-model-dir" not in captured
     assert captured[captured.index("--offset") + 1] == "-5"
+    assert captured[captured.index("--third-person-offset") + 1] == "2"
     assert captured[captured.index("--robocap-start-frame") + 1] == "10"
     assert captured[captured.index("--robocap-end-frame") + 1] == "20"
 

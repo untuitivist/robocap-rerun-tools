@@ -391,18 +391,29 @@ class TimelineContext:
     def frames_from_video_frames(self, source_frames: np.ndarray) -> np.ndarray:
         if self.frame_alignment is None:
             raise ValueError("Video frame mapping requires frame alignment mode.")
-        source_frames = np.asarray(source_frames, dtype=np.float64)
-        return np.rint(source_frames * self.frame_alignment.ratio).astype(np.int64)
+        return np.fromiter(
+            (
+                self.frame_alignment.robocap_to_timeline_frame(int(source_frame))
+                for source_frame in np.asarray(source_frames).flat
+            ),
+            dtype=np.int64,
+        )
 
     def frames_from_third_person_frames(self, source_frames: np.ndarray) -> np.ndarray:
         if self.frame_alignment is None:
             raise ValueError("Third-person frame mapping requires frame alignment mode.")
-        return self.frames_from_video_frames(source_frames) - self.frame_alignment.gt_frame_offset
+        return np.fromiter(
+            (
+                self.frame_alignment.third_person_to_timeline_frame(int(source_frame))
+                for source_frame in np.asarray(source_frames).flat
+            ),
+            dtype=np.int64,
+        )
 
     def gt_frame(self, source_gt_frame: int) -> int:
         if self.frame_alignment is None:
             raise ValueError("GT frame mapping is only available in frame alignment mode.")
-        return source_gt_frame - self.frame_alignment.gt_frame_offset
+        return self.frame_alignment.mocap_to_timeline_frame(source_gt_frame)
 
     def indexes(
         self,
@@ -443,6 +454,7 @@ class ExportNameParameters:
     alignment_mode: str
     frame_ratio: float | None
     video_frame_offset: int
+    third_person_video_frame_offset: int
     reference_video: str
     frame_range: RobocapFrameRange | None
     retarget_model: str
@@ -993,7 +1005,8 @@ def with_export_parameter_suffix(path: Path, parameters: ExportNameParameters) -
     if parameters.alignment_mode == "frame":
         alignment_tokens = [
             f"r{compact_number_token(parameters.frame_ratio)}",
-            f"o{parameters.video_frame_offset}",
+            f"mo{parameters.video_frame_offset}",
+            f"to{parameters.third_person_video_frame_offset}",
         ]
     else:
         alignment_tokens = []
@@ -1402,8 +1415,16 @@ def synthesize_frame_aligned_timestamps(
     )
 
 
-def describe_frame_alignment(ratio: float, video_frame_offset: int) -> str:
-    return FrameAlignment(ratio, video_frame_offset).describe()
+def describe_frame_alignment(
+    ratio: float,
+    video_frame_offset: int,
+    third_person_video_frame_offset: int = 0,
+) -> str:
+    return FrameAlignment(
+        ratio,
+        video_frame_offset,
+        third_person_video_frame_offset,
+    ).describe()
 
 
 def resolve_gt_frame_ratio(
@@ -1427,6 +1448,7 @@ def with_frame_aligned_gt_timestamps(
     video_rate_hz: float | None,
     frame_ratio: float | None = None,
     video_frame_offset: int = 0,
+    third_person_video_frame_offset: int = 0,
 ) -> GTConfig | None:
     if (
         gt_config is None
@@ -1437,7 +1459,11 @@ def with_frame_aligned_gt_timestamps(
     ratio = resolve_gt_frame_ratio(gt_config, video_rate_hz, frame_ratio)
     if ratio is None:
         return gt_config
-    alignment = FrameAlignment(ratio, video_frame_offset)
+    alignment = FrameAlignment(
+        ratio,
+        video_frame_offset,
+        third_person_video_frame_offset,
+    )
 
     def aligned(timestamps_ns: np.ndarray) -> np.ndarray:
         return synthesize_frame_aligned_timestamps(
@@ -1471,7 +1497,7 @@ def with_frame_aligned_gt_timestamps(
         marker_tracks=marker_tracks,
         mano_mesh_tracks=mano_mesh_tracks,
         third_person_start_ns=reference_timestamp_at_video_frame(
-            -float(video_frame_offset), reference_video_timestamps
+            -float(third_person_video_frame_offset), reference_video_timestamps
         ),
         note=note,
     )
@@ -4119,9 +4145,21 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help=(
-            "Signed Robocap-video-frame offset. Positive advances NOKOV/GT relative to "
-            "Robocap video; negative delays it. It is converted to the source script's GT "
-            "frame offset with round(offset*ratio). --gt-frame-offset is a compatibility alias."
+            "Signed Mocap offset measured in Robocap frames. Robocap frame N uses Mocap "
+            "frame round(N*ratio)+round(offset*ratio); positive selects later Mocap frames "
+            "and negative selects earlier ones. --gt-frame-offset is a compatibility alias."
+        ),
+    )
+    parser.add_argument(
+        "--third-person-video-frame-offset",
+        "--third-person-frame-offset",
+        dest="third_person_video_frame_offset",
+        type=int,
+        default=0,
+        help=(
+            "Signed third-person source-frame offset relative to Robocap video. Positive "
+            "means Robocap frame N uses third-person frame N+offset; negative uses an "
+            "earlier third-person frame. The compatibility alias is --third-person-frame-offset."
         ),
     )
     parser.add_argument(
@@ -4263,10 +4301,21 @@ def main() -> None:
             reference_rate_hz,
             frame_ratio=resolved_frame_ratio,
             video_frame_offset=args.gt_video_frame_offset,
+            third_person_video_frame_offset=args.third_person_video_frame_offset,
         )
-        print(describe_frame_alignment(resolved_frame_ratio, args.gt_video_frame_offset))
+        print(
+            describe_frame_alignment(
+                resolved_frame_ratio,
+                args.gt_video_frame_offset,
+                args.third_person_video_frame_offset,
+            )
+        )
     frame_alignment = (
-        FrameAlignment(resolved_frame_ratio, args.gt_video_frame_offset)
+        FrameAlignment(
+            resolved_frame_ratio,
+            args.gt_video_frame_offset,
+            args.third_person_video_frame_offset,
+        )
         if args.gt_alignment_mode == "frame" and resolved_frame_ratio is not None
         else None
     )
@@ -4335,6 +4384,7 @@ def main() -> None:
         alignment_mode=args.gt_alignment_mode,
         frame_ratio=resolved_frame_ratio,
         video_frame_offset=args.gt_video_frame_offset,
+        third_person_video_frame_offset=args.third_person_video_frame_offset,
         reference_video=args.gt_frame_reference_video,
         frame_range=frame_range,
         retarget_model=args.retarget_model,

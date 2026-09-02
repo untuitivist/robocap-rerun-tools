@@ -52,10 +52,26 @@ def test_frame_alignment_accepts_negative_video_frame_offset() -> None:
     assert aligned[0] == reference_timestamps[5]
     assert aligned[8] == reference_timestamps[6]
     summary = exporter.describe_frame_alignment(8.0, -5)
-    assert "Robocap offset=-5 frames -> GT offset=-40 frames" in summary
+    assert "Mocap offset=-5 Robocap frames -> Mocap source offset=-40 frames" in summary
     assert "NOKOV/GT is delayed (shifted later) relative to Robocap video" in summary
-    assert "video frame 0 -> GT frame -40" in summary
-    assert "GT frame 0 -> video frame 5.000000000" in summary
+    assert "Robocap frame 0 -> Mocap frame -40" in summary
+    assert "Mocap frame 0 -> Robocap frame 5.000000000" in summary
+
+
+def test_frame_alignment_maps_mocap_and_third_person_offsets_independently() -> None:
+    alignment = FrameAlignment(
+        ratio=8.0,
+        video_frame_offset=5,
+        third_person_video_frame_offset=-2,
+    )
+
+    assert alignment.robocap_to_mocap_frame(10) == 120
+    assert alignment.robocap_to_third_person_frame(10) == 8
+    assert alignment.robocap_to_timeline_frame(10) == 80
+    assert alignment.mocap_to_timeline_frame(120) == 80
+    assert alignment.third_person_to_timeline_frame(8) == 80
+    assert alignment.video_to_gt_frame(10) == 120
+    assert alignment.video_to_third_person_frame(10) == 8
 
 
 def test_capture_timestamps_map_to_gt_scale_frame_timeline() -> None:
@@ -90,7 +106,7 @@ def test_frame_timeline_aligns_video_and_gt_source_frames() -> None:
     assert negative.gt_frame(760) == video_frame
 
 
-def test_third_person_video_start_follows_frame_offset() -> None:
+def test_third_person_video_start_follows_its_independent_frame_offset() -> None:
     reference_timestamps = np.arange(20, dtype=np.int64) * 100
     marker_track = exporter.GTMarkerTrack(
         label="hand",
@@ -113,14 +129,16 @@ def test_third_person_video_start_follows_frame_offset() -> None:
         reference_timestamps,
         video_rate_hz=30.0,
         frame_ratio=8.0,
-        video_frame_offset=5,
+        video_frame_offset=11,
+        third_person_video_frame_offset=5,
     )
     negative = exporter.with_frame_aligned_gt_timestamps(
         gt_config,
         reference_timestamps,
         video_rate_hz=30.0,
         frame_ratio=8.0,
-        video_frame_offset=-5,
+        video_frame_offset=-11,
+        third_person_video_frame_offset=-5,
     )
 
     assert exporter.reference_timestamp_at_video_frame(-5.0, reference_timestamps) == -500
@@ -136,7 +154,11 @@ def test_third_person_frame_timeline_uses_source_frames_despite_pts_jitter() -> 
     timeline = exporter.TimelineContext(
         alignment_mode="frame",
         reference_timestamps_ns=reference_timestamps,
-        frame_alignment=FrameAlignment(ratio=8.0, video_frame_offset=5),
+        frame_alignment=FrameAlignment(
+            ratio=8.0,
+            video_frame_offset=13,
+            third_person_video_frame_offset=5,
+        ),
     )
     source_frames = np.arange(10_000, dtype=np.int64)
 
@@ -151,13 +173,17 @@ def test_third_person_frame_timeline_converts_to_gt_scale_before_offset() -> Non
     timeline = exporter.TimelineContext(
         alignment_mode="frame",
         reference_timestamps_ns=np.arange(20, dtype=np.int64) * 100,
-        frame_alignment=FrameAlignment(ratio=2.4, video_frame_offset=1),
+        frame_alignment=FrameAlignment(
+            ratio=2.4,
+            video_frame_offset=7,
+            third_person_video_frame_offset=1,
+        ),
     )
     source_frames = np.asarray([0, 1, 2, 3], dtype=np.int64)
 
     frame_indices = timeline.frames_from_third_person_frames(source_frames)
 
-    np.testing.assert_array_equal(frame_indices, [-2, 0, 3, 5])
+    np.testing.assert_array_equal(frame_indices, [-2, 0, 2, 5])
 
 
 def test_robocap_video_logging_uses_source_frames_despite_pts_jitter(
@@ -235,7 +261,11 @@ def test_third_person_video_logging_passes_source_frames_to_frame_timeline(
     real_timeline = exporter.TimelineContext(
         alignment_mode="frame",
         reference_timestamps_ns=reference_timestamps,
-        frame_alignment=FrameAlignment(ratio=8.0, video_frame_offset=5),
+        frame_alignment=FrameAlignment(
+            ratio=8.0,
+            video_frame_offset=13,
+            third_person_video_frame_offset=5,
+        ),
     )
     captured: dict[str, np.ndarray] = {}
 
@@ -341,6 +371,7 @@ def sample_export_name_parameters() -> exporter.ExportNameParameters:
         alignment_mode="frame",
         frame_ratio=8.0,
         video_frame_offset=5,
+        third_person_video_frame_offset=-2,
         reference_video="left",
         frame_range=(100, 200),
         retarget_model="none",
@@ -377,7 +408,7 @@ def test_rrd_name_contains_readable_parameters_and_stable_fingerprint() -> None:
 
     named = exporter.with_export_parameter_suffix(path, parameters)
 
-    assert "_r8_o5_ref-left_f100-200_interp1_rt-none_p540_" in named.name
+    assert "_r8_mo5_to-2_ref-left_f100-200_interp1_rt-none_p540_" in named.name
     assert "_data-rw1-mag0-imu1-tp1_cfg-" in named.name
     assert exporter.with_export_parameter_suffix(named, parameters) == named
 

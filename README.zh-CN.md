@@ -112,6 +112,7 @@ start_web.bat
 - 解析、编辑并批量同步紧凑 `mocap-*` 目录元数据
 - 默认压缩视频的数据打包
 - time/frame RRD 导出、offset 检查和 offset sweep
+- 按 Robocap 帧对比第一人称视频、第三人称视频和 BVH/TRC/CSV/XRS/C3D 三维动捕
 - RRD Web Viewer
 - ModelScope 数据准备、上传和 Token 配置
 - 环境、依赖和 Git 更新检查
@@ -123,6 +124,15 @@ start_web.bat
 扫描会排除分析结果、生成产物、ModelScope 暂存数据、标定目录、虚拟环境和构建目录。数据集根目录
 和最近选择的 Session 会在 Web 重启后恢复；切换 Session 时会清空上一条 Session 派生出的 GT、
 检查报告、RRD、第三人称视频和 Offset 参考文件选择，避免跨 Session 误用。
+
+“帧对比”页把数据分为 Robocap 主参考视频、第三人称视频和动捕 3D 文件三组。起止帧都是从 0
+开始且包含首尾的 Robocap 帧号；每个勾选的数据源占一列，每个 Robocap 帧占一行。视频保持纵横比
+并补黑边，动捕列在整列中固定相机和尺度，以深蓝点、红线显示。每格默认 `960x540`，同时标出
+Robocap 帧与实际源帧。Robocap 第 `N` 帧选择动捕源帧
+`round(N*ratio) + round(动捕 offset*ratio)`，选择第三人称源帧
+`N + 第三人称 offset`；两个 offset 独立且都允许负数。输出写到
+`<session>/_artifacts/frame_comparison/`，网页显示逐格进度、下载入口和“使用默认应用打开图片”按钮，
+不直接渲染超长图。画布使用磁盘映射，避免完整 RGB 图片长期占用内存。
 
 两个 Offset 输入框旁都有“设为默认值”按钮。点击后会把当前整数 Robocap 视频帧偏移量同步到“导出 RRD”和
 “Offset”两个页面，并在 Web UI 重启后继续使用。Windows 配置保存在
@@ -366,10 +376,10 @@ robocap-rerun export Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --seg
 时间窗，用它同时裁剪所有 Robocap 视频、传感器、NOKOV 轨迹和第三人称视频，再与原有的公共数据
 时间窗求交。在 Web 页面先勾选“限制 Robocap 帧范围”再填写两个帧号；不勾选时保持全量导出。
 
-帧对齐版 RRD 的主时间轴是整数 `frame`，统一采用 GT/NOKOV 帧尺度。Robocap 视频第 `N` 帧
-写在 `frame = round(N * ratio)`，GT 源数据第 `K` 帧写在
-`frame = K - round(offset * ratio)`；其余视频和传感器根据参考视频时间戳映射到同一条帧轴。
-`capture_time` 仍然保留用于复核，但在 frame 模式下不再是默认时间轴。
+帧对齐版 RRD 的主时间轴是整数 `frame`，统一采用动捕帧尺度。Robocap 视频第 `N` 帧写在
+`frame = round(N*ratio)`；动捕源帧 `K` 写在 `K-round(动捕 offset*ratio)`；第三人称源帧 `M`
+写在 `round((M-第三人称 offset)*ratio)`。其他视频和传感器根据参考视频时间戳映射到同一条帧轴。
+`capture_time` 仍保留用于复核，但在 frame 模式下不是默认时间轴。
 
 生成展示版布局：
 
@@ -409,11 +419,12 @@ robocap-rerun inspect-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session
 robocap-rerun sweep-offset Z:\DATASETS\Frodobots\nokov\20260707_083023_session48 --segment segment1 --ratio 8 --offset-min -10 --offset-max 10
 ```
 
-帧对齐公式是：
+Robocap 是帧对比与帧对齐 RRD 的共同主参考，两处共用以下映射：
 
 ```text
-GT 帧 offset = round(Robocap 帧 offset * main_ratio)
-video frame N -> NOKOV frame round(N * main_ratio) + GT 帧 offset
+动捕源帧 offset = round(动捕 offset * ratio)
+Robocap 帧 N -> 动捕源帧 round(N * ratio) + 动捕源帧 offset
+Robocap 帧 N -> 第三人称源帧 N + 第三人称 offset
 ```
 
 其中：
@@ -423,15 +434,16 @@ video frame N -> NOKOV frame round(N * main_ratio) + GT 帧 offset
   的均值，各自取最近的 10 倍数，再计算 `GT 取整 FPS / Robocap 取整 FPS`，并将这个商再次
   四舍五入为最接近的正整数，作为实际 auto ratio。该过程不读取或生成检查报告。
 - `--ratio 8`：需要固定比例时显式覆盖自动值。
-- `--offset 5`：以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap
-  视频前移、提前出现，同一视频帧会取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap
-  视频后移、延后出现，同一视频帧会取更靠前的 GT 帧。程序先转换为
-  `GT 帧 offset = round(Robocap 帧 offset * ratio)`，然后原样使用源脚本的对齐公式。
-  ratio 为 8 时，`5` 会转换为 GT offset `40`，`-5` 会把 GT 第 0 帧放到 Robocap 视频第 5 帧。
+- `--offset 5`：只控制动捕，以 Robocap 帧为单位。正值让同一 Robocap 帧选择更靠后的动捕帧，
+  负值选择更靠前的动捕帧。程序转换为 `round(offset*ratio)` 个动捕源帧；ratio 为 8 时，`5`
+  转换为动捕 offset `40`，`-5` 会把动捕第 0 帧放到 Robocap 第 5 帧。
+- `--third-person-offset T`：只控制第三人称视频。Robocap 第 `N` 帧选择第三人称第 `N+T` 帧；
+  正值选更靠后的第三人称帧，负值选更靠前的第三人称帧，不乘动捕 ratio。
 
-Rerun 中显示的统一帧号为：视频第 `N` 帧位于 `round(N * ratio)`；GT 源帧 `K` 位于
-`K - GT 帧 offset`。因此 ratio 8、offset 5 时，视频第 100 帧和 GT 第 840 帧都位于
-统一时间轴的 `frame=800`。
+Rerun 中显示的统一帧号为：Robocap 第 `N` 帧位于 `round(N*ratio)`；动捕源帧 `K` 位于
+`K - round(动捕 offset*ratio)`；第三人称源帧 `M` 位于
+`round((M-第三人称 offset)*ratio)`。因此帧对比和 RRD 会从同一 Robocap 帧选中相同的源帧，
+修改任一 offset 也不会移动另一个数据源。
 
 这取代了旧版“Offset 直接使用 GT 帧数”的定义。
 
@@ -475,15 +487,15 @@ Web 发起的 RRD 导出、检查、打包、Offset 与环境命令都不设置�
 常见文件：
 
 - `*_time_aligned_fall_interp0_rt-none_raw_bp-default_data-..._cfg-....rrd`
-- `*_frame_aligned_r8_o5_ref-left_f100-500_interp1_rt-none_p540_bp-display_data-..._cfg-....rrd`
+- `*_frame_aligned_r8_mo5_to-2_ref-left_f100-500_interp1_rt-none_p540_data-..._cfg-....rrd`
 - `time_alignment_report.tsv`
 - `timestamp_anomaly_detail_table.html`
 - `video_to_nokov_frame_alignment.tsv`
 - `offset_inspection.md`
 
-RRD 文件名会纳入导出参数，避免不同配置互相覆盖。可读部分包含帧对齐 ratio（`r`）、Robocap
-帧 offset（`o`）、参考视频（`ref`）、帧区间（`f`，全量为 `fall`）、插值开关（`interp`）、重定向模型（`rt`）、
-原始/代理视频、布局（`bp`）和数据流开关。末尾稳定的 `cfg-<10 位十六进制>` 指纹还会覆盖
+RRD 文件名会纳入导出参数，避免不同配置互相覆盖。可读部分包含帧对齐 ratio（`r`）、动捕
+offset（`mo`）、第三人称 offset（`to`）、参考视频（`ref`）、帧区间（`f`，全量为 `fall`）、插值开关（`interp`）、
+重定向模型（`rt`）、原始/代理视频和数据流开关。末尾稳定的 `cfg-<10 位十六进制>` 指纹还会覆盖
 精确压缩参数、传感器点数上限、时间裁剪/对齐开关、坐标缩放、GT 输入、MANO 目录等其余会影响
 内容的参数。即使显式指定 `--save`，也会追加同样的参数后缀；如果路径已经包含同一后缀则不会重复。
 

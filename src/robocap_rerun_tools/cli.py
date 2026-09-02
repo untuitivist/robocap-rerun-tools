@@ -1626,9 +1626,19 @@ def add_common_export_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=0,
         help=(
-            "Signed Robocap-video-frame offset. Positive advances NOKOV/GT relative to "
-            "Robocap video; negative delays it. Internally convert with GT frame offset = "
-            "round(Robocap frame offset * ratio), then use the source-script mapping."
+            "Signed Mocap offset measured in Robocap frames. Robocap frame N uses Mocap "
+            "frame round(N*ratio)+round(offset*ratio), so positive values select later Mocap "
+            "frames and negative values select earlier ones. This does not move third-person "
+            "video."
+        ),
+    )
+    parser.add_argument(
+        "--third-person-offset",
+        type=int,
+        default=0,
+        help=(
+            "Signed third-person-video frame offset relative to Robocap. Robocap frame N "
+            "uses third-person frame N+offset. This is independent of the Mocap --offset."
         ),
     )
     parser.add_argument("--reference-video", default="left")
@@ -1705,6 +1715,8 @@ def command_export(args: argparse.Namespace) -> int:
         args.reference_video,
         "--gt-video-frame-offset",
         str(args.offset),
+        "--third-person-video-frame-offset",
+        str(args.third_person_offset),
         "--mano-model-dir",
         str(args.mano_model_dir),
         "--gt-coordinate-scale",

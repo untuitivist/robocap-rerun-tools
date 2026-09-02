@@ -40,9 +40,11 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "扫描 Session" in config
     assert "检查动捕比例（8：240 FPS，4：120 FPS）" in config
     assert "帧对比 / Frame Comparison" in config
-    assert "视频（每个勾选的视频占一列）" in config
-    assert "起始帧（从 0 开始，包含）" in config
-    assert "结束帧（从 0 开始，包含）" in config
+    assert "Robocap 视频（主参考列）" in config
+    assert "第三人称视频（对齐列）" in config
+    assert "动捕 3D 文件（对齐列）" in config
+    assert "Robocap 起始帧（从 0 开始，包含）" in config
+    assert "Robocap 结束帧（从 0 开始，包含）" in config
     assert "生成帧对比图" in config
     assert "使用默认应用打开图片" in config
     assert "输出图片" in config
@@ -657,6 +659,8 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
         True,
         "P03",
         [],
+        [],
+        [],
         None,
         "",
         None,
@@ -669,7 +673,9 @@ def test_select_session_clears_session_dependent_file_controls(tmp_path) -> None
     assert updates[8]["interactive"] is True
     assert updates[9]["value"] == "P03"
     assert updates[10]["choices"] == []
-    assert updates[13]["interactive"] is False
+    assert updates[11]["choices"] == []
+    assert updates[12]["choices"] == []
+    assert updates[15]["interactive"] is False
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     assert settings["session_dir"] == str(session)
 
@@ -1035,6 +1041,32 @@ def test_scan_frame_comparison_videos_returns_relative_labels_and_absolute_value
         ("mocap/third.MOV", str(second.resolve())),
     ]
     assert update["value"] == []
+
+
+def test_scan_frame_comparison_sources_separates_reference_third_person_and_mocap(
+    tmp_path,
+) -> None:
+    robocap = tmp_path / "robocap_segment1_video_left.mp4"
+    robocap.write_bytes(b"")
+    mocap_dir = tmp_path / "mocap-A01"
+    mocap_dir.mkdir()
+    third_person = mocap_dir / "capture.mp4"
+    third_person.write_bytes(b"")
+    bvh = mocap_dir / "body.bvh"
+    bvh.write_bytes(b"")
+
+    summary, robocap_update, third_update, mocap_update = (
+        web_app.scan_frame_comparison_sources(str(tmp_path), "中文")
+    )
+
+    assert "Robocap 视频：1" in summary
+    assert "第三人称视频：1" in summary
+    assert "动捕文件：1" in summary
+    assert robocap_update["choices"] == [(robocap.name, str(robocap.resolve()))]
+    assert third_update["choices"] == [
+        ("mocap-A01/capture.mp4", str(third_person.resolve()))
+    ]
+    assert mocap_update["choices"] == [("mocap-A01/body.bvh", str(bvh.resolve()))]
 
 
 def test_open_frame_comparison_image_uses_default_application(tmp_path, monkeypatch) -> None:

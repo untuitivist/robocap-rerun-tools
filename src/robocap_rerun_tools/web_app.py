@@ -27,6 +27,7 @@ from typing import TextIO
 from robocap_rerun_tools import MEDIA_TOOLS
 from robocap_rerun_tools.frame_comparison import (
     FrameComparisonError,
+    discover_mocap_files,
     discover_video_files,
     iter_frame_comparison,
 )
@@ -69,6 +70,12 @@ This is a local browser UI for Robocap/NOKOV inspection, data packaging, RRD exp
 Each Session may contain one direct child directory whose name starts with `mocap`, matched without
 case sensitivity, for example `mocap/`, `mocap_01/`, or `Mocap-NOKOV/`. Multiple `mocap*`
 directories are reported as ambiguous. ModelScope staging always publishes this source as `mocap/`.
+
+The `Frame Comparison` tab groups selected sources into Robocap reference videos, third-person
+videos, and Mocap 3D files (BVH/TRC/CSV/XRS/C3D). Its inclusive row range always uses 0-based
+Robocap frames. Each source occupies one column. Robocap frame `N` selects Mocap frame
+`round(N*ratio)+round(mocap_offset*ratio)` and third-person frame `N+third_person_offset`.
+The two signed offsets are independent. Mocap columns keep one camera and scale across all rows.
 
 The export controls can independently include or exclude MAG, IMU, robowrist, and third-person video data.
 `Interpolate dropped NOKOV frames` linearly fills GT trajectory gaps at the fixed 240 FPS source
@@ -113,29 +120,30 @@ to keep the browser session's memory stable.
 Frame alignment uses:
 
 ```text
-GT frame offset = round(Robocap frame offset * ratio)
-video frame N -> NOKOV frame round(N * ratio) + GT frame offset
+Mocap source offset = round(mocap_offset * ratio)
+Robocap frame N -> Mocap frame round(N * ratio) + Mocap source offset
+Robocap frame N -> third-person frame N + third_person_offset
 ```
 
 Frame-aligned RRD files use the integer `frame` timeline as the primary timeline. The common
 timeline is expressed at the GT/NOKOV frame rate: Robocap video frame `N` is logged at
-`frame = round(N * ratio)`, while source GT frame `K` is logged at
-`frame = K - GT frame offset`. `capture_time` remains available only as a secondary timeline.
+`frame = round(N*ratio)`, source Mocap frame `K` at
+`frame = K-round(mocap_offset*ratio)`, and third-person source frame `M` at
+`frame = round((M-third_person_offset)*ratio)`. `capture_time` remains secondary.
 
 The default is `ratio=auto`. It scans the current session, averages all valid GT FPS values and all
 Robocap video FPS values separately, rounds both means to the nearest multiple of 10, divides them,
 and rounds that ratio to the nearest positive integer. Enter a number such as `8` to override it.
-Robocap video is the reference for the signed offset. A positive value advances NOKOV/GT relative
-to Robocap video, so GT appears earlier and the same video frame selects a later GT frame. A
-negative value delays NOKOV/GT relative to Robocap video, so GT appears later and the same video
-frame selects an earlier GT frame. At ratio 8, offset `5` becomes source-script GT offset `40`;
-offset `-5` places GT frame 0 at Robocap video frame 5.
+Robocap video is the reference. The Mocap offset uses Robocap-frame units and is multiplied by the
+ratio; at ratio 8, Mocap offset `5` becomes 40 source frames. The independent third-person offset
+uses 30 FPS video-frame units directly. Positive values select later frames from their own source;
+negative values select earlier frames. Changing one offset never moves the other source.
 
 To export only part of a session, enable `Limit Robocap frame range` and enter both
 `Robocap start frame` and `Robocap end frame`. The indexes are 0-based and inclusive. One
 reference-video `capture_time` window is applied to every video, sensor, NOKOV track, and
 third-person stream. Output names include readable alignment and content tags such as
-`r8_o5_ref-left_f100-200_rt-none`, plus a stable `cfg-...` fingerprint covering the remaining
+`r8_mo5_to-2_ref-left_f100-200_rt-none`, plus a stable `cfg-...` fingerprint covering the remaining
 export parameters. Different parameter sets therefore do not overwrite each other.
 
 Use `Set as default` beside either Offset field to persist that frame offset and apply it to both
@@ -207,6 +215,11 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 `mocap_01/` 或 `Mocap-NOKOV/`。同时存在多个 `mocap*` 目录时会明确报歧义；ModelScope
 暂存时始终将该源目录规范化发布为 `mocap/`。
 
+“帧对比”页将勾选的数据分为 Robocap 主参考视频、第三人称视频和 BVH/TRC/CSV/XRS/C3D 动捕
+3D 文件。行范围始终是从 0 开始且包含首尾的 Robocap 帧，每个数据源占一列。Robocap 第 `N`
+帧选择动捕源帧 `round(N*ratio)+round(动捕 offset*ratio)`，选择第三人称源帧
+`N+第三人称 offset`。两个有符号 offset 相互独立；动捕列在所有行中使用固定相机与尺度。
+
 导出时可以分别勾选是否包含 MAG、IMU、robowrist 和第三人称视频数据。“插值补齐 NOKOV 丢帧”
 会在时间或帧对齐之前，按固定 240 FPS 对 GT 轨迹时间缺口做线性插值；视频与传感器不会伪造样本。
 插值产生的 3D 帧会显示为纯红色，并显示源帧号与 Rerun timeline 帧号标签。
@@ -243,26 +256,27 @@ frame_index 异常及其上下行。
 帧对齐使用：
 
 ```text
-GT 帧 offset = round(Robocap 帧 offset * ratio)
-video frame N -> NOKOV frame round(N * ratio) + GT 帧 offset
+动捕源帧 offset = round(动捕 offset * ratio)
+Robocap 帧 N -> 动捕源帧 round(N * ratio) + 动捕源帧 offset
+Robocap 帧 N -> 第三人称源帧 N + 第三人称 offset
 ```
 
 帧对齐 RRD 的主时间轴是整数 `frame`，统一采用 GT/NOKOV 帧尺度：Robocap 视频第 `N` 帧写在
-`frame = round(N * ratio)`，GT 源数据第 `K` 帧写在 `frame = K - GT 帧 offset`。
+`frame = round(N*ratio)`，动捕源帧 `K` 写在 `K-round(动捕 offset*ratio)`，第三人称源帧 `M`
+写在 `round((M-第三人称 offset)*ratio)`。
 `capture_time` 仍会保留，但只作为辅助时间轴，不再是帧对齐版默认显示的时间轴。
 
 默认使用 `ratio=auto`：实时扫描当前 session，分别计算有效 GT FPS 和 Robocap 视频 FPS 的
 均值，各自取最近的 10 倍数，计算“GT 取整值 / Robocap 取整值”，最后把 ratio 四舍五入为
 最接近的正整数。输入 `8` 等数字可覆盖自动值。
-Offset 是以 Robocap 视频为基准的有符号视频帧数。正值表示 NOKOV/GT 相对 Robocap 视频
-前移、提前出现，同一视频帧会选取更靠后的 GT 帧；负值表示 NOKOV/GT 相对 Robocap 视频
-后移、延后出现，同一视频帧会选取更靠前的 GT 帧。ratio 为 8 时，offset `5` 会转换成源脚本
-使用的 GT offset `40`；offset `-5` 会把 GT 第 0 帧放到 Robocap 视频第 5 帧。
+Robocap 视频是共同主参考。动捕 offset 使用 Robocap 帧单位并乘 ratio；ratio 为 8 时，动捕
+offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FPS 视频帧单位，不乘 ratio。
+各自正值选择更靠后的源帧，负值选择更靠前的源帧；修改一个不会移动另一个数据源。
 
 只导出 session 的一段时，先勾选“限制 Robocap 帧范围”，再填写“Robocap 起始帧”和
 “Robocap 结束帧”。帧号从 0 开始，并且首尾都包含。工具会用参考视频的 `capture_time` 生成一个
 统一时间窗，同时裁剪视频、传感器、NOKOV 轨迹和第三人称视频。输出名会包含
-`r8_o5_ref-left_f100-200_rt-none` 这类可读标签，并用稳定的 `cfg-...` 指纹覆盖其余导出参数，
+`r8_mo5_to-2_ref-left_f100-200_rt-none` 这类可读标签，并用稳定的 `cfg-...` 指纹覆盖其余导出参数，
 所以不同参数组合不会互相覆盖。
 
 点击任一 Offset 输入框旁的“设为默认值”，会持久保存当前帧偏移量，并同步到“导出 RRD”和“Offset”页。
@@ -317,10 +331,20 @@ LANGUAGE_PACKS = {
         "output": "Output",
         "inspect_mocap_ratio": "Inspection Mocap ratio (8: 240 FPS, 4: 120 FPS)",
         "inspect_button": "Inspect",
-        "frame_compare_scan_button": "Scan videos",
-        "frame_compare_videos": "Videos (one output column per selected video)",
-        "frame_compare_start_frame": "Start frame (0-based, inclusive)",
-        "frame_compare_end_frame": "End frame (0-based, inclusive)",
+        "frame_compare_scan_button": "Scan videos and Mocap",
+        "frame_compare_videos": "Robocap videos (reference columns)",
+        "frame_compare_third_person_videos": "Third-person videos (aligned columns)",
+        "frame_compare_mocap_files": "Mocap 3D files (aligned columns)",
+        "frame_compare_start_frame": "Robocap start frame (0-based, inclusive)",
+        "frame_compare_end_frame": "Robocap end frame (0-based, inclusive)",
+        "frame_compare_ratio": "Mocap / Robocap ratio",
+        "frame_compare_mocap_offset": "Mocap offset (signed Robocap frames)",
+        "frame_compare_third_person_offset": "Third-person offset (signed video frames)",
+        "frame_compare_alignment_help": (
+            "Robocap frame `N` is the reference. Mocap uses "
+            "`round(N * ratio) + round(mocap_offset * ratio)`; third-person video uses "
+            "`N + third_person_offset`. Positive offsets select later source frames."
+        ),
         "frame_compare_cell_width": "Cell width",
         "frame_compare_cell_height": "Cell height",
         "frame_compare_generate_button": "Generate frame comparison",
@@ -360,16 +384,15 @@ LANGUAGE_PACKS = {
         "package_button": "Package",
         "mode": "Alignment mode",
         "ratio": "Ratio",
-        "offset": "Offset (signed Robocap frames)",
+        "offset": "Mocap Offset (signed Robocap frames)",
+        "third_person_offset": "Third-person Offset (signed video frames)",
         "offset_help": (
-            "**Offset direction (Robocap video is the reference):** `+N` advances NOKOV/GT "
-            "by N Robocap frames, so it appears earlier and the same video frame uses a later "
-            "GT frame. `-N` delays NOKOV/GT by N Robocap frames, so it appears later and the "
-            "same video frame uses an earlier GT frame. Internal source-script conversion: "
-            "`GT frame offset = round(Robocap frame offset * ratio)`. **Frame-mode RRD uses "
-            "`frame` as its primary timeline (GT/NOKOV frame scale): video frame N is at "
-            "`round(N * ratio)` and GT source frame K is at `K - GT frame offset`; "
-            "`capture_time` is secondary. Third-person video follows the same frame offset in frame-mode RRDs.**"
+            "**Robocap is the reference.** Mocap Offset `O` means Robocap frame `N` selects "
+            "Mocap frame `round(N*ratio)+round(O*ratio)`. Third-person Offset `T` independently "
+            "selects third-person frame `N+T`. Positive values select later source frames; "
+            "negative values select earlier ones. **In frame-mode RRD, Robocap `N` is at "
+            "`round(N*ratio)`, Mocap `K` at `K-round(O*ratio)`, and third-person `M` at "
+            "`round((M-T)*ratio)`. `capture_time` is secondary.**"
         ),
         "limit_robocap_frames": "Limit Robocap frame range",
         "robocap_start_frame": "Robocap start frame (0-based, inclusive)",
@@ -451,10 +474,20 @@ LANGUAGE_PACKS = {
         "output": "输出",
         "inspect_mocap_ratio": "检查动捕比例（8：240 FPS，4：120 FPS）",
         "inspect_button": "检查",
-        "frame_compare_scan_button": "扫描视频",
-        "frame_compare_videos": "视频（每个勾选的视频占一列）",
-        "frame_compare_start_frame": "起始帧（从 0 开始，包含）",
-        "frame_compare_end_frame": "结束帧（从 0 开始，包含）",
+        "frame_compare_scan_button": "扫描视频与动捕",
+        "frame_compare_videos": "Robocap 视频（主参考列）",
+        "frame_compare_third_person_videos": "第三人称视频（对齐列）",
+        "frame_compare_mocap_files": "动捕 3D 文件（对齐列）",
+        "frame_compare_start_frame": "Robocap 起始帧（从 0 开始，包含）",
+        "frame_compare_end_frame": "Robocap 结束帧（从 0 开始，包含）",
+        "frame_compare_ratio": "动捕 / Robocap 比例",
+        "frame_compare_mocap_offset": "动捕 Offset（有符号 Robocap 帧）",
+        "frame_compare_third_person_offset": "第三人称 Offset（有符号视频帧）",
+        "frame_compare_alignment_help": (
+            "以 Robocap 第 `N` 帧为主参考。动捕源帧为 "
+            "`round(N * ratio) + round(动捕 offset * ratio)`；第三人称源帧为 "
+            "`N + 第三人称 offset`。正 offset 表示选择更靠后的源帧。"
+        ),
         "frame_compare_cell_width": "单格宽度",
         "frame_compare_cell_height": "单格高度",
         "frame_compare_generate_button": "生成帧对比图",
@@ -492,14 +525,14 @@ LANGUAGE_PACKS = {
         "package_button": "打包数据",
         "mode": "对齐模式",
         "ratio": "比例 ratio",
-        "offset": "Offset（有符号 Robocap 帧）",
+        "offset": "动捕 Offset（有符号 Robocap 帧）",
+        "third_person_offset": "第三人称 Offset（有符号视频帧）",
         "offset_help": (
-            "**Offset 方向（以 Robocap 视频为基准）：** `+N` 表示 NOKOV/GT 相对 Robocap "
-            "视频前移 N 帧、提前出现，同一视频帧会取更靠后的 GT 帧；`-N` 表示 NOKOV/GT "
-            "相对 Robocap 视频后移 N 帧、延后出现，同一视频帧会取更靠前的 GT 帧。进入源脚本"
-            "前转换为：`GT 帧 offset = round(Robocap 帧 offset * ratio)`。**帧对齐 RRD 的"
-            "主时间轴是 GT/NOKOV 帧尺度的 `frame`：视频第 N 帧位于 `round(N * ratio)`，GT "
-            "源数据第 K 帧位于 `K - GT 帧 offset`；`capture_time` 只作辅助时间轴。第三人称视频在帧对齐 RRD 中也使用同一个 offset，与 NOKOV/GT 一起前后移动。**"
+            "**以 Robocap 为主参考。** 动捕 Offset `O` 表示 Robocap 第 `N` 帧选择动捕源帧 "
+            "`round(N*ratio)+round(O*ratio)`；第三人称 Offset `T` 独立选择第三人称第 `N+T` "
+            "帧。正值选择更靠后的源帧，负值选择更靠前的源帧。**帧对齐 RRD 中 Robocap "
+            "第 `N` 帧位于 `round(N*ratio)`，动捕第 `K` 帧位于 `K-round(O*ratio)`，第三人称 "
+            "第 `M` 帧位于 `round((M-T)*ratio)`；`capture_time` 只作辅助时间轴。**"
         ),
         "limit_robocap_frames": "限制 Robocap 帧范围",
         "robocap_start_frame": "Robocap 起始帧（从 0 开始，包含）",
@@ -1041,6 +1074,8 @@ def select_session(
         gr.update(value=True, interactive=True),
         gr.update(value=inferred_primitive) if inferred_primitive else gr.update(),
         gr.update(choices=[], value=[]),
+        gr.update(choices=[], value=[]),
+        gr.update(choices=[], value=[]),
         gr.update(value=None),
         gr.update(value=""),
         gr.update(interactive=False),
@@ -1406,11 +1441,96 @@ def scan_frame_comparison_videos(session_dir: str, language: str) -> tuple[str, 
     return "\n".join(lines), gr.update(choices=choices, value=[])
 
 
+def scan_frame_comparison_sources(
+    session_dir: str, language: str
+) -> tuple[str, object, object, object]:
+    try:
+        import gradio as gr
+    except ImportError as exc:
+        raise RuntimeError("Web UI requires Gradio. Install it with: uv sync --extra web") from exc
+
+    session = Path(session_path(session_dir)).resolve()
+    try:
+        videos = discover_video_files(session)
+        mocap_files = discover_mocap_files(session)
+    except FrameComparisonError as exc:
+        empty = gr.update(choices=[], value=[])
+        return str(exc), empty, empty, empty
+
+    mocap_directories = tuple(path.resolve() for path in discover_mocap_directories(session))
+    third_person_videos = [
+        video
+        for video in videos
+        if any(video.is_relative_to(directory) for directory in mocap_directories)
+    ]
+    third_person_video_set = set(third_person_videos)
+    robocap_videos = [video for video in videos if video not in third_person_video_set]
+
+    def choices(paths: list[Path]) -> list[tuple[str, str]]:
+        return [(path.relative_to(session).as_posix(), str(path)) for path in paths]
+
+    robocap_choices = choices(robocap_videos)
+    third_person_choices = choices(third_person_videos)
+    mocap_choices = choices(mocap_files)
+    if language == "中文":
+        lines = [
+            f"Session：{session}",
+            f"Robocap 视频：{len(robocap_choices)}",
+            f"第三人称视频：{len(third_person_choices)}",
+            f"动捕文件：{len(mocap_choices)}",
+        ]
+    else:
+        lines = [
+            f"Session: {session}",
+            f"Robocap videos: {len(robocap_choices)}",
+            f"Third-person videos: {len(third_person_choices)}",
+            f"Mocap files: {len(mocap_choices)}",
+        ]
+    return (
+        "\n".join(lines),
+        gr.update(choices=robocap_choices, value=[]),
+        gr.update(choices=third_person_choices, value=[]),
+        gr.update(choices=mocap_choices, value=[]),
+    )
+
+
+def resolve_frame_comparison_ratio(
+    session: Path, segment: str, ratio: object
+) -> tuple[float, str | None]:
+    raw_value = str(ratio or "").strip()
+    if raw_value.casefold() == "auto":
+        from robocap_rerun_tools.cli import (
+            auto_ratio_console_summary,
+            resolve_ffprobe,
+            resolve_session_auto_ratio,
+        )
+
+        estimate = resolve_session_auto_ratio(session, optional_text(segment), resolve_ffprobe())
+        if estimate is None:
+            raise FrameComparisonError(
+                "Auto ratio could not resolve Robocap and Mocap FPS; enter a numeric ratio."
+            )
+        return float(estimate.ratio), auto_ratio_console_summary(estimate)
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise FrameComparisonError("Mocap ratio must be a positive number or auto.") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise FrameComparisonError("Mocap ratio must be a positive number or auto.")
+    return value, None
+
+
 def generate_frame_comparison(
     session_dir: str,
+    segment: str,
     selected_videos: list[str] | None,
+    selected_third_person_videos: list[str] | None,
+    selected_mocap_files: list[str] | None,
     start_frame: object,
     end_frame: object,
+    mocap_ratio: object,
+    mocap_offset: object,
+    third_person_offset: object,
     cell_width: object,
     cell_height: object,
     language: str,
@@ -1422,10 +1542,21 @@ def generate_frame_comparison(
 
     try:
         session = Path(session_path(session_dir)).resolve()
+        if selected_mocap_files or str(mocap_ratio or "").strip().casefold() != "auto":
+            resolved_ratio, ratio_summary = resolve_frame_comparison_ratio(
+                session, segment, mocap_ratio
+            )
+        else:
+            resolved_ratio, ratio_summary = 1.0, None
         progress_stream = iter_frame_comparison(
             selected_videos or [],
             start_frame,
             end_frame,
+            third_person_videos=selected_third_person_videos or [],
+            mocap_files=selected_mocap_files or [],
+            mocap_ratio=resolved_ratio,
+            mocap_offset=normalize_offset(mocap_offset),
+            third_person_offset=normalize_offset(third_person_offset),
             cell_width=cell_width,
             cell_height=cell_height,
             output_dir=session / "_artifacts" / "frame_comparison",
@@ -1436,22 +1567,34 @@ def generate_frame_comparison(
             filled = min(width, max(0, round(width * ratio)))
             bar = "#" * filled + "-" * (width - filled)
             if progress.output_path is None:
+                kind_labels = {
+                    "robocap_video": "Robocap 视频" if language == "中文" else "Robocap video",
+                    "third_person_video": (
+                        "第三人称视频" if language == "中文" else "Third-person video"
+                    ),
+                    "mocap": "动捕 3D" if language == "中文" else "Mocap 3D",
+                }
+                source_kind = kind_labels.get(progress.source_kind, progress.source_kind)
                 if language == "中文":
                     status = (
                         "状态：生成中\n"
                         f"[{bar}] {ratio * 100:5.1f}% {progress.completed}/{progress.total}\n"
-                        f"视频：{progress.video_index}/{progress.video_count} "
-                        f"{progress.video_path.name}\n"
-                        f"当前帧：{progress.frame_index}"
+                        f"数据源：{progress.source_index}/{progress.source_count} "
+                        f"{source_kind} | {progress.source_path.name}\n"
+                        f"Robocap 帧：{progress.robocap_frame_index} | "
+                        f"源帧：{progress.frame_index}"
                     )
                 else:
                     status = (
                         "Status: RUNNING\n"
                         f"[{bar}] {ratio * 100:5.1f}% {progress.completed}/{progress.total}\n"
-                        f"Video: {progress.video_index}/{progress.video_count} "
-                        f"{progress.video_path.name}\n"
-                        f"Current frame: {progress.frame_index}"
+                        f"Source: {progress.source_index}/{progress.source_count} "
+                        f"{source_kind} | {progress.source_path.name}\n"
+                        f"Robocap frame: {progress.robocap_frame_index} | "
+                        f"Source frame: {progress.frame_index}"
                     )
+                if ratio_summary:
+                    status += f"\n\n{ratio_summary}"
                 yield status, None, "", gr.update(interactive=False)
                 continue
 
@@ -1461,8 +1604,11 @@ def generate_frame_comparison(
                 status = (
                     "状态：已完成\n"
                     f"[{bar}] 100.0% {progress.total}/{progress.total}\n"
-                    f"列数：{progress.video_count}\n"
-                    f"帧范围：{start_frame}-{end_frame}（包含）\n"
+                    f"列数：{progress.source_count}\n"
+                    f"Robocap 帧范围：{start_frame}-{end_frame}（包含）\n"
+                    f"动捕 ratio：{resolved_ratio:g} | "
+                    f"动捕 offset：{normalize_offset(mocap_offset):+d} | "
+                    f"第三人称 offset：{normalize_offset(third_person_offset):+d}\n"
                     f"文件：{result}\n"
                     f"大小：{size_mib:.2f} MiB"
                 )
@@ -1470,8 +1616,11 @@ def generate_frame_comparison(
                 status = (
                     "Status: COMPLETED\n"
                     f"[{bar}] 100.0% {progress.total}/{progress.total}\n"
-                    f"Columns: {progress.video_count}\n"
-                    f"Frame range: {start_frame}-{end_frame} (inclusive)\n"
+                    f"Columns: {progress.source_count}\n"
+                    f"Robocap frame range: {start_frame}-{end_frame} (inclusive)\n"
+                    f"Mocap ratio: {resolved_ratio:g} | "
+                    f"Mocap offset: {normalize_offset(mocap_offset):+d} | "
+                    f"Third-person offset: {normalize_offset(third_person_offset):+d}\n"
                     f"File: {result}\n"
                     f"Size: {size_mib:.2f} MiB"
                 )
@@ -3017,6 +3166,7 @@ def export_rrd(
     include_mag: bool,
     include_imu: bool,
     proxy_height: int,
+    third_person_offset: int = 0,
 ) -> Iterator[str]:
     resolved_session_dir = Path(session_path(session_dir))
     robowrist_streams = (
@@ -3028,7 +3178,17 @@ def export_rrd(
         args.extend(["--segment", segment.strip()])
     if mode == "frame":
         signed_offset = normalize_offset(offset)
-        args.extend(["--ratio", ratio.strip() or "auto", "--offset", str(signed_offset)])
+        signed_third_person_offset = normalize_offset(third_person_offset)
+        args.extend(
+            [
+                "--ratio",
+                ratio.strip() or "auto",
+                "--offset",
+                str(signed_offset),
+                "--third-person-offset",
+                str(signed_third_person_offset),
+            ]
+        )
     if limit_robocap_frames:
         start_frame = normalize_optional_frame_index(robocap_start_frame)
         end_frame = normalize_optional_frame_index(robocap_end_frame)
@@ -3095,8 +3255,14 @@ def language_updates(language: str):
         gr.update(value=labels["inspect_button"]),
         gr.update(value=labels["frame_compare_scan_button"]),
         gr.update(label=labels["frame_compare_videos"]),
+        gr.update(label=labels["frame_compare_third_person_videos"]),
+        gr.update(label=labels["frame_compare_mocap_files"]),
         gr.update(label=labels["frame_compare_start_frame"]),
         gr.update(label=labels["frame_compare_end_frame"]),
+        gr.update(label=labels["frame_compare_ratio"]),
+        gr.update(label=labels["frame_compare_mocap_offset"]),
+        gr.update(label=labels["frame_compare_third_person_offset"]),
+        gr.update(value=labels["frame_compare_alignment_help"]),
         gr.update(label=labels["frame_compare_cell_width"]),
         gr.update(label=labels["frame_compare_cell_height"]),
         gr.update(value=labels["frame_compare_generate_button"]),
@@ -3121,6 +3287,7 @@ def language_updates(language: str):
         gr.update(label=labels["mode"]),
         gr.update(label=labels["ratio"]),
         gr.update(label=labels["offset"]),
+        gr.update(label=labels["third_person_offset"]),
         gr.update(value=labels["offset_help"]),
         gr.update(label=labels["limit_robocap_frames"]),
         gr.update(label=labels["robocap_start_frame"]),
@@ -3269,9 +3436,16 @@ def build_app():
 
         with gr.Tab("帧对比 / Frame Comparison"):
             frame_compare_scan_button = gr.Button(labels["frame_compare_scan_button"])
-            frame_compare_videos = gr.CheckboxGroup(
-                label=labels["frame_compare_videos"], choices=[], value=[]
-            )
+            with gr.Row():
+                frame_compare_videos = gr.CheckboxGroup(
+                    label=labels["frame_compare_videos"], choices=[], value=[]
+                )
+                frame_compare_third_person_videos = gr.CheckboxGroup(
+                    label=labels["frame_compare_third_person_videos"], choices=[], value=[]
+                )
+                frame_compare_mocap_files = gr.CheckboxGroup(
+                    label=labels["frame_compare_mocap_files"], choices=[], value=[]
+                )
             with gr.Row():
                 frame_compare_start_frame = gr.Number(
                     label=labels["frame_compare_start_frame"], value=0, precision=0
@@ -3279,6 +3453,19 @@ def build_app():
                 frame_compare_end_frame = gr.Number(
                     label=labels["frame_compare_end_frame"], value=59, precision=0
                 )
+                frame_compare_ratio = gr.Textbox(
+                    label=labels["frame_compare_ratio"], value="auto"
+                )
+                frame_compare_mocap_offset = gr.Number(
+                    label=labels["frame_compare_mocap_offset"],
+                    value=default_offset,
+                    precision=0,
+                )
+                frame_compare_third_person_offset = gr.Number(
+                    label=labels["frame_compare_third_person_offset"], value=0, precision=0
+                )
+            frame_compare_alignment_help = gr.Markdown(labels["frame_compare_alignment_help"])
+            with gr.Row():
                 frame_compare_cell_width = gr.Number(
                     label=labels["frame_compare_cell_width"], value=960, precision=0
                 )
@@ -3294,17 +3481,28 @@ def build_app():
             )
             frame_compare_file = gr.File(label=labels["frame_compare_file"])
             frame_compare_scan_button.click(
-                scan_frame_comparison_videos,
+                scan_frame_comparison_sources,
                 inputs=[session_dir, language],
-                outputs=[output, frame_compare_videos],
+                outputs=[
+                    output,
+                    frame_compare_videos,
+                    frame_compare_third_person_videos,
+                    frame_compare_mocap_files,
+                ],
             )
             frame_compare_generate_button.click(
                 generate_frame_comparison,
                 inputs=[
                     session_dir,
+                    segment,
                     frame_compare_videos,
+                    frame_compare_third_person_videos,
+                    frame_compare_mocap_files,
                     frame_compare_start_frame,
                     frame_compare_end_frame,
+                    frame_compare_ratio,
+                    frame_compare_mocap_offset,
+                    frame_compare_third_person_offset,
                     frame_compare_cell_width,
                     frame_compare_cell_height,
                     language,
@@ -3565,6 +3763,9 @@ def build_app():
                 mode = gr.Radio(label=labels["mode"], choices=["time", "frame"], value="frame")
                 ratio = gr.Textbox(label=labels["ratio"], value="auto")
                 offset = gr.Number(label=labels["offset"], value=default_offset, precision=0)
+                third_person_offset = gr.Number(
+                    label=labels["third_person_offset"], value=0, precision=0
+                )
             export_offset_help = gr.Markdown(labels["offset_help"])
             with gr.Row():
                 limit_robocap_frames = gr.Checkbox(
@@ -3624,6 +3825,7 @@ def build_app():
                     include_mag,
                     include_imu,
                     export_height,
+                    third_person_offset,
                 ],
                 outputs=output,
             )
@@ -3719,6 +3921,8 @@ def build_app():
             include_robowrist,
             modelscope_primitive,
             frame_compare_videos,
+            frame_compare_third_person_videos,
+            frame_compare_mocap_files,
             frame_compare_file,
             frame_compare_output_path,
             frame_compare_open_button,
@@ -3754,8 +3958,14 @@ def build_app():
                 inspect_button,
                 frame_compare_scan_button,
                 frame_compare_videos,
+                frame_compare_third_person_videos,
+                frame_compare_mocap_files,
                 frame_compare_start_frame,
                 frame_compare_end_frame,
+                frame_compare_ratio,
+                frame_compare_mocap_offset,
+                frame_compare_third_person_offset,
+                frame_compare_alignment_help,
                 frame_compare_cell_width,
                 frame_compare_cell_height,
                 frame_compare_generate_button,
@@ -3780,6 +3990,7 @@ def build_app():
                 mode,
                 ratio,
                 offset,
+                third_person_offset,
                 export_offset_help,
                 limit_robocap_frames,
                 robocap_start_frame,
