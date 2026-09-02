@@ -2086,8 +2086,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--primitive-id",
         required=True,
         help=(
-            "Action directory name; [A-Z]NN is the compact convention, P01-P29 are built in, "
-            "and custom names are accepted."
+            "Action directory name; one letter plus one or more digits is the compact "
+            "convention, P01-P29 are built in, and custom names are accepted."
         ),
     )
     modelscope_stage_parser.add_argument("--dataset-root", type=Path, default=None)

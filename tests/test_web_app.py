@@ -693,6 +693,11 @@ def test_modelscope_primitive_inference_ignores_missing_or_ambiguous_matches(tmp
     (s_action / "mocap-S01-S07-wangyang-10p").mkdir(parents=True)
     assert web_app.infer_modelscope_primitive(s_action) == "S01"
 
+    for action_id in ("L1", "A007", "X1234"):
+        variable_width = tmp_path / f"variable-{action_id}"
+        (variable_width / f"mocap-{action_id}-S7-wangyang-5p").mkdir(parents=True)
+        assert web_app.infer_modelscope_primitive(variable_width) == action_id
+
     p_precedence = tmp_path / "p-precedence"
     (p_precedence / "mocap-L01-S07-wangyang-10p").mkdir(parents=True)
     (p_precedence / "mocap-P02-S07-wangyang-10p").mkdir()

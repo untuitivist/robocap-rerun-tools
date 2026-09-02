@@ -77,6 +77,36 @@ def test_infer_action_primitive_uses_path_and_mocap_directory(tmp_path: Path) ->
     )
 
 
+def test_infer_action_primitive_accepts_arbitrary_digit_widths(tmp_path: Path) -> None:
+    expected = {
+        "session-one": ("mocap-L1-S1-user-1p", "L1"),
+        "session-three": ("mocap-A007-S007-user-005p", "A007"),
+        "session-four": ("mocap-X1234-S1234-user-1234p", "X1234"),
+    }
+    for session_name, (mocap_name, _) in expected.items():
+        (tmp_path / session_name / mocap_name).mkdir(parents=True)
+
+    for session_name, (_, action_id) in expected.items():
+        assert statistics.infer_action_primitive(tmp_path, tmp_path / session_name) == action_id
+
+    p_path = tmp_path / "EgoMotionActions" / "P0001" / "session-p"
+    p_path.mkdir(parents=True)
+    assert statistics.infer_action_primitive(tmp_path, p_path) == "P0001"
+
+
+def test_primitive_sort_uses_numeric_value_for_variable_width_ids() -> None:
+    values = ["L10", "P10", "L2", "P2", "Custom", "L001"]
+
+    assert sorted(values, key=statistics._primitive_sort_key) == [
+        "P2",
+        "P10",
+        "L001",
+        "L2",
+        "L10",
+        "Custom",
+    ]
+
+
 def test_report_frame_count_difference_ignores_other_inspection_issues() -> None:
     clean = {
         "ratio": 8,

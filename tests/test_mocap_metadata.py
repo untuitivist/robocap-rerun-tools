@@ -21,6 +21,28 @@ def test_parse_mocap_capture_directory_extracts_all_fields() -> None:
     }
 
 
+@pytest.mark.parametrize(
+    ("name", "action_id", "session_index", "repetition_count"),
+    [
+        ("mocap-L1-S7-user-5p", "L1", 7, 5),
+        ("mocap-L001-S007-user-005p", "L001", 7, 5),
+        ("mocap-L1234-S1234-user-1234p2", "L1234", 1234, 1234),
+    ],
+)
+def test_parse_mocap_capture_directory_accepts_arbitrary_digit_widths(
+    name: str,
+    action_id: str,
+    session_index: int,
+    repetition_count: int,
+) -> None:
+    metadata = parse_mocap_capture_directory(name)
+
+    assert metadata is not None
+    assert metadata.action_id == action_id
+    assert metadata.collection_session_index == session_index
+    assert metadata.repetition_count == repetition_count
+
+
 @pytest.mark.parametrize("suffix", ["1", "2", "001"])
 def test_parse_mocap_capture_directory_ignores_numeric_suffix_after_p(suffix: str) -> None:
     name = f"mocap-L01-S07-wang-yang-10p{suffix}"
@@ -38,7 +60,8 @@ def test_parse_mocap_capture_directory_ignores_numeric_suffix_after_p(suffix: st
     [
         "mocap",
         "mocap-L01",
-        "mocap-L1-S07-wangyang-10p",
+        "mocap-L-S07-wangyang-10p",
+        "mocap-L1x-S07-wangyang-10p",
         "mocap-L01-S07-wangyang",
         "mocap-L01-S07-wangyang-10p-copy",
         "other-L01-S07-wangyang-10p",
@@ -62,7 +85,7 @@ def test_build_mocap_capture_metadata_validates_user_edits() -> None:
     assert metadata.participant == "participant_2"
     assert metadata.repetition_count == 4
 
-    with pytest.raises(ValueError, match=r"\[A-Z\]NN"):
+    with pytest.raises(ValueError, match="one letter followed by one or more digits"):
         build_mocap_capture_metadata("mocap-name", "walk", 1, "participant", 1)
     with pytest.raises(ValueError, match="repetition count"):
         build_mocap_capture_metadata("mocap-name", "P01", 1, "participant", 0)

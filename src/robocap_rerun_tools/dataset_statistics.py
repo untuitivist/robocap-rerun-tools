@@ -8,17 +8,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .cli import ffprobe_video, ratio_to_float
+from .mocap_metadata import COMPACT_ACTION_ID_TOKEN
 from .session_layout import discover_mocap_directories
 
 TIMESTAMP_REPORT_NAME = "timestamp_anomaly_detail_table.html"
 REPORT_PREFIX = "const report="
 REPORT_SUFFIX = "; const eventTypes="
-PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d{2})(?![A-Z0-9])", re.IGNORECASE)
+PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d+)(?![A-Z0-9])", re.IGNORECASE)
 FALLBACK_PRIMITIVE_PATTERN = re.compile(
-    r"(?<![A-Z0-9])([A-OQ-Z]\d{2})(?![A-Z0-9])", re.IGNORECASE
+    r"(?<![A-Z0-9])([A-OQ-Z]\d+)(?![A-Z0-9])", re.IGNORECASE
 )
 MOCAP_FALLBACK_PRIMITIVE_PATTERN = re.compile(
-    r"^mocap[-_]([A-Z]\d{2})(?=[-_]|$)", re.IGNORECASE
+    rf"^mocap[-_]({COMPACT_ACTION_ID_TOKEN})(?=[-_]|$)", re.IGNORECASE
 )
 ROBOCAP_VIDEO_PATTERN = re.compile(
     r"^robocap_(?P<segment>.+?)_video_(?P<camera>.+)\.mp4$", re.IGNORECASE
@@ -331,13 +332,12 @@ def summarize_session(
     )
 
 
-def _primitive_sort_key(value: str) -> tuple[int, int | str]:
-    match = re.fullmatch(r"P(\d{2})", value, re.IGNORECASE)
-    if match is not None:
-        return 0, int(match.group(1))
-    if re.fullmatch(r"[A-OQ-Z]\d{2}", value, re.IGNORECASE):
-        return 1, value.upper()
-    return 2, value.casefold()
+def _primitive_sort_key(value: str) -> tuple[int, str, int, str]:
+    match = re.fullmatch(r"([A-Z])(\d+)", value, re.IGNORECASE)
+    if match is None:
+        return 2, "", 0, value.casefold()
+    letter = match.group(1).upper()
+    return (0 if letter == "P" else 1), letter, int(match.group(2)), value.casefold()
 
 
 def aggregate_by_primitive(

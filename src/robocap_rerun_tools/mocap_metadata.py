@@ -3,12 +3,13 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
+COMPACT_ACTION_ID_TOKEN = r"[A-Z]\d+"
 MOCAP_CAPTURE_DIRECTORY_PATTERN = re.compile(
-    r"^mocap-(?P<action>[A-Z]\d{2})-S(?P<session>\d+)-"
+    rf"^mocap-(?P<action>{COMPACT_ACTION_ID_TOKEN})-S(?P<session>\d+)-"
     r"(?P<participant>.+)-(?P<count>\d+)p\d*$",
     re.IGNORECASE,
 )
-MOCAP_ACTION_ID_PATTERN = re.compile(r"[A-Z]\d{2}\Z")
+MOCAP_ACTION_ID_PATTERN = re.compile(rf"{COMPACT_ACTION_ID_TOKEN}\Z", re.IGNORECASE)
 INVALID_PARTICIPANT_PATTERN = re.compile(r"[\\/\x00-\x1f\x7f]")
 
 
@@ -27,7 +28,10 @@ class MocapCaptureMetadata:
 def validate_mocap_action_id(value: object) -> str:
     action_id = str(value).strip().upper()
     if MOCAP_ACTION_ID_PATTERN.fullmatch(action_id) is None:
-        raise ValueError("Mocap action ID must match [A-Z]NN, for example L01.")
+        raise ValueError(
+            "Mocap action ID must contain one letter followed by one or more digits, "
+            "for example L1, L01, or L1234."
+        )
     return action_id
 
 

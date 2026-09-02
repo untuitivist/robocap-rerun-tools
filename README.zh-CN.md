@@ -16,7 +16,7 @@
 - 使用压缩视频打包 session，并准备、上传约定的 ModelScope 数据集结构。
 - 直接从 Web 打开检查 HTML 和生成的 RRD。
 - 递归扫描一个数据集合根目录，并从可搜索下拉框选择识别到的 Session。
-- 按 `PXX` 汇总录制时长；每个 Segment 只计算一个 Robocap 参考视频，并可先补做缺失的检查报告。
+- 按 `P<一位或多位数字>` 等动作 ID 汇总录制时长；每个 Segment 只计算一个 Robocap 参考视频，并可先补做缺失的检查报告。
 
 ## 适用数据
 
@@ -108,7 +108,7 @@ start_web.bat
 
 - 中文/英文切换
 - 检查帧率、漏帧和异常时间戳，并快捷打开独立 HTML 报告
-- 按 `PXX` 分别统计未检查、差帧、无误和总时长、Session 数及逐 Session 帧数异常
+- 按 `P<一位或多位数字>` 等动作 ID 分别统计未检查、差帧、无误和总时长、Session 数及逐 Session 帧数异常
 - 解析、编辑并批量同步紧凑 `mocap-*` 目录元数据
 - 默认压缩视频的数据打包
 - time/frame RRD 导出、offset 检查和 offset sweep
@@ -156,7 +156,8 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 打开并直接分享。“检查报告 / Reports”页可以扫描报告并用默认浏览器打开，顶部输出框只打印生成路径。
 
 “统计 / Statistics”页会扫描根目录下识别到的全部 Session，并从 Session 路径或直属 `mocap*`
-目录中的唯一 `PXX` 归类。每个 Segment 只选择一个 Robocap 参考视频计算时长，不会把多摄像头重复
+目录中的唯一 `P<一位或多位数字>` 归类；无此编号时读取其他字母开头的紧凑动作 ID。数字位数不限，
+前导零会保留。每个 Segment 只选择一个 Robocap 参考视频计算时长，不会把多摄像头重复
 相加。默认会按选择的 8/4 倍比例串行补做缺失检查，再输出每个动作的未检查时长、差帧时长、无误
 时长、总时长、Session 数、`{Session: Session 时长}` 和逐 Session 异常列表。三个时长类别互斥，且
 `未检查时长 + 差帧时长 + 无误时长 = 总时长`。未检查表示报告缺失、无法读取或帧数字段无效；差帧
@@ -165,7 +166,7 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 缺失时间戳和 frame_index 等其他问题不改变这项帧数分类。
 
 同一次统计还会按
-`mocap-<动作:[A-Z]NN>-S<Session序号>-<参与者>-<次数>p[<数字后缀>]` 解析直属 Mocap 目录，并
+`mocap-<动作:[A-Z]<一位或多位数字>>-S<Session序号>-<参与者>-<次数>p[<数字后缀>]` 解析直属 Mocap 目录，并
 显示可编辑表格。`p` 后的可选数字只区分目录，不参与字段解析。格式完整且每个 Session 只有一个
 Mocap 目录时默认勾选；缺失、格式错误或
 存在多个目录的行会保留用于检查，但不会默认更新。修改动作、采集 Session 序号、参与者或重复次数后，
@@ -179,7 +180,7 @@ Session 的 `manifest.json`。该操作不重传视频、不移动远端目录�
 会再重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或 clean 校验失败也只跳过当前 Session，
 不停止后续队列，且不回滚已完成上传。该流程将完整 Session 视频逐字节复制，默认选择 BVH/CSV/TRC/MP4
 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
-`PXX`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会排除。
+`[A-Z]<一位或多位数字>`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会排除。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer
 打开。扫描后默认选择修改时间最新的 RRD，不再默认打开按文件名排序的旧文件。Viewer 会在独立 `cmd`
@@ -230,7 +231,7 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
     <device_id>/                         # 通过明确的 device ID 查找
   EgoMotionActions/                      # 工具生成的动作数据
     <YYYYMMDD>/                          # 新上传按上传电脑本地日期归档
-      <primitive_id>/                    # P01-P29 惯例或自定义动作名称
+      <primitive_id>/                    # [A-Z]<任意位数字> 惯例或自定义动作名称
         <session_id>/
           robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
           robocap_<segment>_imu_*.db          # 必需：Robocap IMU
@@ -253,7 +254,8 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
 逐文件显示复选框。扫描后默认只勾选 BVH、CSV、TRC 与 MP4；相对路径中含 `unnamed` 的文件不区分
 大小写，默认不勾选。其他文件仍可手动勾选；未勾选的杂项不会进入暂存，且至少保留一个 Mocap 文件。
 
-选择 Session 时，ModelScope 页会从直属 `mocap*` 目录名中的独立 `PXX` 片段自动建议动作基元。例如
+选择 Session 时，ModelScope 页会优先从直属 `mocap*` 目录名中的独立 `P<一位或多位数字>` 片段
+自动建议动作基元；找不到时读取其他字母开头的紧凑动作 ID。动作数字位数不限并保留前导零。例如
 `mocap-P03-St-user` 会建议 `P03`。这只是默认值；下拉框允许任意安全的单级目录名，手动输入具有最终
 优先级。没有匹配或存在冲突匹配时保留当前值。
 

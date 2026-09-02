@@ -25,7 +25,11 @@ from .dataset_intersection import (
     stage_aligned_file,
 )
 from .dataset_statistics import discover_segment_references, probe_video_duration
-from .mocap_metadata import MocapCaptureMetadata, parse_mocap_capture_directory
+from .mocap_metadata import (
+    COMPACT_ACTION_ID_TOKEN,
+    MocapCaptureMetadata,
+    parse_mocap_capture_directory,
+)
 from .session_layout import (
     CANONICAL_MOCAP_DIR_NAME,
     canonical_mocap_relative_path,
@@ -52,8 +56,9 @@ UPLOAD_BATCH_FORMAT = "%Y%m%d"
 UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}\Z")
 LEGACY_UPLOAD_BATCH_FORMAT = "%Y%m%d_%H%M%S"
 LEGACY_UPLOAD_BATCH_PATTERN = re.compile(r"\d{8}_\d{6}\Z")
-PRIMITIVE_ID_PATTERN = re.compile(r"P\d{2}\Z")
-FALLBACK_PRIMITIVE_ID_PATTERN = re.compile(r"[A-OQ-Z]\d{2}\Z")
+COMPACT_PRIMITIVE_ID_PATTERN = re.compile(
+    rf"{COMPACT_ACTION_ID_TOKEN}\Z", re.IGNORECASE
+)
 PRIMITIVE_ID_INVALID_CHAR_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
 WINDOWS_RESERVED_NAMES = {
     "CON",
@@ -170,9 +175,7 @@ def validate_primitive_id(value: str) -> str:
         raise ValueError("Primitive ID must not use a reserved Windows device name.")
 
     canonical_id = primitive_id.upper()
-    if PRIMITIVE_ID_PATTERN.fullmatch(canonical_id) or FALLBACK_PRIMITIVE_ID_PATTERN.fullmatch(
-        canonical_id
-    ):
+    if COMPACT_PRIMITIVE_ID_PATTERN.fullmatch(canonical_id):
         return canonical_id
     return primitive_id
 
@@ -900,12 +903,13 @@ aligned-intersection upload it is the duration of the cropped common timeline. T
 stored in that Session's `manifest.json`.
 
 When the source directory follows
-`mocap-<action:[A-Z]NN>-S<collection-session-index>-<participant>-<count>p[<numeric-suffix>]`, both
+`mocap-<action:[A-Z]<digits>>-S<collection-session-index>-<participant>-<count>p[<numeric-suffix>]`, both
 the dataset index and
 Session manifest contain a `mocap_capture` object with `source_directory`, `action_id`,
 `collection_session_index`, `participant`, and `repetition_count`. Generic `mocap*` names remain valid
 and omit this optional object. An optional numeric suffix after `p` is retained only in
-`source_directory` and does not change `repetition_count`. Metadata-only corrections update the index
+`source_directory` and does not change `repetition_count`. Action IDs accept one or more digits and
+preserve leading zeros. Metadata-only corrections update the index
 and matching manifests in one commit without moving Session directories or uploading capture files
 again.
 
@@ -959,7 +963,7 @@ are optional. All other listed capture streams and generated records are require
     <device_id>/
   EgoMotionActions/                             # required action recordings
     <YYYYMMDD>/                                  # uploader-local date for new uploads
-      <primitive_id>/                            # [A-Z]NN convention or a custom name
+      <primitive_id>/                            # [A-Z]<digits> convention or a custom name
         <session_id>/
           robocap_<segment>_video_*.mp4          # required six first-person videos
           robocap_<segment>_imu_*.db             # required Robocap IMU

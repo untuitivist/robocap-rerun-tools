@@ -26,8 +26,11 @@ def stub_staged_session_duration(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
+        ("p1", "P1"),
         ("p01", "P01"),
+        ("a007", "A007"),
         ("a07", "A07"),
+        ("l1234", "L1234"),
         ("Walk Sit v2", "Walk Sit v2"),
         ("左转测试", "左转测试"),
         ("custom-动作_01", "custom-动作_01"),
