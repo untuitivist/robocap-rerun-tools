@@ -541,7 +541,7 @@ def test_statistics_mocap_metadata_rows_are_editable_without_changing_remote_ide
         "source_directory": "mocap-L01-S07-wangyang-10p",
         "action_id": "L02",
         "collection_session_index": 8,
-        "collector": "li-ming",
+        "participant": "li-ming",
         "repetition_count": 12,
     }
 

@@ -16,7 +16,7 @@ def test_parse_mocap_capture_directory_extracts_all_fields() -> None:
         "source_directory": "mocap-L01-S07-wang-yang-10p",
         "action_id": "L01",
         "collection_session_index": 7,
-        "collector": "wang-yang",
+        "participant": "wang-yang",
         "repetition_count": 10,
     }
 
@@ -40,15 +40,16 @@ def test_build_mocap_capture_metadata_validates_user_edits() -> None:
         "mocap-L01-S07-wangyang-10p",
         "a02",
         12.0,
-        "collector_2",
+        "participant_2",
         "4",
     )
 
     assert metadata.action_id == "A02"
     assert metadata.collection_session_index == 12
+    assert metadata.participant == "participant_2"
     assert metadata.repetition_count == 4
 
     with pytest.raises(ValueError, match=r"\[A-Z\]NN"):
-        build_mocap_capture_metadata("mocap-name", "walk", 1, "collector", 1)
+        build_mocap_capture_metadata("mocap-name", "walk", 1, "participant", 1)
     with pytest.raises(ValueError, match="repetition count"):
-        build_mocap_capture_metadata("mocap-name", "P01", 1, "collector", 0)
+        build_mocap_capture_metadata("mocap-name", "P01", 1, "participant", 0)

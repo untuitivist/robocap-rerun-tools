@@ -154,9 +154,9 @@ Web“检查”只生成 `timestamp_anomaly_detail_table.html`，数据、样式
 多帧/少帧、第三人称多帧/少帧，并合并同一 Session 多个 Segment 的类别。时间戳 diff、推算丢帧、
 缺失时间戳和 frame_index 等其他问题不改变这项帧数分类。
 
-同一次统计还会按 `mocap-<动作:[A-Z]NN>-S<Session序号>-<采集员>-<次数>p` 解析直属 Mocap
+同一次统计还会按 `mocap-<动作:[A-Z]NN>-S<Session序号>-<参与者>-<次数>p` 解析直属 Mocap
 目录，并显示可编辑表格。格式完整且每个 Session 只有一个 Mocap 目录时默认勾选；缺失、格式错误或
-存在多个目录的行会保留用于检查，但不会默认更新。修改动作、采集 Session 序号、采集员或重复次数后，
+存在多个目录的行会保留用于检查，但不会默认更新。修改动作、采集 Session 序号、参与者或重复次数后，
 “批量更新远端 Mocap 元数据”会在一次 ModelScope 提交中同步修改远端 `metadata.jsonl` 和对应
 Session 的 `manifest.json`。该操作不重传视频、不移动远端目录，Session 与 Mocap 目录两列只用于
 稳定定位，不应修改。以后准备的新 Session 也会自动把完整命名写入两处的 `mocap_capture` 字段。

@@ -900,9 +900,9 @@ aligned-intersection upload it is the duration of the cropped common timeline. T
 stored in that Session's `manifest.json`.
 
 When the source directory follows
-`mocap-<action:[A-Z]NN>-S<collection-session-index>-<collector>-<count>p`, both the dataset index and
+`mocap-<action:[A-Z]NN>-S<collection-session-index>-<participant>-<count>p`, both the dataset index and
 Session manifest contain a `mocap_capture` object with `source_directory`, `action_id`,
-`collection_session_index`, `collector`, and `repetition_count`. Generic `mocap*` names remain valid
+`collection_session_index`, `participant`, and `repetition_count`. Generic `mocap*` names remain valid
 and omit this optional object. Metadata-only corrections update the index and matching manifests in
 one commit without moving Session directories or uploading capture files again.
 

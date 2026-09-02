@@ -252,7 +252,7 @@ def test_stage_session_records_compact_mocap_directory_metadata(tmp_path: Path) 
         "source_directory": "mocap-L01-S07-wangyang-10p",
         "action_id": "L01",
         "collection_session_index": 7,
-        "collector": "wangyang",
+        "participant": "wangyang",
         "repetition_count": 10,
     }
     manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
