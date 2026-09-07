@@ -1376,6 +1376,226 @@ def test_fetch_remote_session_keys_uses_metadata_index(
     assert calls[1][4] == {"revision": "master", "force": True}
 
 
+def test_audit_remote_sessions_verifies_manifest_files_and_sizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    complete_root = "EgoMotionActions/20260907/P01/session-complete"
+    broken_root = "EgoMotionActions/20260907/P02/session-broken"
+
+    def manifest(root: str, primitive: str, session_id: str, files: list[dict]) -> dict:
+        return {
+            "primitive_id": primitive,
+            "session_id": session_id,
+            "upload_batch_id": "20260907",
+            "dataset_path": root,
+            "options": {"raw_video": True},
+            "files": files,
+        }
+
+    complete_files = [
+        {
+            "packaged_as": "video.mp4",
+            "packaged_bytes": 4,
+            "kind": "video_copy",
+            "compressed_video": False,
+        },
+        {
+            "packaged_as": publisher.REPORT_NAME,
+            "packaged_bytes": 6,
+            "kind": "inspection_html",
+            "compressed_video": False,
+        },
+    ]
+    broken_files = [
+        {
+            "packaged_as": "video.mp4",
+            "packaged_bytes": 8,
+            "kind": "video_copy",
+            "compressed_video": False,
+        },
+        {
+            "packaged_as": "mocap/body.trc",
+            "packaged_bytes": 12,
+            "kind": "data",
+            "compressed_video": False,
+        },
+        {
+            "packaged_as": publisher.REPORT_NAME,
+            "packaged_bytes": 6,
+            "kind": "inspection_html",
+            "compressed_video": False,
+        },
+    ]
+    manifests: dict[str, Path] = {}
+    for root, primitive, session_id, files in (
+        (complete_root, "P01", "session-complete", complete_files),
+        (broken_root, "P02", "session-broken", broken_files),
+    ):
+        path = tmp_path / f"{session_id}-manifest.json"
+        path.write_text(
+            json.dumps(manifest(root, primitive, session_id, files)),
+            encoding="utf-8",
+        )
+        manifests[f"{root}/manifest.json"] = path
+
+    entries = []
+    for root, primitive, session_id, files in (
+        (complete_root, "P01", "session-complete", complete_files),
+        (broken_root, "P02", "session-broken", broken_files),
+    ):
+        entries.append(
+            {
+                "primitive_id": primitive,
+                "session_id": session_id,
+                "upload_batch_id": "20260907",
+                "session_path": root,
+                "manifest": f"{root}/manifest.json",
+                "inspection_html": f"{root}/{publisher.REPORT_NAME}",
+                "file_count": len(files),
+                "packaged_bytes": sum(item["packaged_bytes"] for item in files),
+            }
+        )
+    metadata = tmp_path / publisher.METADATA_NAME
+    metadata.write_text(
+        "".join(json.dumps(entry) + "\n" for entry in entries),
+        encoding="utf-8",
+    )
+
+    listings = {
+        complete_root: [
+            {"Path": f"{complete_root}/manifest.json", "Type": "blob", "Size": 100},
+            {"Path": f"{complete_root}/video.mp4", "Type": "blob", "Size": 4},
+            {
+                "Path": f"{complete_root}/{publisher.REPORT_NAME}",
+                "Type": "blob",
+                "Size": 6,
+            },
+        ],
+        broken_root: [
+            {"Path": f"{broken_root}/manifest.json", "Type": "blob", "Size": 100},
+            {"Path": f"{broken_root}/video.mp4", "Type": "blob", "Size": 7},
+            {
+                "Path": f"{broken_root}/{publisher.REPORT_NAME}",
+                "Type": "blob",
+                "Size": 6,
+            },
+        ],
+    }
+    list_calls: list[str] = []
+
+    class FakeLegacy:
+        def list_repo_files(self, *, root, **_kwargs):
+            list_calls.append(root)
+            return listings[root]
+
+    class FakeApi:
+        legacy = FakeLegacy()
+
+        def repo_exists(self, *_args):
+            return True
+
+        def download_file(self, _repo, _kind, path, **_kwargs):
+            return metadata if path == publisher.METADATA_NAME else manifests[path]
+
+    api = FakeApi()
+    monkeypatch.setattr(publisher, "_hub_api", lambda _settings: api)
+    settings = publisher.ModelScopeSettings(
+        "secret", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/egomocap"
+    )
+    progress: list[str] = []
+
+    report = publisher.audit_remote_sessions(
+        {("P01", "session-complete"), ("P02", "session-broken")},
+        settings=settings,
+        max_workers=1,
+        progress=progress.append,
+    )
+
+    assert report.indexed_session_count == 2
+    assert report.complete_keys == frozenset({("P01", "session-complete")})
+    assert set(list_calls) == {complete_root, broken_root}
+    by_key = {item.key: item for item in report.sessions}
+    broken_issues = "\n".join(by_key[("P02", "session-broken")].issues)
+    assert "size mismatch" in broken_issues
+    assert f"missing remote file: {broken_root}/mocap/body.trc" in broken_issues
+    assert progress[-1].endswith("incomplete (2 issue(s))")
+
+
+def test_audit_remote_sessions_does_not_audit_unrequested_metadata_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata = tmp_path / publisher.METADATA_NAME
+    metadata.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "primitive_id": primitive,
+                    "session_id": session,
+                    "upload_batch_id": "20260907",
+                    "session_path": f"EgoMotionActions/20260907/{primitive}/{session}",
+                }
+            )
+            for primitive, session in (("P01", "wanted"), ("P02", "other"))
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class FakeLegacy:
+        def list_repo_files(self, *, root, **_kwargs):
+            assert root.endswith("/P01/wanted")
+            return []
+
+    class FakeApi:
+        legacy = FakeLegacy()
+
+        def repo_exists(self, *_args):
+            return True
+
+        def download_file(self, _repo, _kind, path, **_kwargs):
+            assert path == publisher.METADATA_NAME
+            return metadata
+
+    monkeypatch.setattr(publisher, "_hub_api", lambda _settings: FakeApi())
+    settings = publisher.ModelScopeSettings(
+        "secret", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/egomocap"
+    )
+
+    report = publisher.audit_remote_sessions(
+        [("P01", "wanted")], settings=settings, max_workers=1, progress=None
+    )
+
+    assert report.indexed_session_count == 2
+    assert len(report.sessions) == 1
+    assert report.sessions[0].key == ("P01", "wanted")
+    assert report.sessions[0].issues == (
+        "metadata manifest path must be EgoMotionActions/20260907/P01/wanted/manifest.json",
+        (
+            "metadata inspection path must be "
+            f"EgoMotionActions/20260907/P01/wanted/{publisher.REPORT_NAME}"
+        ),
+        "missing remote file: EgoMotionActions/20260907/P01/wanted/manifest.json",
+    )
+
+
+def test_remote_integrity_reads_retry_three_times(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts = 0
+    waits: list[int] = []
+
+    def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 4:
+            raise OSError("transient remote read failure")
+        return "done"
+
+    monkeypatch.setattr(publisher.time, "sleep", waits.append)
+
+    assert publisher._remote_read_with_retries(operation) == "done"
+    assert attempts == 4
+    assert waits == [1, 2, 4]
+
+
 def test_fetch_remote_session_keys_rejects_missing_repository(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -175,8 +175,11 @@ Mocap 目录时默认勾选；缺失、格式错误或
 Session 的 `manifest.json`。该操作不重传视频、不移动远端目录，Session 与 Mocap 目录两列只用于
 稳定定位，不应修改。以后准备的新 Session 也会自动把完整命名写入两处的 `mocap_capture` 字段。
 
-同一页可逐个上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，按
-`(primitive_id, session_id)` 跳过已上传项；这些项不会补报告、暂存或处理视频。其余 Session 必须满足
+同一页可逐个上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，再对本地匹配的
+`(primitive_id, session_id)` 下载小型 manifest，核对远端检查报告、所有声明文件、文件数量和字节数，
+不会下载大型采集文件。默认只跳过校验完整的已有项；索引存在但文件缺失、大小不符、manifest 损坏或
+元数据不一致的 Session 会自动进入替换上传进行修复。取消该选项后，远端完整项也会重新上传。其余
+Session 必须满足
 上述帧数关系，并在独立暂存根目录中依次完成准备、clean 校验和上传后才开始下一条。上传首次失败后
 会再重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或 clean 校验失败也只跳过当前 Session，
 不停止后续队列，且不回滚已完成上传。该流程将完整 Session 视频逐字节复制，默认选择 BVH/CSV/TRC/MP4

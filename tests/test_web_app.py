@@ -67,11 +67,11 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "统计根目录" in config
     assert "逐个上传无差帧 Session" in config
     assert "上传日期（YYYYMMDD）" in config
-    assert "跳过远端已有 Session" in config
+    assert "跳过远端已有且完整的 Session" in config
     skip_existing = next(
         component
         for component in config_data["components"]
-        if component.get("props", {}).get("label") == "跳过远端已有 Session"
+        if component.get("props", {}).get("label") == "跳过远端已有且完整的 Session"
     )
     assert skip_existing["props"]["value"] is True
     upload_date = next(
@@ -247,8 +247,27 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     monkeypatch.setattr(cli, "resolve_ffprobe", lambda *_args: "ffprobe")
     monkeypatch.setattr(
         modelscope_publisher,
-        "fetch_remote_session_keys",
-        lambda: frozenset({("P01", "session-uploaded")}),
+        "audit_remote_sessions",
+        lambda *_args, **_kwargs: modelscope_publisher.RemoteSessionIntegrityReport(
+            indexed_session_count=2,
+            sessions=(
+                modelscope_publisher.RemoteSessionIntegrity(
+                    "P01",
+                    "session-uploaded",
+                    "EgoMotionActions/20260828/P01/session-uploaded",
+                    "20260828",
+                    True,
+                ),
+                modelscope_publisher.RemoteSessionIntegrity(
+                    "P03",
+                    "session-clean-one",
+                    "EgoMotionActions/20260828/P03/session-clean-one",
+                    "20260828",
+                    False,
+                    ("missing remote file: video.mp4",),
+                ),
+            ),
+        ),
     )
     summarized: list[Path] = []
     original_summarize = dataset_statistics.summarize_session
@@ -347,6 +366,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     assert set(summarized) == {problem.resolve(), clean_one.resolve(), clean_two.resolve()}
     assert "已上传跳过：1" in output
     assert "P01/session-uploaded" in output
+    assert "P03/session-clean-one: 远端不完整，将重新上传" in output
     assert "session-problem: unchecked or frame-count difference" in output
     assert "开始第 3/3 次重试" in output
     assert "共尝试 4 次仍失败，跳过 P03/session-clean-one" in output
@@ -386,8 +406,19 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
     monkeypatch.setattr(cli, "resolve_ffprobe", lambda *_args: "ffprobe")
     monkeypatch.setattr(
         modelscope_publisher,
-        "fetch_remote_session_keys",
-        lambda: frozenset({("P01", "session-uploaded")}),
+        "audit_remote_sessions",
+        lambda *_args, **_kwargs: modelscope_publisher.RemoteSessionIntegrityReport(
+            indexed_session_count=1,
+            sessions=(
+                modelscope_publisher.RemoteSessionIntegrity(
+                    "P01",
+                    "session-uploaded",
+                    "EgoMotionActions/20260828/P01/session-uploaded",
+                    "20260828",
+                    True,
+                ),
+            ),
+        ),
     )
     monkeypatch.setattr(
         web_app,

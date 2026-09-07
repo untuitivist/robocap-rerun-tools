@@ -181,11 +181,15 @@ sessions share one uploader-local `YYYYMMDD` date and move to
 `EgoMotionActions/<date>/<primitive>/<session>/`; the exact start time remains in metadata and a
 failed transfer reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain readable.
 `EgoMotionActions/Demo/` is reserved for migrated legacy examples.
-The Statistics tab also uploads clean Sessions sequentially. It reads remote `metadata.jsonl` first.
+The Statistics tab also uploads clean Sessions sequentially. It reads remote `metadata.jsonl` first,
+then verifies each matching Session against its remote manifest and declared file sizes without
+downloading large capture files.
 The upload date field is initialized to the uploader's current local `YYYYMMDD` and remains editable;
 every Session in one run uses that date. Existing `(primitive_id, session_id)` entries are skipped by
-default. Clearing the skip option uploads them again and replaces their metadata rows. If a different
-date is selected, the prior remote directory is not deleted automatically. Each selected Session must
+default only when their manifest, required report, declared files, counts, and byte sizes all match.
+Incomplete entries are re-uploaded for repair. Clearing the skip option uploads complete entries again
+too and replaces their metadata rows. If a different date is selected, the prior remote directory is
+not deleted automatically. Each selected Session must
 satisfy the exact frame-count relation, uses the curated default Mocap files and no RRD, and completes
 prepare, clean validation, and upload in an isolated staging root.
 An upload failure is retried three times after the initial attempt. After four failed attempts, that
@@ -308,10 +312,11 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用上传电脑本地
 日期 `YYYYMMDD`，并移动到 `EgoMotionActions/<日期>/<动作>/<session>/`；完整开始时间仍保存在元数据
 中，传输失败后重试会复用该日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。
-“统计”页还提供 clean Session 逐个上传。它先读取远端 `metadata.jsonl`。上传日期框默认填入上传
-电脑本地当天的 `YYYYMMDD`，允许手工修改；同一次运行的所有 Session 使用同一个日期。默认开启
-“跳过远端已有 Session”，按 `(primitive_id, session_id)` 排除已上传数据；关闭后重新上传并替换
-同键元数据。若改用其他日期，旧远端目录不会自动删除。各 Session 必须满足精确帧数关系，使用默认
+"统计"页还提供 clean Session 逐个上传。它先读取远端 `metadata.jsonl`，然后按 manifest 声明核对
+匹配 Session 的远端文件、数量和字节数，不下载大型采集文件。上传日期框默认填入上传电脑本地当天的
+`YYYYMMDD`，允许手工修改；同一次运行的所有 Session 使用同一个日期。默认开启"跳过远端已有且
+完整的 Session"；不完整项会自动重新上传修复。关闭后，远端完整项也会重新上传并替换同键元数据。
+若改用其他日期，旧远端目录不会自动删除。各 Session 必须满足精确帧数关系，使用默认
 Mocap 文件且不带 RRD，并在独立暂存根目录中依次完成准备、clean 校验和上传。上传首次失败后会再
 重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或
 clean 校验失败也只跳过当前 Session，不会停止后续队列；已经完成的上传不会回滚。
@@ -368,17 +373,20 @@ LANGUAGE_PACKS = {
         "statistics_mocap_metadata_refresh": "Scan Mocap naming metadata",
         "statistics_mocap_metadata_update": "Batch update remote Mocap metadata",
         "statistics_batch_help": (
-            "Sequential upload reads remote metadata first. The editable date is initialized to "
-            "today's local `YYYYMMDD`, and every Session in this run uses it. Existing Sessions "
-            "are skipped by default; clear the skip option to upload them again and replace matching "
-            "metadata rows. A different date leaves the old remote directory untouched. Each selected "
+            "Sequential upload reads remote metadata, then checks each matching Session's manifest, "
+            "declared files, counts, and byte sizes without downloading large capture files. The "
+            "editable date is initialized to today's local `YYYYMMDD`, and every Session in this run "
+            "uses it. Only complete existing Sessions are skipped by default; incomplete Sessions are "
+            "re-uploaded for repair. Clear the skip option to re-upload complete Sessions too and "
+            "replace matching metadata rows. A different date leaves the old remote directory "
+            "untouched. Each selected "
             "Session must satisfy `n:ratio*(n+1):n+1`, then completes "
             "prepare, validation, and upload before the next starts. Upload failures retry three "
             "times, then skip that Session and continue. It copies full-session video "
             "byte-for-byte, selects BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads `.env`."
         ),
         "statistics_upload_date": "Upload date (YYYYMMDD)",
-        "statistics_skip_existing": "Skip existing remote Sessions",
+        "statistics_skip_existing": "Skip complete existing remote Sessions",
         "statistics_batch_upload": "Upload clean Sessions one by one",
         "package_output": "Output zip",
         "package_height": "Proxy height",
@@ -511,16 +519,18 @@ LANGUAGE_PACKS = {
         "statistics_mocap_metadata_refresh": "扫描 Mocap 命名元数据",
         "statistics_mocap_metadata_update": "批量更新远端 Mocap 元数据",
         "statistics_batch_help": (
-            "逐个上传先读取远端 metadata.jsonl。日期框默认填入本地当天的 `YYYYMMDD`，允许修改；"
-            "本次所有 Session 使用同一日期。默认勾选跳过远端已有 Session；取消勾选后重新上传并"
-            "替换同键元数据。改用其他日期不会删除旧远端目录。"
+            "逐个上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
+            "文件数量和字节数；不会为此下载大型采集文件。日期框默认填入本地当天的 `YYYYMMDD`，"
+            "允许修改；本次所有 Session 使用同一日期。默认只跳过远端已有且完整的 Session；远端"
+            "不完整项会重新上传修复。取消勾选后，完整项也会重新上传并替换同键元数据。改用其他"
+            "日期不会删除旧远端目录。"
             "选中的 Session 必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理"
             "下一条。上传失败"
             "会重试 3 次，共 4 次仍失败则跳过并继续。完整 Session 视频逐字节复制，默认选择"
             "BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；读取 `.env`。"
         ),
         "statistics_upload_date": "上传日期（YYYYMMDD）",
-        "statistics_skip_existing": "跳过远端已有 Session",
+        "statistics_skip_existing": "跳过远端已有且完整的 Session",
         "statistics_batch_upload": "逐个上传无差帧 Session",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
@@ -2522,7 +2532,7 @@ def bulk_upload_clean_modelscope_sessions(
     )
     from robocap_rerun_tools.modelscope_publisher import (
         ModelScopePublisherError,
-        fetch_remote_session_keys,
+        audit_remote_sessions,
         validate_session_id,
     )
 
@@ -2568,12 +2578,13 @@ def bulk_upload_clean_modelscope_sessions(
     add(
         (
             f"上传日期：{selected_upload_date}；"
-            f"跳过远端已有 Session：{'是' if skip_existing else '否（重新上传并覆盖元数据）'}"
+            "跳过远端已有且完整的 Session："
+            f"{'是' if skip_existing else '否（完整项也重新上传并覆盖元数据）'}"
         )
         if is_chinese
         else (
-            f"Upload date: {selected_upload_date}; skip existing remote Sessions: "
-            f"{'yes' if skip_existing else 'no (re-upload and replace metadata)'}"
+            f"Upload date: {selected_upload_date}; skip complete existing remote Sessions: "
+            f"{'yes' if skip_existing else 'no (re-upload complete items and replace metadata)'}"
         )
     )
     add(f"识别到 Session：{len(sessions)}" if is_chinese else f"Detected sessions: {len(sessions)}")
@@ -2624,51 +2635,100 @@ def bulk_upload_clean_modelscope_sessions(
         return
 
     add(
-        "读取远端 metadata.jsonl，识别已上传 Session。"
+        "读取远端 metadata.jsonl，并校验匹配 Session 的 manifest、文件清单和字节数。"
         if is_chinese
-        else "Read remote metadata.jsonl to identify uploaded Sessions."
+        else (
+            "Read remote metadata.jsonl and verify matching Session manifests, file lists, "
+            "and byte sizes."
+        )
     )
     yield render()
-    try:
-        remote_keys = fetch_remote_session_keys()
-    except (OSError, ValueError, ModelScopePublisherError) as exc:
+    audit_events: queue.Queue[object] = queue.Queue()
+    audit_finished = object()
+    audit_outcome: dict[str, object] = {}
+
+    def audit_progress(message: str) -> None:
+        audit_events.put(str(message))
+
+    def audit_worker() -> None:
+        try:
+            audit_outcome["result"] = audit_remote_sessions(
+                ((primitive, session_id) for _, primitive, session_id in identified),
+                progress=audit_progress,
+            )
+        except (OSError, ValueError, ModelScopePublisherError) as exc:
+            audit_outcome["error"] = exc
+        finally:
+            audit_events.put(audit_finished)
+
+    audit_thread = threading.Thread(target=audit_worker, daemon=True)
+    audit_thread.start()
+    while True:
+        event = audit_events.get()
+        if event is audit_finished:
+            break
+        add(str(event))
+        yield render()
+    audit_thread.join()
+
+    audit_error = audit_outcome.get("error")
+    if audit_error is not None:
         add(
-            f"读取远端 Session 索引失败，未开始上传：{exc}"
+            f"远端 Session 完整性检查失败，未开始上传：{audit_error}"
             if is_chinese
-            else f"Remote Session lookup failed; upload did not start: {exc}"
+            else f"Remote Session integrity audit failed; upload did not start: {audit_error}"
         )
         yield render()
         return
+    remote_audit = audit_outcome["result"]
 
+    remote_statuses = {status.key: status for status in remote_audit.sessions}
+    remote_keys = frozenset(remote_statuses)
+    complete_remote_keys = remote_audit.complete_keys
     remote_existing = [item for item in identified if (item[1], item[2]) in remote_keys]
+    remote_incomplete = [
+        item for item in remote_existing if not remote_statuses[(item[1], item[2])].complete
+    ]
     if skip_existing:
-        remote_skipped = remote_existing
-        pending = [item for item in identified if (item[1], item[2]) not in remote_keys]
+        remote_skipped = [
+            item for item in remote_existing if (item[1], item[2]) in complete_remote_keys
+        ]
+        pending = [item for item in identified if (item[1], item[2]) not in complete_remote_keys]
     else:
         remote_skipped = []
         pending = identified
-    replacement_candidates = len(remote_existing) if not skip_existing else 0
+    replacement_candidates = sum(1 for item in pending if (item[1], item[2]) in remote_keys)
     add(
         (
-            f"远端索引：{len(remote_keys)}；替换候选：{replacement_candidates}；"
-            f"已上传跳过：{len(remote_skipped)}；待处理：{len(pending)}"
+            f"远端索引：{remote_audit.indexed_session_count}；本地匹配：{len(remote_existing)}；"
+            f"完整并跳过：{len(remote_skipped)}；不完整待修复：{len(remote_incomplete)}；"
+            f"替换候选：{replacement_candidates}；待处理：{len(pending)}"
         )
         if is_chinese
         else (
-            f"Remote index: {len(remote_keys)}; replacement candidates: "
-            f"{replacement_candidates}; already uploaded: "
-            f"{len(remote_skipped)}; remaining: {len(pending)}"
+            f"Remote index: {remote_audit.indexed_session_count}; locally matched: "
+            f"{len(remote_existing)}; complete and skipped: {len(remote_skipped)}; "
+            f"incomplete for repair: {len(remote_incomplete)}; replacement candidates: "
+            f"{replacement_candidates}; remaining: {len(pending)}"
         )
     )
     for session, primitive, session_id in remote_skipped:
-        add(f"= {primitive}/{session_id}: {session}")
+        add(f"= {primitive}/{session_id}: {session} [remote complete]")
+    for session, primitive, session_id in remote_incomplete:
+        status = remote_statuses[(primitive, session_id)]
+        reason = "; ".join(status.issues)
+        add(
+            f"! {primitive}/{session_id}: 远端不完整，将重新上传：{reason}"
+            if is_chinese
+            else f"! {primitive}/{session_id}: remote incomplete; will re-upload: {reason}"
+        )
     yield render()
     if not pending:
         add(
-            "所有可识别 Session 均已上传；未补检查、未暂存、未上传。"
+            "所有可识别 Session 在远端均完整；未补检查、未暂存、未上传。"
             if is_chinese
             else (
-                "All identifiable Sessions are already uploaded; no inspection, staging, "
+                "All identifiable Sessions are complete remotely; no inspection, staging, "
                 "or upload was run."
             )
         )

@@ -8,10 +8,13 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+import threading
+import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -70,6 +73,8 @@ DEVICE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 ROBOWRIST_DIR_PATTERN = re.compile(
     r"robowrist_(?P<device_id>.+)_(?P<side>left|right)\Z", re.IGNORECASE
 )
+REMOTE_INTEGRITY_MAX_WORKERS = 4
+REMOTE_READ_RETRIES = 3
 
 
 class ModelScopePublisherError(RuntimeError):
@@ -153,6 +158,30 @@ class RemoteMocapMetadataUpdateResult:
     updated_keys: tuple[tuple[str, str], ...]
     unchanged_keys: tuple[tuple[str, str], ...]
     missing_keys: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class RemoteSessionIntegrity:
+    primitive_id: str
+    session_id: str
+    session_path: str
+    upload_batch_id: str | None
+    complete: bool
+    issues: tuple[str, ...] = ()
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.primitive_id, self.session_id
+
+
+@dataclass(frozen=True)
+class RemoteSessionIntegrityReport:
+    indexed_session_count: int
+    sessions: tuple[RemoteSessionIntegrity, ...]
+
+    @property
+    def complete_keys(self) -> frozenset[tuple[str, str]]:
+        return frozenset(item.key for item in self.sessions if item.complete)
 
 
 def validate_primitive_id(value: str) -> str:
@@ -1788,6 +1817,354 @@ def fetch_remote_session_keys(
     except Exception as exc:
         raise ModelScopePublisherError(
             f"ModelScope metadata lookup failed: {_redacted_error(exc, resolved.token)}"
+        ) from exc
+
+
+def _remote_file_fields(item: object) -> tuple[str, str, int]:
+    if isinstance(item, Mapping):
+        path_value = item.get("Path") or item.get("path") or item.get("Name") or item.get("name")
+        type_value = item.get("Type") or item.get("type") or "blob"
+        size_value = item.get("Size") if "Size" in item else item.get("size", 0)
+    else:
+        path_value = getattr(item, "path", "")
+        type_value = getattr(item, "type", "blob")
+        size_value = getattr(item, "size", 0)
+    path = str(path_value or "").replace("\\", "/").strip("/")
+    file_type = str(type_value or "blob").casefold()
+    try:
+        size = int(size_value or 0)
+    except (TypeError, ValueError) as exc:
+        raise ModelScopePublisherError(
+            f"Remote repository returned an invalid size for {path or '<unknown>'}: {size_value!r}."
+        ) from exc
+    if size < 0:
+        raise ModelScopePublisherError(
+            f"Remote repository returned a negative size for {path or '<unknown>'}: {size}."
+        )
+    return path, file_type, size
+
+
+def _remote_read_with_retries(operation: Callable[[], Any]) -> Any:
+    for attempt in range(REMOTE_READ_RETRIES + 1):
+        try:
+            return operation()
+        except Exception:
+            if attempt >= REMOTE_READ_RETRIES:
+                raise
+            time.sleep(2**attempt)
+    raise AssertionError("unreachable")
+
+
+def _list_remote_session_files(
+    api: Any,
+    repository: str,
+    revision: str,
+    session_path: str,
+) -> dict[str, int]:
+    legacy = getattr(api, "legacy", None)
+    legacy_list = getattr(legacy, "list_repo_files", None)
+    if callable(legacy_list):
+        items = _remote_read_with_retries(
+            lambda: legacy_list(
+                repo_id=repository,
+                repo_type="dataset",
+                revision=revision,
+                recursive=True,
+                root=session_path,
+            )
+        )
+    else:
+        list_repo_files = getattr(api, "list_repo_files", None)
+        if not callable(list_repo_files):
+            raise ModelScopePublisherError(
+                "Installed modelscope-hub cannot list remote Dataset files."
+            )
+        items = _remote_read_with_retries(
+            lambda: list_repo_files(
+                repository,
+                "dataset",
+                revision=revision,
+                recursive=True,
+            )
+        )
+
+    prefix = f"{session_path.rstrip('/')}/"
+    files: dict[str, int] = {}
+    for item in items:
+        path, file_type, size = _remote_file_fields(item)
+        if not path.startswith(prefix) or file_type == "tree":
+            continue
+        if path in files:
+            raise ModelScopePublisherError(f"Remote repository listed duplicate file path: {path}.")
+        files[path] = size
+    return files
+
+
+def _manifest_relative_path(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise ValueError(f"{field} must be a non-empty relative POSIX path.")
+    if "\\" in value:
+        raise ValueError(f"{field} must use forward slashes: {value!r}.")
+    parts = value.split("/")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"{field} is not a safe relative path: {value!r}.")
+    return path.as_posix()
+
+
+def _json_nonnegative_int(value: object, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer; got {value!r}.")
+    return value
+
+
+def _audit_remote_session_entry(
+    api: Any,
+    repository: str,
+    revision: str,
+    entry: Mapping[str, object],
+    token: str | None,
+) -> RemoteSessionIntegrity:
+    primitive, session_id, session_path, batch_id = _metadata_session_location(entry)
+    expected_manifest = f"{session_path}/manifest.json"
+    expected_report = f"{session_path}/{REPORT_NAME}"
+    issues: list[str] = []
+
+    if entry.get("manifest") != expected_manifest:
+        issues.append(f"metadata manifest path must be {expected_manifest}")
+    if entry.get("inspection_html") != expected_report:
+        issues.append(f"metadata inspection path must be {expected_report}")
+
+    try:
+        remote_files = _list_remote_session_files(api, repository, revision, session_path)
+    except ModelScopePublisherError:
+        raise
+    except Exception as exc:
+        raise ModelScopePublisherError(
+            f"Remote file listing failed for {primitive}/{session_id}: "
+            f"{_redacted_error(exc, token)}"
+        ) from exc
+
+    manifest_size = remote_files.get(expected_manifest)
+    if manifest_size is None:
+        issues.append(f"missing remote file: {expected_manifest}")
+        return RemoteSessionIntegrity(
+            primitive, session_id, session_path, batch_id, False, tuple(issues)
+        )
+    if manifest_size <= 0:
+        issues.append(f"remote manifest is empty: {expected_manifest}")
+
+    try:
+        downloaded_manifest = _remote_read_with_retries(
+            lambda: api.download_file(
+                repository,
+                "dataset",
+                expected_manifest,
+                revision=revision,
+                force=True,
+            )
+        )
+    except Exception as exc:
+        raise ModelScopePublisherError(
+            f"Remote manifest download failed for {primitive}/{session_id}: "
+            f"{_redacted_error(exc, token)}"
+        ) from exc
+    try:
+        manifest = json.loads(Path(downloaded_manifest).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        issues.append(f"invalid remote manifest: {exc}")
+        return RemoteSessionIntegrity(
+            primitive, session_id, session_path, batch_id, False, tuple(issues)
+        )
+    if not isinstance(manifest, Mapping):
+        issues.append("remote manifest must be a JSON object")
+        return RemoteSessionIntegrity(
+            primitive, session_id, session_path, batch_id, False, tuple(issues)
+        )
+
+    if manifest.get("primitive_id") != primitive or manifest.get("session_id") != session_id:
+        issues.append("remote manifest identity does not match metadata")
+    if manifest.get("dataset_path") != session_path:
+        issues.append(f"manifest dataset_path must be {session_path}")
+    if manifest.get("upload_batch_id") != batch_id:
+        issues.append(f"manifest upload_batch_id must match metadata ({batch_id!r})")
+    try:
+        _validate_manifest_video_policy(manifest, Path(expected_manifest))
+    except ModelScopePublisherError as exc:
+        issues.append(str(exc))
+
+    file_records = manifest.get("files")
+    if not isinstance(file_records, list) or not file_records:
+        issues.append("remote manifest files must be a non-empty JSON array")
+        return RemoteSessionIntegrity(
+            primitive, session_id, session_path, batch_id, False, tuple(issues)
+        )
+
+    packaged_paths: set[str] = set()
+    packaged_bytes = 0
+    all_sizes_valid = True
+    for index, record in enumerate(file_records):
+        if not isinstance(record, Mapping):
+            issues.append(f"manifest files[{index}] must be a JSON object")
+            all_sizes_valid = False
+            continue
+        try:
+            relative_path = _manifest_relative_path(
+                record.get("packaged_as"), f"manifest files[{index}].packaged_as"
+            )
+        except ValueError as exc:
+            issues.append(str(exc))
+            all_sizes_valid = False
+            continue
+        if relative_path == "manifest.json":
+            issues.append("manifest.json must not list itself as packaged data")
+            continue
+        if relative_path in packaged_paths:
+            issues.append(f"duplicate manifest packaged path: {relative_path}")
+            continue
+        packaged_paths.add(relative_path)
+        try:
+            expected_size = _json_nonnegative_int(
+                record.get("packaged_bytes"),
+                f"manifest files[{index}].packaged_bytes",
+            )
+        except ValueError as exc:
+            issues.append(str(exc))
+            all_sizes_valid = False
+            continue
+        packaged_bytes += expected_size
+        remote_path = f"{session_path}/{relative_path}"
+        actual_size = remote_files.get(remote_path)
+        if actual_size is None:
+            issues.append(f"missing remote file: {remote_path}")
+        elif actual_size != expected_size:
+            issues.append(
+                f"remote size mismatch: {remote_path} "
+                f"(manifest {expected_size}, remote {actual_size})"
+            )
+
+    if REPORT_NAME not in packaged_paths:
+        issues.append(f"manifest does not include required report: {REPORT_NAME}")
+    try:
+        metadata_file_count = _json_nonnegative_int(entry.get("file_count"), "metadata file_count")
+        if metadata_file_count != len(file_records):
+            issues.append(
+                f"metadata file_count mismatch (metadata {metadata_file_count}, "
+                f"manifest {len(file_records)})"
+            )
+    except ValueError as exc:
+        issues.append(str(exc))
+    try:
+        metadata_bytes = _json_nonnegative_int(
+            entry.get("packaged_bytes"), "metadata packaged_bytes"
+        )
+        if all_sizes_valid and metadata_bytes != packaged_bytes:
+            issues.append(
+                f"metadata packaged_bytes mismatch (metadata {metadata_bytes}, "
+                f"manifest {packaged_bytes})"
+            )
+    except ValueError as exc:
+        issues.append(str(exc))
+
+    return RemoteSessionIntegrity(
+        primitive,
+        session_id,
+        session_path,
+        batch_id,
+        not issues,
+        tuple(issues),
+    )
+
+
+def audit_remote_sessions(
+    session_keys: Iterable[tuple[str, str]] | None = None,
+    repo_id: str | None = None,
+    *,
+    revision: str = "master",
+    max_workers: int = REMOTE_INTEGRITY_MAX_WORKERS,
+    settings: ModelScopeSettings | None = None,
+    progress: Callable[[str], None] | None = print,
+) -> RemoteSessionIntegrityReport:
+    if max_workers < 1:
+        raise ValueError("max_workers must be positive.")
+    requested = (
+        None
+        if session_keys is None
+        else frozenset(
+            (validate_primitive_id(str(primitive)), validate_session_id(str(session_id)))
+            for primitive, session_id in session_keys
+        )
+    )
+    resolved = settings or load_modelscope_settings()
+    if not resolved.token:
+        raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")
+    repository = _resolve_repository(resolved, repo_id)
+    target_revision = revision.strip() or "master"
+    try:
+        api = _hub_api(resolved)
+        if not api.repo_exists(repository, "dataset"):
+            raise ModelScopePublisherError(f"Dataset repository does not exist: {repository}.")
+        document = _download_remote_metadata(api, repository, target_revision)
+        entries = _read_metadata_document(document, f"remote {METADATA_NAME}")
+        by_key: dict[tuple[str, str], Mapping[str, object]] = {}
+        for entry in entries:
+            primitive, session_id, _, _ = _metadata_session_location(entry)
+            key = primitive, session_id
+            if key in by_key:
+                raise ModelScopePublisherError(
+                    f"Remote {METADATA_NAME} contains duplicate Session {primitive}/{session_id}."
+                )
+            by_key[key] = entry
+        target_keys = [key for key in by_key if requested is None or key in requested]
+        if not target_keys:
+            return RemoteSessionIntegrityReport(len(by_key), ())
+
+        statuses: dict[tuple[str, str], RemoteSessionIntegrity] = {}
+        worker_count = min(max_workers, len(target_keys))
+        if progress is not None:
+            progress(
+                f"Auditing {len(target_keys)} matching remote Session(s) with "
+                f"{worker_count} worker(s)."
+            )
+        worker_state = threading.local()
+
+        def audit_entry(entry: Mapping[str, object]) -> RemoteSessionIntegrity:
+            worker_api = getattr(worker_state, "api", None)
+            if worker_api is None:
+                worker_api = _hub_api(resolved)
+                worker_state.api = worker_api
+            return _audit_remote_session_entry(
+                worker_api,
+                repository,
+                target_revision,
+                entry,
+                resolved.token,
+            )
+
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {executor.submit(audit_entry, by_key[key]): key for key in target_keys}
+            for completed, future in enumerate(as_completed(futures), start=1):
+                key = futures[future]
+                status = future.result()
+                statuses[key] = status
+                if progress is not None:
+                    state = (
+                        "complete"
+                        if status.complete
+                        else f"incomplete ({len(status.issues)} issue(s))"
+                    )
+                    progress(
+                        f"[{completed}/{len(target_keys)}] remote integrity "
+                        f"{key[0]}/{key[1]}: {state}"
+                    )
+        return RemoteSessionIntegrityReport(
+            len(by_key), tuple(statuses[key] for key in target_keys)
+        )
+    except ModelScopePublisherError:
+        raise
+    except Exception as exc:
+        raise ModelScopePublisherError(
+            f"ModelScope integrity audit failed: {_redacted_error(exc, resolved.token)}"
         ) from exc
 
 

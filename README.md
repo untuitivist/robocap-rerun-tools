@@ -178,9 +178,12 @@ does not rename directories, move remote data, or upload videos.
 
 The same tab uploads clean Sessions one by one. Its `YYYYMMDD` field starts with the uploader's local
 date and can be edited; every Session in that run uses the selected date. It first reads the target
-repository's remote `metadata.jsonl`. `Skip existing remote Sessions` is enabled by default, so
-matching `(primitive_id, session_id)` entries are excluded before missing-report generation, staging,
-or video processing. Clear the option to upload those Sessions again and replace their metadata rows.
+repository's remote `metadata.jsonl`. `Skip complete existing remote Sessions` is enabled by default.
+For each matching `(primitive_id, session_id)`, the tool downloads only its small manifest and checks
+the remote report, every declared file, file count, and byte size against that manifest and metadata;
+large capture files are not downloaded. A matching complete Session is excluded before missing-report
+generation, staging, or video processing. An indexed but incomplete Session is automatically sent
+through replacement upload for repair. Clear the option to re-upload complete matching Sessions too.
 Choosing a different date does not delete the old remote directory. Each selected Session must
 satisfy the frame-count relation and completes prepare, clean validation, and upload in an isolated
 staging root before the next starts. An upload failure is retried three times after the initial
