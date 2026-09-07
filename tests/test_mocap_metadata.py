@@ -22,14 +22,32 @@ def test_parse_mocap_capture_directory_extracts_all_fields() -> None:
 
 
 @pytest.mark.parametrize(
+    "action_id",
+    ["P01", "D01", "SM01", "LM01", "DR01", "HH01", "EC01", "LH01"],
+)
+def test_parse_mocap_capture_directory_accepts_current_catalog_series(
+    action_id: str,
+) -> None:
+    metadata = parse_mocap_capture_directory(
+        f"mocap-{action_id}-S1-participant-1p"
+    )
+
+    assert metadata is not None
+    assert metadata.action_id == action_id
+
+
+@pytest.mark.parametrize(
     ("name", "action_id", "session_index", "repetition_count"),
     [
         ("mocap-L1-S7-user-5p", "L1", 7, 5),
         ("mocap-L001-S007-user-005p", "L001", 7, 5),
         ("mocap-L1234-S1234-user-1234p2", "L1234", 1234, 1234),
+        ("mocap-SM01-S7-user-5p", "SM01", 7, 5),
+        ("mocap-LH001-S007-user-005p", "LH001", 7, 5),
+        ("mocap-ABC1234-S1234-user-1234p2", "ABC1234", 1234, 1234),
     ],
 )
-def test_parse_mocap_capture_directory_accepts_arbitrary_digit_widths(
+def test_parse_mocap_capture_directory_accepts_arbitrary_prefix_and_digit_widths(
     name: str,
     action_id: str,
     session_index: int,
@@ -85,7 +103,7 @@ def test_build_mocap_capture_metadata_validates_user_edits() -> None:
     assert metadata.participant == "participant_2"
     assert metadata.repetition_count == 4
 
-    with pytest.raises(ValueError, match="one letter followed by one or more digits"):
+    with pytest.raises(ValueError, match="one or more letters followed by one or more digits"):
         build_mocap_capture_metadata("mocap-name", "walk", 1, "participant", 1)
     with pytest.raises(ValueError, match="repetition count"):
         build_mocap_capture_metadata("mocap-name", "P01", 1, "participant", 0)

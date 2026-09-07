@@ -8,19 +8,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .cli import ffprobe_video, ratio_to_float
-from .mocap_metadata import COMPACT_ACTION_ID_TOKEN
+from .mocap_metadata import COMPACT_ACTION_ID_PATTERN, parse_mocap_capture_directory
 from .session_layout import discover_mocap_directories
 
 TIMESTAMP_REPORT_NAME = "timestamp_anomaly_detail_table.html"
 REPORT_PREFIX = "const report="
 REPORT_SUFFIX = "; const eventTypes="
 PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d+)(?![A-Z0-9])", re.IGNORECASE)
-FALLBACK_PRIMITIVE_PATTERN = re.compile(
-    r"(?<![A-Z0-9])([A-OQ-Z]\d+)(?![A-Z0-9])", re.IGNORECASE
-)
-MOCAP_FALLBACK_PRIMITIVE_PATTERN = re.compile(
-    rf"^mocap[-_]({COMPACT_ACTION_ID_TOKEN})(?=[-_]|$)", re.IGNORECASE
-)
 ROBOCAP_VIDEO_PATTERN = re.compile(
     r"^robocap_(?P<segment>.+?)_video_(?P<camera>.+)\.mp4$", re.IGNORECASE
 )
@@ -146,10 +140,11 @@ def infer_action_primitive(dataset_root: Path, session_dir: Path) -> str:
     except (OSError, ValueError):
         relative_parts = (session_dir.name,)
 
+    mocap_dirs = discover_mocap_directories(session_dir)
     matches: set[str] = set()
     for part in relative_parts:
         matches.update(match.group(1).upper() for match in PRIMITIVE_PATTERN.finditer(part))
-    for mocap_dir in discover_mocap_directories(session_dir):
+    for mocap_dir in mocap_dirs:
         matches.update(
             match.group(1).upper() for match in PRIMITIVE_PATTERN.finditer(mocap_dir.name)
         )
@@ -157,9 +152,9 @@ def infer_action_primitive(dataset_root: Path, session_dir: Path) -> str:
         return next(iter(matches)) if len(matches) == 1 else UNASSIGNED_PRIMITIVE
 
     mocap_matches = {
-        match.group(1).upper()
-        for mocap_dir in discover_mocap_directories(session_dir)
-        if (match := MOCAP_FALLBACK_PRIMITIVE_PATTERN.search(mocap_dir.name)) is not None
+        metadata.action_id
+        for mocap_dir in mocap_dirs
+        if (metadata := parse_mocap_capture_directory(mocap_dir.name)) is not None
     }
     if mocap_matches:
         return (
@@ -168,11 +163,14 @@ def infer_action_primitive(dataset_root: Path, session_dir: Path) -> str:
             else UNASSIGNED_PRIMITIVE
         )
 
-    for part in relative_parts:
-        matches.update(
-            match.group(1).upper() for match in FALLBACK_PRIMITIVE_PATTERN.finditer(part)
-        )
-    return next(iter(matches)) if len(matches) == 1 else UNASSIGNED_PRIMITIVE
+    if len(relative_parts) < 2:
+        return UNASSIGNED_PRIMITIVE
+    action_directory = relative_parts[-2]
+    return (
+        action_directory.upper()
+        if COMPACT_ACTION_ID_PATTERN.fullmatch(action_directory) is not None
+        else UNASSIGNED_PRIMITIVE
+    )
 
 
 def probe_video_duration(path: Path, ffprobe: str) -> tuple[float | None, str | None]:
@@ -333,11 +331,11 @@ def summarize_session(
 
 
 def _primitive_sort_key(value: str) -> tuple[int, str, int, str]:
-    match = re.fullmatch(r"([A-Z])(\d+)", value, re.IGNORECASE)
+    match = re.fullmatch(r"([A-Z]+)(\d+)", value, re.IGNORECASE)
     if match is None:
         return 2, "", 0, value.casefold()
-    letter = match.group(1).upper()
-    return (0 if letter == "P" else 1), letter, int(match.group(2)), value.casefold()
+    prefix = match.group(1).upper()
+    return (0 if prefix == "P" else 1), prefix, int(match.group(2)), value.casefold()
 
 
 def aggregate_by_primitive(

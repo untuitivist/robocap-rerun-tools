@@ -80,7 +80,7 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
         if component.get("props", {}).get("label") == "上传日期（YYYYMMDD）"
     )
     assert upload_date["props"]["value"] == "20260901"
-    assert "动作基元（从 mocap* 自动建议 A01/P01 等，可任意自定义）" in config
+    assert "动作基元（从 mocap* 自动建议 P01/SM01 等，可任意自定义）" in config
     assert "参与上传的 RRD 文件" in config
     assert "ratio 和 Offset 默认从“导出 RRD”页填入" in config
     assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
@@ -486,7 +486,7 @@ def test_web_app_initializes_primitive_from_restored_session(tmp_path, monkeypat
         component
         for component in config["components"]
         if component["props"].get("label")
-        == "动作基元（从 mocap* 自动建议 A01/P01 等，可任意自定义）"
+        == "动作基元（从 mocap* 自动建议 P01/SM01 等，可任意自定义）"
     )
 
     assert primitive["props"]["value"] == "P08"
@@ -693,7 +693,7 @@ def test_modelscope_primitive_inference_ignores_missing_or_ambiguous_matches(tmp
     (s_action / "mocap-S01-S07-wangyang-10p").mkdir(parents=True)
     assert web_app.infer_modelscope_primitive(s_action) == "S01"
 
-    for action_id in ("L1", "A007", "X1234"):
+    for action_id in ("L1", "A007", "X1234", "SM01", "LH007", "ABC1234"):
         variable_width = tmp_path / f"variable-{action_id}"
         (variable_width / f"mocap-{action_id}-S7-wangyang-5p").mkdir(parents=True)
         assert web_app.infer_modelscope_primitive(variable_width) == action_id

@@ -32,7 +32,6 @@ from robocap_rerun_tools.frame_comparison import (
     iter_frame_comparison,
 )
 from robocap_rerun_tools.mocap_metadata import (
-    COMPACT_ACTION_ID_TOKEN,
     build_mocap_capture_metadata,
     parse_mocap_capture_directory,
 )
@@ -40,9 +39,6 @@ from robocap_rerun_tools.session_layout import discover_mocap_directories
 
 DEFAULT_SELECTED_MOCAP_SUFFIXES = frozenset({".bvh", ".csv", ".mp4", ".trc"})
 MOCAP_PRIMITIVE_PATTERN = re.compile(r"(?<![A-Z0-9])(P\d+)(?![A-Z0-9])", re.IGNORECASE)
-MOCAP_FALLBACK_PRIMITIVE_PATTERN = re.compile(
-    rf"^mocap[-_]({COMPACT_ACTION_ID_TOKEN})(?=[-_]|$)", re.IGNORECASE
-)
 SEQUENTIAL_UPLOAD_RETRIES = 3
 STATISTICS_MOCAP_METADATA_HEADERS = [
     "Update",
@@ -163,13 +159,13 @@ single `mocap*` source directory. Only BVH, CSV, TRC, and MP4 files are selected
 relative path containing `unnamed` is left unselected regardless of case. Other detected files stay
 available for manual selection; only checked Mocap files are staged, and at least one must remain.
 Compact action IDs use
-`mocap-<action:[A-Z]<digits>>-S<session>-<participant>-<count>p[<numeric-suffix>]`.
+`mocap-<action:[A-Z]+<digits>>-S<session>-<participant>-<count>p[<numeric-suffix>]`.
 An optional numeric suffix after `p` distinguishes directories and is ignored during field parsing.
 When a Session is
 selected, a standalone `P<digits>` search in direct `mocap*` directory names runs first. Only when no
 such ID exists does the fallback read the first action field after `mocap-` or `mocap_`. One or more
-digits are accepted and leading zeros are preserved. In `mocap-L001-S07-wangyang-10p`, the action is
-`L001`, `S07` is the Session number,
+letters followed by one or more digits are accepted, and leading zeros are preserved. In
+`mocap-SM001-S07-wangyang-10p`, the action is `SM001`, `S07` is the Session number,
 `wangyang` is the participant, and `10p` is the repetition count. The first field participates in
 action matching; a complete name also records all four fields under `mocap_capture` in new manifests
 and dataset-index rows. This is a suggestion; a manual custom primitive value takes precedence.
@@ -295,12 +291,12 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 勾选 BVH、CSV、TRC 与 MP4，并对相对路径中包含 `unnamed` 的文件取消默认勾选（不区分大小写）。其他
 文件仍保留在列表中供手动选择；只有勾选的 Mocap 文件会进入暂存，且至少保留一个。
 紧凑动作 ID 统一使用
-`mocap-<动作:[A-Z]<一位或多位数字>>-S<Session序号>-<参与者>-<次数>p[<数字后缀>]`。动作编号
-可以是一位、三位、四位或更多位，并保留前导零。`p` 后的可选数字仅用于区分
+`mocap-<动作:[A-Z]+<一位或多位数字>>-S<Session序号>-<参与者>-<次数>p[<数字后缀>]`。动作编号
+可以包含一个或多个英文字母及任意位数字，并保留数字前导零。`p` 后的可选数字仅用于区分
 目录，不参与字段解析。选择 Session 时，
 直属 `mocap*` 目录名中的独立 `P<数字>` 搜索会优先执行。只有完全没有这类 ID 时，后备规则
-才读取紧跟 `mocap-` 或 `mocap_` 的第一个动作字段。对于 `mocap-L001-S07-wangyang-10p`，动作是
-`L001`，`S07` 是 Session 序号，`wangyang` 是参与者，`10p` 是重复次数；只有第一个字段参与动作
+才读取紧跟 `mocap-` 或 `mocap_` 的第一个动作字段。对于 `mocap-SM001-S07-wangyang-10p`，动作是
+`SM001`，`S07` 是 Session 序号，`wangyang` 是参与者，`10p` 是重复次数；只有第一个字段参与动作
 匹配；完整目录名的四项内容还会写入新 manifest 与数据集索引的 `mocap_capture`。动作下拉框仍
 只是建议值，手动输入的安全自定义 primitive 具有最终优先级。
 
@@ -360,9 +356,10 @@ LANGUAGE_PACKS = {
         "statistics_button": "Calculate statistics",
         "statistics_mocap_metadata": "Mocap directory metadata",
         "statistics_mocap_metadata_help": (
-            "Rows are parsed from `mocap-<action:[A-Z]<digits>>-S<index>-<participant>-"
+            "Rows are parsed from `mocap-<action:[A-Z]+<digits>>-S<index>-<participant>-"
             "<count>p[<numeric-suffix>]`; an optional numeric suffix after `p` is ignored. "
-            "Action IDs accept any positive digit width and preserve leading zeros. "
+            "Action IDs accept one or more letters followed by one or more digits and "
+            "preserve leading zeros. "
             "Edit Action ID, Collection Session index, Participant, or Repetition count, select the "
             "rows to update, then batch-update the remote `metadata.jsonl` and Session manifests. "
             "Session and Mocap directory identify the local source and must not be edited. This "
@@ -435,7 +432,7 @@ LANGUAGE_PACKS = {
         "viewer_rrd_file": "RRD file",
         "viewer_port": "Web viewer port (0 = auto)",
         "modelscope_primitive": (
-            "Action primitive ([A-Z]<digits> auto-suggestion; custom value allowed)"
+            "Action primitive ([A-Z]+<digits> auto-suggestion; custom value allowed)"
         ),
         "modelscope_repo_id": "ModelScope dataset repo (owner/name; blank keeps saved value)",
         "modelscope_endpoint": "ModelScope endpoint",
@@ -504,8 +501,9 @@ LANGUAGE_PACKS = {
         "statistics_button": "统计根目录",
         "statistics_mocap_metadata": "Mocap 命名元数据",
         "statistics_mocap_metadata_help": (
-            "按 `mocap-<动作:[A-Z]<一位或多位数字>>-S<序号>-<参与者>-<次数>p[<数字后缀>]` "
-            "解析；动作数字位数不限并保留前导零，`p` 后的可选数字不参与字段解析。可修改动作、采集 Session "
+            "按 `mocap-<动作:[A-Z]+<一位或多位数字>>-S<序号>-<参与者>-<次数>p[<数字后缀>]` "
+            "解析；动作可包含一个或多个英文字母，数字位数不限并保留前导零，`p` 后的可选数字不参与字段解析。"
+            "可修改动作、采集 Session "
             "序号、参与者和重复次数；勾选需要更新的行后，批量同步到远端 `metadata.jsonl` 与各 "
             "Session 的 `manifest.json`。Session 和 Mocap 目录用于定位本地数据，不可修改。该操作"
             "只更新元数据，不上传视频，也不移动远端目录。"
@@ -574,7 +572,7 @@ LANGUAGE_PACKS = {
         "viewer_open_button": "打开 Web Viewer",
         "viewer_rrd_file": "RRD 文件",
         "viewer_port": "Web Viewer 端口（0 = 自动）",
-        "modelscope_primitive": "动作基元（从 mocap* 自动建议 A01/P01 等，可任意自定义）",
+        "modelscope_primitive": "动作基元（从 mocap* 自动建议 P01/SM01 等，可任意自定义）",
         "modelscope_repo_id": "ModelScope 数据集仓库（owner/name；留空保留已保存值）",
         "modelscope_endpoint": "ModelScope 站点",
         "modelscope_revision": "分支 / Revision",
@@ -1048,9 +1046,9 @@ def infer_modelscope_primitive(session_dir: object) -> str | None:
     if matches:
         return next(iter(matches)) if len(matches) == 1 else None
     matches = {
-        match.group(1).upper()
+        metadata.action_id
         for mocap_dir in discover_mocap_directories(candidate)
-        if (match := MOCAP_FALLBACK_PRIMITIVE_PATTERN.search(mocap_dir.name)) is not None
+        if (metadata := parse_mocap_capture_directory(mocap_dir.name)) is not None
     }
     return next(iter(matches)) if len(matches) == 1 else None
 
@@ -2054,7 +2052,7 @@ def statistics_mocap_metadata_rows(dataset_root: object) -> list[list[object]]:
                         "",
                         None,
                         (
-                            "INVALID expected mocap-[A-Z]<digits>-S<index>-<participant>-"
+                            "INVALID expected mocap-[A-Z]+<digits>-S<index>-<participant>-"
                             "<count>p[<numeric-suffix>]"
                         ),
                     ]

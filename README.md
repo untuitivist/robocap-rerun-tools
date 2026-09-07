@@ -146,8 +146,10 @@ the default browser; the output box prints the generated path instead of duplica
 
 The `Statistics` tab scans every detected Session under the collection root and groups duration by
 action primitive. A standalone `P<digits>` search across the Session path and direct `mocap*`
-directory takes precedence. Without one, an explicit `[A-Z]<digits>` action directory or the first
-token after `mocap-`/`mocap_` is used. Compact IDs accept one or more digits and retain leading zeros.
+directory takes precedence. Without one, an explicit `[A-Z]+<digits>` action directory or the first
+token after `mocap-`/`mocap_` is used. Compact IDs accept one or more letters followed by one or more
+digits and retain leading zeros. Current catalog series include `P`, `D`, `SM`, `LM`, `DR`, `HH`,
+`EC`, and `LH`.
 Each Segment is timed from one Robocap reference
 video, so multiple cameras are never added repeatedly. Missing inspection
 reports can be created serially with the selected 8/4 Mocap ratio before aggregation. Enable
@@ -165,7 +167,7 @@ Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
 The same Statistics run scans direct `mocap*` directory names into an editable table. A complete
-`mocap-<action:[A-Z]<digits>>-S<session-index>-<participant>-<count>p[<numeric-suffix>]` name yields the
+`mocap-<action:[A-Z]+<digits>>-S<session-index>-<participant>-<count>p[<numeric-suffix>]` name yields the
 action ID, numeric collection Session index, participant, and repetition count. An optional numeric
 suffix after `p` is ignored during field parsing. The action, Session index, repetition count, and
 numeric suffix all accept arbitrary digit widths; action-ID leading zeros are preserved. Invalid or ambiguous names remain visible
@@ -187,7 +189,7 @@ clean-validation failure also skips only the current Session. Completed uploads 
 and failed staging data is retained for retry. The flow copies full-session video byte-for-byte,
 selects BVH/CSV/TRC/MP4 files except paths containing `unnamed`, includes no RRD, and reads the
 repository from `.env`.
-Sessions without an unambiguous `[A-Z]<digits>` token (or an explicit custom action directory in an
+Sessions without an unambiguous `[A-Z]+<digits>` token (or an explicit custom action directory in an
 `EgoMotionActions` hierarchy) are excluded.
 
 The `Set as default` button beside either Offset control saves the current integer Robocap-video-frame offset,
@@ -236,7 +238,7 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
     <device_id>/                         # files are resolved by explicit device ID
   EgoMotionActions/                      # generated action data
     <YYYYMMDD>/                          # selected upload date; defaults to uploader-local date
-      <primitive_id>/                    # [A-Z]<digits> convention or a custom action name
+      <primitive_id>/                    # [A-Z]+<digits> convention or a custom action name
         <session_id>/
           robocap_<segment>_video_*.mp4       # required: six first-person cameras
           robocap_<segment>_imu_*.db          # required: Robocap IMU
@@ -321,12 +323,13 @@ packageable Mocap file. Preparing the same Session again synchronizes the canoni
 directory with the current selection, so a previously selected file does not remain.
 
 Compact action IDs use
-`mocap-<action:[A-Z]<digits>>-S<session>-<participant>-<count>p[<numeric-suffix>]`. Every numeric
-field accepts one or more digits; action-ID leading zeros are preserved. An optional numeric suffix
+`mocap-<action:[A-Z]+<digits>>-S<session>-<participant>-<count>p[<numeric-suffix>]`. The action prefix
+accepts one or more letters, and every numeric field accepts one or more digits; action-ID leading
+zeros are preserved. An optional numeric suffix
 after `p` distinguishes directories but is ignored during field parsing. Selecting a Session first
 applies a standalone `P<digits>` search to direct `mocap*` directory names. If no such ID exists, the
 fallback reads only the first action field immediately after `mocap-` or `mocap_`. Thus
-`mocap-L001-S07-wangyang-10p` suggests `L001`; `S07` is the Session number, `wangyang` is the participant,
+`mocap-SM001-S07-wangyang-10p` suggests `SM001`; `S07` is the Session number, `wangyang` is the participant,
 and `10p` is the repetition count. This is only a default: the editable dropdown accepts any safe
 single-directory name, and a manual value takes precedence. A missing or conflicting match leaves its
 current value unchanged.

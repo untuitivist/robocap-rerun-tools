@@ -77,11 +77,15 @@ def test_infer_action_primitive_uses_path_and_mocap_directory(tmp_path: Path) ->
     )
 
 
-def test_infer_action_primitive_accepts_arbitrary_digit_widths(tmp_path: Path) -> None:
+def test_infer_action_primitive_accepts_arbitrary_prefix_and_digit_widths(
+    tmp_path: Path,
+) -> None:
     expected = {
         "session-one": ("mocap-L1-S1-user-1p", "L1"),
         "session-three": ("mocap-A007-S007-user-005p", "A007"),
         "session-four": ("mocap-X1234-S1234-user-1234p", "X1234"),
+        "session-double": ("mocap-SM01-S7-user-5p", "SM01"),
+        "session-many": ("mocap-ABC0001-S7-user-5p", "ABC0001"),
     }
     for session_name, (mocap_name, _) in expected.items():
         (tmp_path / session_name / mocap_name).mkdir(parents=True)
@@ -93,16 +97,35 @@ def test_infer_action_primitive_accepts_arbitrary_digit_widths(tmp_path: Path) -
     p_path.mkdir(parents=True)
     assert statistics.infer_action_primitive(tmp_path, p_path) == "P0001"
 
+    from_double_prefix_path = tmp_path / "EgoMotionActions" / "SM001" / "session39"
+    from_double_prefix_path.mkdir(parents=True)
+    assert (
+        statistics.infer_action_primitive(tmp_path, from_double_prefix_path) == "SM001"
+    )
+
+
+def test_infer_action_primitive_does_not_treat_session_name_as_action_id(
+    tmp_path: Path,
+) -> None:
+    session = tmp_path / "20260803_081935_session39"
+    session.mkdir()
+
+    assert (
+        statistics.infer_action_primitive(tmp_path, session)
+        == statistics.UNASSIGNED_PRIMITIVE
+    )
+
 
 def test_primitive_sort_uses_numeric_value_for_variable_width_ids() -> None:
-    values = ["L10", "P10", "L2", "P2", "Custom", "L001"]
+    values = ["SM10", "P10", "SM2", "P2", "Custom", "SM001", "LM2"]
 
     assert sorted(values, key=statistics._primitive_sort_key) == [
         "P2",
         "P10",
-        "L001",
-        "L2",
-        "L10",
+        "LM2",
+        "SM001",
+        "SM2",
+        "SM10",
         "Custom",
     ]
 
