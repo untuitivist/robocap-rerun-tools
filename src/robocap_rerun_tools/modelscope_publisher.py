@@ -20,7 +20,12 @@ from urllib.parse import urlsplit
 
 from dotenv import dotenv_values, set_key
 
-from .data_packager import PackagedFile, copy_or_compress_file, discover_package_files
+from .data_packager import (
+    PackagedFile,
+    copy_or_compress_file,
+    discover_package_files,
+    link_or_copy_file,
+)
 from .dataset_intersection import (
     AlignedIntersectionPlan,
     DatasetIntersectionError,
@@ -88,6 +93,13 @@ class ModelScopeSettings:
     env_path: Path
     token_source: str
     repo_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelScopeConnection:
+    settings: ModelScopeSettings
+    api: Any
+    username: str
 
 
 @dataclass(frozen=True)
@@ -695,8 +707,7 @@ def copy_rerun_file(source: Path, session_dir: Path, target_dir: Path) -> Packag
     relative_source = source.relative_to(session_dir)
     relative_target = Path("rerun") / source.relative_to(artifacts)
     target = target_dir / relative_target
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    link_or_copy_file(source, target)
     size = source.stat().st_size
     return PackagedFile(
         source=relative_source.as_posix(),
@@ -1353,6 +1364,7 @@ def stage_session(
                     proxy_crf,
                     proxy_bitrate,
                     package_relative=package_relative,
+                    prefer_hardlink=True,
                 )
             )
     for index, path in enumerate(rerun_files, start=len(files) + 1):
@@ -1782,6 +1794,19 @@ def verify_modelscope_auth(settings: ModelScopeSettings | None = None) -> str:
         ) from exc
 
 
+def connect_modelscope(settings: ModelScopeSettings | None = None) -> ModelScopeConnection:
+    resolved = settings or load_modelscope_settings()
+    if not resolved.token:
+        raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")
+    try:
+        api = _hub_api(resolved)
+        return ModelScopeConnection(resolved, api, _username(api.whoami()))
+    except Exception as exc:
+        raise ModelScopePublisherError(
+            f"ModelScope authentication failed: {_redacted_error(exc, resolved.token)}"
+        ) from exc
+
+
 def fetch_remote_session_keys(
     repo_id: str | None = None,
     *,
@@ -2083,6 +2108,7 @@ def audit_remote_sessions(
     revision: str = "master",
     max_workers: int = REMOTE_INTEGRITY_MAX_WORKERS,
     settings: ModelScopeSettings | None = None,
+    api: Any | None = None,
     progress: Callable[[str], None] | None = print,
 ) -> RemoteSessionIntegrityReport:
     if max_workers < 1:
@@ -2101,7 +2127,7 @@ def audit_remote_sessions(
     repository = _resolve_repository(resolved, repo_id)
     target_revision = revision.strip() or "master"
     try:
-        api = _hub_api(resolved)
+        api = api or _hub_api(resolved)
         if not api.repo_exists(repository, "dataset"):
             raise ModelScopePublisherError(f"Dataset repository does not exist: {repository}.")
         document = _download_remote_metadata(api, repository, target_revision)
@@ -2337,6 +2363,8 @@ def upload_staged_dataset(
     max_workers: int | None = None,
     use_cache: bool = True,
     settings: ModelScopeSettings | None = None,
+    api: Any | None = None,
+    username: str | None = None,
     upload_time: datetime | None = None,
     upload_date: str | None = None,
     progress: Callable[[str], None] | None = print,
@@ -2352,8 +2380,8 @@ def upload_staged_dataset(
     if max_workers is not None and max_workers < 1:
         raise ValueError("max_workers must be positive.")
     try:
-        api = _hub_api(resolved)
-        username = _username(api.whoami())
+        api = api or _hub_api(resolved)
+        username = username or _username(api.whoami())
         exists = api.repo_exists(repository, "dataset")
         if not exists:
             if not create_if_missing:
@@ -2379,23 +2407,11 @@ def upload_staged_dataset(
         allow_patterns = [f"{glob.escape(path)}/**" for path in staged.session_paths]
         if (staged.dataset_root / CALIBRATION_DIR_NAME).is_dir():
             allow_patterns.append(f"{CALIBRATION_DIR_NAME}/**")
-        allow_patterns.append(DATASET_README_NAME)
+        allow_patterns.extend([DATASET_README_NAME, METADATA_NAME])
         folder_commit_message = commit_message or (
             f"Upload batch {batch_id} with {len(staged.session_paths)} indexed session(s)"
             if batch_id is not None
             else f"Upload {len(staged.session_paths)} indexed session(s)"
-        )
-        api.upload_folder(
-            repository,
-            "dataset",
-            staged.dataset_root,
-            path_in_repo="",
-            revision=target_revision,
-            commit_message=folder_commit_message,
-            allow_patterns=allow_patterns,
-            max_workers=max_workers,
-            use_cache=use_cache,
-            disable_tqdm=False,
         )
         local_entries = _read_metadata(staged.metadata_path)
         remote_entries = _read_metadata_document(
@@ -2405,24 +2421,32 @@ def upload_staged_dataset(
         merged_metadata = _metadata_document(
             merge_metadata_entries(remote_entries, local_entries)
         )
-        if merged_metadata != remote_metadata:
-            if progress is not None:
-                progress(
-                    f"Updating {METADATA_NAME}: retained {len(remote_entries)} remote row(s), "
-                    f"merged {len(local_entries)} local row(s)."
-                )
-            api.upload_file(
+        local_metadata = staged.metadata_path.read_text(encoding="utf-8")
+        if progress is not None:
+            progress(
+                f"Preparing atomic upload: retained {len(remote_entries)} remote row(s), "
+                f"merged {len(local_entries)} local row(s) into {METADATA_NAME}."
+            )
+        staged.metadata_path.write_text(merged_metadata, encoding="utf-8", newline="\n")
+        try:
+            commit_result = api.upload_folder(
                 repository,
                 "dataset",
-                merged_metadata.encode("utf-8"),
-                METADATA_NAME,
+                staged.dataset_root,
+                path_in_repo="",
                 revision=target_revision,
-                commit_message=(
-                    f"Update metadata for upload batch {batch_id}"
-                    if batch_id is not None
-                    else "Update dataset metadata"
-                ),
-                disable_tqdm=True,
+                commit_message=folder_commit_message,
+                allow_patterns=allow_patterns,
+                max_workers=max_workers,
+                use_cache=use_cache,
+                disable_tqdm=False,
+            )
+        finally:
+            staged.metadata_path.write_text(local_metadata, encoding="utf-8", newline="\n")
+        if isinstance(commit_result, list) and len(commit_result) > 1 and progress is not None:
+            progress(
+                f"ModelScope split this upload into {len(commit_result)} commits because the "
+                "selected batch exceeded its single-commit capacity."
             )
     except ModelScopePublisherError:
         raise

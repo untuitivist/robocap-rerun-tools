@@ -19,6 +19,7 @@ import time
 import webbrowser
 from collections import deque
 from collections.abc import Generator, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -191,10 +192,11 @@ Incomplete entries are re-uploaded for repair. Clearing the skip option uploads 
 too and replaces their metadata rows. If a different date is selected, the prior remote directory is
 not deleted automatically. Each selected Session must
 satisfy the exact frame-count relation, uses the curated default Mocap files and no RRD, and completes
-prepare, clean validation, and upload in an isolated staging root.
-An upload failure is retried three times after the initial attempt. After four failed attempts, that
-Session is skipped and processing continues; preparation and clean-validation failures also skip only
-the current Session. Completed uploads are not rolled back.
+prepare and clean validation in an isolated batch root. Batch size defaults to 10; size 1 uploads one
+Session at a time, and a size at least equal to the candidate count uploads all candidates together.
+The next batch is prepared while the current one uploads, but remote writes stay serial. Raw files
+prefer same-volume NTFS hard links and fall back to byte copies. A failed batch gets three retries,
+then is skipped. Completed uploads are not rolled back.
 When aligned-intersection staging is enabled, its ratio and Offset are prefilled from the RRD
 Export controls and continue to follow changes made there. Edit the ModelScope copies only to
 override alignment for that staging operation.
@@ -312,14 +314,15 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用上传电脑本地
 日期 `YYYYMMDD`，并移动到 `EgoMotionActions/<日期>/<动作>/<session>/`；完整开始时间仍保存在元数据
 中，传输失败后重试会复用该日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。
-"统计"页还提供 clean Session 逐个上传。它先读取远端 `metadata.jsonl`，然后按 manifest 声明核对
+"统计"页还提供 clean Session 分批上传。它先读取远端 `metadata.jsonl`，然后按 manifest 声明核对
 匹配 Session 的远端文件、数量和字节数，不下载大型采集文件。上传日期框默认填入上传电脑本地当天的
 `YYYYMMDD`，允许手工修改；同一次运行的所有 Session 使用同一个日期。默认开启"跳过远端已有且
 完整的 Session"；不完整项会自动重新上传修复。关闭后，远端完整项也会重新上传并替换同键元数据。
-若改用其他日期，旧远端目录不会自动删除。各 Session 必须满足精确帧数关系，使用默认
-Mocap 文件且不带 RRD，并在独立暂存根目录中依次完成准备、clean 校验和上传。上传首次失败后会再
-重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或
-clean 校验失败也只跳过当前 Session，不会停止后续队列；已经完成的上传不会回滚。
+若改用其他日期，旧远端目录不会自动删除。各 Session 必须满足精确帧数关系，使用默认 Mocap 文件且
+不带 RRD。批次大小默认 10；填 1 时逐个上传，大于等于候选总数时全量作为一批。当前批上传时后台
+准备下一批，远端写入仍严格串行。原始文件优先使用同卷 NTFS 硬链接，失败时复制。上传首次失败后
+再重试 3 次；共 4 次仍失败则跳过该批并继续。准备或 clean 校验失败只排除对应 Session；已完成上传
+不会回滚。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
 """
@@ -373,21 +376,24 @@ LANGUAGE_PACKS = {
         "statistics_mocap_metadata_refresh": "Scan Mocap naming metadata",
         "statistics_mocap_metadata_update": "Batch update remote Mocap metadata",
         "statistics_batch_help": (
-            "Sequential upload reads remote metadata, then checks each matching Session's manifest, "
+            "Batch upload reads remote metadata, then checks each matching Session's manifest, "
             "declared files, counts, and byte sizes without downloading large capture files. The "
             "editable date is initialized to today's local `YYYYMMDD`, and every Session in this run "
             "uses it. Only complete existing Sessions are skipped by default; incomplete Sessions are "
             "re-uploaded for repair. Clear the skip option to re-upload complete Sessions too and "
             "replace matching metadata rows. A different date leaves the old remote directory "
-            "untouched. Each selected "
-            "Session must satisfy `n:ratio*(n+1):n+1`, then completes "
-            "prepare, validation, and upload before the next starts. Upload failures retry three "
-            "times, then skip that Session and continue. It copies full-session video "
-            "byte-for-byte, selects BVH/CSV/TRC/MP4 except `unnamed`, includes no RRD, and reads `.env`."
+            "untouched. Each selected Session must satisfy `n:ratio*(n+1):n+1`. Batch size `1` "
+            "uploads one Session per commit; a size at least equal to the candidate count uploads all "
+            "candidates together; the default is `10`. While one batch uploads, the next is prepared "
+            "in the background. Remote uploads remain serial. Raw files use NTFS hard links when "
+            "possible and fall back to byte-for-byte copies. A failed batch retries three times, then "
+            "is skipped. BVH/CSV/TRC/MP4 are selected except `unnamed`; RRD is excluded."
         ),
         "statistics_upload_date": "Upload date (YYYYMMDD)",
         "statistics_skip_existing": "Skip complete existing remote Sessions",
-        "statistics_batch_upload": "Upload clean Sessions one by one",
+        "statistics_batch_size": "Sessions per upload batch",
+        "statistics_upload_workers": "Upload workers",
+        "statistics_batch_upload": "Batch upload clean Sessions",
         "package_output": "Output zip",
         "package_height": "Proxy height",
         "package_crf": "Proxy CRF",
@@ -519,19 +525,21 @@ LANGUAGE_PACKS = {
         "statistics_mocap_metadata_refresh": "扫描 Mocap 命名元数据",
         "statistics_mocap_metadata_update": "批量更新远端 Mocap 元数据",
         "statistics_batch_help": (
-            "逐个上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
+            "批量上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
             "文件数量和字节数；不会为此下载大型采集文件。日期框默认填入本地当天的 `YYYYMMDD`，"
             "允许修改；本次所有 Session 使用同一日期。默认只跳过远端已有且完整的 Session；远端"
             "不完整项会重新上传修复。取消勾选后，完整项也会重新上传并替换同键元数据。改用其他"
-            "日期不会删除旧远端目录。"
-            "选中的 Session 必须满足 `n:ratio*(n+1):n+1`，每条依次完成准备、校验和上传后才处理"
-            "下一条。上传失败"
-            "会重试 3 次，共 4 次仍失败则跳过并继续。完整 Session 视频逐字节复制，默认选择"
-            "BVH/CSV/TRC/MP4 并排除 `unnamed`，不包含 RRD；读取 `.env`。"
+            "日期不会删除旧远端目录。选中的 Session 必须满足 `n:ratio*(n+1):n+1`。批次大小为 "
+            "`1` 时逐个提交，大于等于候选总数时全量一次提交，默认 `10`。当前批次上传时会在后台"
+            "准备下一批，但远端上传严格串行。原始文件优先使用 NTFS 硬链接，失败时逐字节复制。"
+            "批次上传失败会重试 3 次，共 4 次仍失败则跳过该批并继续。默认选择 BVH/CSV/TRC/MP4 "
+            "并排除 `unnamed`，不包含 RRD。"
         ),
         "statistics_upload_date": "上传日期（YYYYMMDD）",
         "statistics_skip_existing": "跳过远端已有且完整的 Session",
-        "statistics_batch_upload": "逐个上传无差帧 Session",
+        "statistics_batch_size": "每个上传批次的 Session 数",
+        "statistics_upload_workers": "上传并发数",
+        "statistics_batch_upload": "批量上传无差帧 Session",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
         "package_crf": "压缩 CRF",
@@ -2487,21 +2495,6 @@ def validate_pending_modelscope_frame_counts(dataset_root: Path) -> tuple[str, .
     return staged.pending_session_paths
 
 
-def sequential_modelscope_dataset_root(
-    dataset_root: Path,
-    primitive_id: str,
-    session_id: str,
-) -> Path:
-    from robocap_rerun_tools.modelscope_publisher import (
-        validate_primitive_id,
-        validate_session_id,
-    )
-
-    primitive = validate_primitive_id(primitive_id)
-    resolved_session = validate_session_id(session_id)
-    return dataset_root / "_modelscope_dataset" / "sequential" / primitive / resolved_session
-
-
 def current_modelscope_upload_date() -> str:
     return datetime.now().astimezone().strftime("%Y%m%d")
 
@@ -2523,6 +2516,8 @@ def bulk_upload_clean_modelscope_sessions(
     upload_date: object | None = None,
     skip_existing: bool = True,
     rebuild_all_reports: bool = False,
+    batch_size: object = 10,
+    upload_workers: object = "auto",
 ) -> Iterator[str]:
     from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
@@ -2533,6 +2528,10 @@ def bulk_upload_clean_modelscope_sessions(
     from robocap_rerun_tools.modelscope_publisher import (
         ModelScopePublisherError,
         audit_remote_sessions,
+        connect_modelscope,
+        load_staged_dataset,
+        stage_session,
+        upload_staged_dataset,
         validate_session_id,
     )
 
@@ -2544,6 +2543,30 @@ def bulk_upload_clean_modelscope_sessions(
         raise ValueError("Statistics Mocap ratio must be 4 or 8.") from exc
     if ratio not in {4, 8}:
         raise ValueError("Statistics Mocap ratio must be 4 or 8.")
+    try:
+        batch_size_number = float(batch_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Upload batch size must be a positive integer.") from exc
+    if not math.isfinite(batch_size_number) or not batch_size_number.is_integer():
+        raise ValueError("Upload batch size must be a positive integer.")
+    resolved_batch_size = int(batch_size_number)
+    if resolved_batch_size < 1:
+        raise ValueError("Upload batch size must be a positive integer.")
+    workers_text = str(upload_workers).strip().casefold()
+    if workers_text in {"", "auto", "none"}:
+        resolved_upload_workers = None
+        workers_label = "auto"
+    else:
+        try:
+            workers_number = float(workers_text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Upload workers must be auto or a positive integer.") from exc
+        if not math.isfinite(workers_number) or not workers_number.is_integer():
+            raise ValueError("Upload workers must be auto or a positive integer.")
+        resolved_upload_workers = int(workers_number)
+        if resolved_upload_workers < 1:
+            raise ValueError("Upload workers must be auto or a positive integer.")
+        workers_label = str(resolved_upload_workers)
 
     is_chinese = language == "中文"
     history: deque[str] = deque(maxlen=STREAM_LOG_MAX_LINES)
@@ -2626,13 +2649,19 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
 
-    auth_result = yield from command_step(
-        ["modelscope-auth"],
-        "检查 ModelScope 身份。" if is_chinese else "Check ModelScope authentication.",
-    )
-    if auth_result.returncode != 0:
+    add("检查 ModelScope 身份。" if is_chinese else "Check ModelScope authentication.")
+    try:
+        connection = connect_modelscope()
+    except (OSError, ValueError, ModelScopePublisherError) as exc:
+        add(f"ModelScope authentication failed: {exc}")
         yield render()
         return
+    add(
+        f"ModelScope 身份：{connection.username}"
+        if is_chinese
+        else f"ModelScope identity: {connection.username}"
+    )
+    yield render()
 
     add(
         "读取远端 metadata.jsonl，并校验匹配 Session 的 manifest、文件清单和字节数。"
@@ -2654,6 +2683,8 @@ def bulk_upload_clean_modelscope_sessions(
         try:
             audit_outcome["result"] = audit_remote_sessions(
                 ((primitive, session_id) for _, primitive, session_id in identified),
+                settings=connection.settings,
+                api=connection.api,
                 progress=audit_progress,
             )
         except (OSError, ValueError, ModelScopePublisherError) as exc:
@@ -2741,10 +2772,10 @@ def bulk_upload_clean_modelscope_sessions(
     duplicates = {key: paths for key, paths in duplicate_keys.items() if len(paths) > 1}
     if duplicates:
         add(
-            "逐个上传已停止：未上传数据中动作名称和 Session ID 组合重复。"
+            "批量上传已停止：未上传数据中动作名称和 Session ID 组合重复。"
             if is_chinese
             else (
-                "Sequential upload stopped: duplicate action/session ID combinations "
+                "Batch upload stopped: duplicate action/session ID combinations "
                 "among not-yet-uploaded data."
             )
         )
@@ -2847,152 +2878,159 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
 
+    batches = [
+        candidates[index : index + resolved_batch_size]
+        for index in range(0, len(candidates), resolved_batch_size)
+    ]
+    run_id = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
+    event_queue: queue.Queue[str] = queue.Queue()
+
+    def task_progress(scope: str):
+        return lambda message: event_queue.put(f"[{scope}] {message}")
+
+    def prepare_batch(batch_index: int, items: list[tuple]):
+        staged_root = root / "_modelscope_dataset" / "batches" / run_id / f"batch_{batch_index:04d}"
+        prepared: list[tuple] = []
+        failures: list[str] = []
+        for item_index, item in enumerate(items, start=1):
+            session, primitive, session_id, mocap_files, _ = item
+            scope = f"prepare {batch_index}/{len(batches)} {item_index}/{len(items)}"
+            event_queue.put(f"[{scope}] {primitive}/{session_id} -> {staged_root}")
+            try:
+                stage_session(
+                    session,
+                    primitive,
+                    dataset_root=staged_root,
+                    mocap_files=mocap_files,
+                    progress=task_progress(scope),
+                )
+                prepared.append(item)
+            except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+                failures.append(f"{primitive}/{session_id}: {exc}")
+        if prepared:
+            try:
+                pending_paths = validate_pending_modelscope_frame_counts(staged_root)
+                if len(pending_paths) != len(prepared):
+                    raise ValueError(
+                        f"Batch {batch_index} staged {len(prepared)} Session(s), but validation "
+                        f"found {len(pending_paths)} pending Session(s)."
+                    )
+            except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+                failures.extend(
+                    f"{item[1]}/{item[2]}: batch validation failed ({exc})" for item in prepared
+                )
+                prepared = []
+        return staged_root, prepared, failures
+
+    def upload_batch(batch_index: int, staged_root: Path, items: list[tuple]):
+        attempts = SEQUENTIAL_UPLOAD_RETRIES + 1
+        for attempt in range(1, attempts + 1):
+            scope = f"upload {batch_index}/{len(batches)} attempt {attempt}/{attempts}"
+            event_queue.put(f"[{scope}] {len(items)} Session(s), workers={workers_label}")
+            try:
+                upload_staged_dataset(
+                    load_staged_dataset(staged_root),
+                    None,
+                    settings=connection.settings,
+                    api=connection.api,
+                    username=connection.username,
+                    upload_date=selected_upload_date,
+                    max_workers=resolved_upload_workers,
+                    progress=task_progress(scope),
+                )
+                return None
+            except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+                event_queue.put(f"[{scope}] failed: {exc}")
+                if attempt == attempts:
+                    return exc
+        return RuntimeError("unreachable upload retry state")
+
+    def wait_for_task(future: Future):
+        started = time.monotonic()
+        while not future.done():
+            try:
+                add(event_queue.get(timeout=STREAM_REFRESH_SECONDS))
+                yield render()
+            except queue.Empty:
+                elapsed_seconds = max(0, int(time.monotonic() - started))
+                hours, remainder = divmod(elapsed_seconds, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                yield render(f"Working... elapsed {hours:02d}:{minutes:02d}:{seconds:02d}")
+        while True:
+            try:
+                add(event_queue.get_nowait())
+            except queue.Empty:
+                break
+        yield render()
+        return future.result()
+
     completed_new = 0
     completed_replacements = 0
     failed_items = 0
-    for index, (
-        session,
-        primitive,
-        session_id,
-        mocap_files,
-        is_replacement,
-    ) in enumerate(candidates, start=1):
-        staged_root = sequential_modelscope_dataset_root(root, primitive, session_id)
-        args = [
-            "modelscope-stage",
-            str(session),
-            "--primitive-id",
-            primitive,
-            "--dataset-root",
-            str(staged_root),
-        ]
-        for mocap_file in mocap_files:
-            args.extend(["--mocap-file", str(mocap_file)])
-        label = (
-            f"[{index}/{len(candidates)}] 准备：{primitive}/{session_id}\n暂存目录：{staged_root}"
-            if is_chinese
-            else (
-                f"[{index}/{len(candidates)}] Prepare: {primitive}/{session_id}\n"
-                f"Staging root: {staged_root}"
-            )
+    add(
+        f"批次大小：{resolved_batch_size}；共 {len(batches)} 批；上传并发：{workers_label}；"
+        "上传当前批次时后台准备下一批。"
+        if is_chinese
+        else (
+            f"Batch size: {resolved_batch_size}; {len(batches)} batch(es); upload workers: "
+            f"{workers_label}; prepare the next batch while the current batch uploads."
         )
-        stage_result = yield from command_step(args, label)
-        if stage_result.returncode != 0:
-            failed_items += 1
-            add(
-                f"[{index}/{len(candidates)}] 准备失败，跳过 {primitive}/{session_id}；"
-                "暂存数据已保留，继续下一条。"
-                if is_chinese
-                else (
-                    f"[{index}/{len(candidates)}] Preparation failed; skipped "
-                    f"{primitive}/{session_id}. Staging data was kept; continuing."
-                )
-            )
-            yield render()
-            continue
+    )
+    yield render()
+    with (
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="modelscope-stage") as stage_pool,
+        ThreadPoolExecutor(max_workers=1, thread_name_prefix="modelscope-upload") as upload_pool,
+    ):
+        prepared_future = stage_pool.submit(prepare_batch, 1, batches[0])
+        for batch_index in range(1, len(batches) + 1):
+            staged_root, prepared, prepare_failures = yield from wait_for_task(prepared_future)
+            failed_items += len(prepare_failures)
+            for failure in prepare_failures:
+                add(f"- preparation failed: {failure}")
 
-        try:
-            pending_paths = validate_pending_modelscope_frame_counts(staged_root)
-            if len(pending_paths) != 1:
-                raise ValueError(
-                    "Isolated staging root must contain exactly one pending Session; "
-                    f"found {len(pending_paths)}."
+            next_future = None
+            if batch_index < len(batches):
+                next_future = stage_pool.submit(
+                    prepare_batch, batch_index + 1, batches[batch_index]
                 )
-        except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
-            failed_items += 1
-            add(
-                f"[{index}/{len(candidates)}] 上传前 clean 校验失败：{exc}"
-                if is_chinese
-                else f"[{index}/{len(candidates)}] Pre-upload clean validation failed: {exc}"
-            )
-            add(
-                f"[{index}/{len(candidates)}] 跳过 {primitive}/{session_id}；"
-                "暂存数据已保留，继续下一条。"
-                if is_chinese
-                else (
-                    f"[{index}/{len(candidates)}] Skipped {primitive}/{session_id}. "
-                    "Staging data was kept; continuing."
-                )
-            )
-            yield render()
-            continue
-        add(
-            f"[{index}/{len(candidates)}] 上传前校验通过：1 个 pending Session。"
-            if is_chinese
-            else f"[{index}/{len(candidates)}] Pre-upload validation passed: 1 pending Session."
-        )
-
-        upload_attempts = SEQUENTIAL_UPLOAD_RETRIES + 1
-        upload_args = [
-            "modelscope-upload",
-            str(staged_root),
-            "--upload-date",
-            selected_upload_date,
-        ]
-        for attempt in range(1, upload_attempts + 1):
-            upload_result = yield from command_step(
-                upload_args,
-                (
-                    f"[{index}/{len(candidates)}] 上传尝试 {attempt}/{upload_attempts}："
-                    f"{primitive}/{session_id}"
-                    if is_chinese
-                    else (
-                        f"[{index}/{len(candidates)}] Upload attempt {attempt}/{upload_attempts}: "
-                        f"{primitive}/{session_id}"
+            if prepared:
+                upload_future = upload_pool.submit(upload_batch, batch_index, staged_root, prepared)
+                upload_error = yield from wait_for_task(upload_future)
+                if upload_error is not None:
+                    failed_items += len(prepared)
+                    add(
+                        f"批次 {batch_index} 重试 3 次后仍失败，跳过 {len(prepared)} 个 Session："
+                        f"{upload_error}"
+                        if is_chinese
+                        else (
+                            f"Batch {batch_index} still failed after 3 retries; skipped "
+                            f"{len(prepared)} Session(s): {upload_error}"
+                        )
                     )
-                ),
-            )
-            if upload_result.returncode == 0:
-                break
-            if attempt <= SEQUENTIAL_UPLOAD_RETRIES:
-                add(
-                    f"[{index}/{len(candidates)}] 上传失败；开始第 "
-                    f"{attempt}/{SEQUENTIAL_UPLOAD_RETRIES} 次重试。"
-                    if is_chinese
-                    else (
-                        f"[{index}/{len(candidates)}] Upload failed; starting retry "
-                        f"{attempt}/{SEQUENTIAL_UPLOAD_RETRIES}."
+                else:
+                    completed_replacements += sum(1 for item in prepared if item[4])
+                    completed_new += sum(1 for item in prepared if not item[4])
+                    add(
+                        f"批次 {batch_index}/{len(batches)} 上传完成：{len(prepared)} 个 Session。"
+                        if is_chinese
+                        else (
+                            f"Batch {batch_index}/{len(batches)} upload complete: "
+                            f"{len(prepared)} Session(s)."
+                        )
                     )
-                )
-                yield render()
-        if upload_result.returncode != 0:
-            failed_items += 1
-            add(
-                f"[{index}/{len(candidates)}] 共尝试 {upload_attempts} 次仍失败，跳过 "
-                f"{primitive}/{session_id}；暂存数据已保留，继续下一条。"
-                if is_chinese
-                else (
-                    f"[{index}/{len(candidates)}] Upload failed after {upload_attempts} attempts; "
-                    f"skipped {primitive}/{session_id}. Staging data was kept; continuing."
-                )
-            )
+            if next_future is not None:
+                prepared_future = next_future
             yield render()
-            continue
-        if is_replacement:
-            completed_replacements += 1
-        else:
-            completed_new += 1
-        add(
-            f"[{index}/{len(candidates)}] 上传完成：{primitive}/{session_id} "
-            f"（{'替换' if is_replacement else '新增'}，日期 {selected_upload_date}）"
-            if is_chinese
-            else (
-                f"[{index}/{len(candidates)}] Upload complete: {primitive}/{session_id} "
-                f"({'replacement' if is_replacement else 'new'}, "
-                f"date {selected_upload_date})"
-            )
-        )
-        yield render()
 
     add(
         (
-            f"逐个处理完成：新增 {completed_new}；替换 {completed_replacements}；"
+            f"批量处理完成：新增 {completed_new}；替换 {completed_replacements}；"
             f"失败跳过 {failed_items}；"
             f"已上传跳过 {len(remote_skipped)}；本地排除 {len(excluded)}。"
         )
         if is_chinese
         else (
-            f"Sequential processing complete: {completed_new} new; "
+            f"Batch processing complete: {completed_new} new; "
             f"{completed_replacements} replaced; {failed_items} failed and skipped; "
             f"{len(remote_skipped)} already uploaded; {len(excluded)} locally excluded."
         )
@@ -3344,6 +3382,8 @@ def language_updates(language: str):
         gr.update(value=labels["statistics_batch_help"]),
         gr.update(label=labels["statistics_upload_date"]),
         gr.update(label=labels["statistics_skip_existing"]),
+        gr.update(label=labels["statistics_batch_size"]),
+        gr.update(label=labels["statistics_upload_workers"]),
         gr.update(value=labels["statistics_batch_upload"]),
         gr.update(label=labels["package_output"]),
         gr.update(label=labels["package_height"]),
@@ -3656,6 +3696,16 @@ def build_app():
                     value=True,
                     scale=2,
                 )
+                statistics_batch_size = gr.Number(
+                    label=labels["statistics_batch_size"], value=10, precision=0, minimum=1, scale=1
+                )
+                statistics_upload_workers = gr.Dropdown(
+                    label=labels["statistics_upload_workers"],
+                    choices=["auto", "8", "12", "16"],
+                    value="auto",
+                    allow_custom_value=True,
+                    scale=1,
+                )
                 statistics_batch_upload = gr.Button(
                     labels["statistics_batch_upload"],
                     scale=1,
@@ -3670,6 +3720,8 @@ def build_app():
                     statistics_upload_date,
                     statistics_skip_existing,
                     statistics_rebuild_all,
+                    statistics_batch_size,
+                    statistics_upload_workers,
                 ],
                 outputs=output,
             )
@@ -4047,6 +4099,8 @@ def build_app():
                 statistics_batch_help,
                 statistics_upload_date,
                 statistics_skip_existing,
+                statistics_batch_size,
+                statistics_upload_workers,
                 statistics_batch_upload,
                 package_output,
                 package_height,

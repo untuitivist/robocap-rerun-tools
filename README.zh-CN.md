@@ -175,14 +175,15 @@ Mocap 目录时默认勾选；缺失、格式错误或
 Session 的 `manifest.json`。该操作不重传视频、不移动远端目录，Session 与 Mocap 目录两列只用于
 稳定定位，不应修改。以后准备的新 Session 也会自动把完整命名写入两处的 `mocap_capture` 字段。
 
-同一页可逐个上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，再对本地匹配的
+同一页可按批上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，再对本地匹配的
 `(primitive_id, session_id)` 下载小型 manifest，核对远端检查报告、所有声明文件、文件数量和字节数，
 不会下载大型采集文件。默认只跳过校验完整的已有项；索引存在但文件缺失、大小不符、manifest 损坏或
 元数据不一致的 Session 会自动进入替换上传进行修复。取消该选项后，远端完整项也会重新上传。其余
-Session 必须满足
-上述帧数关系，并在独立暂存根目录中依次完成准备、clean 校验和上传后才开始下一条。上传首次失败后
-会再重试 3 次；共 4 次仍失败则跳过当前 Session 并继续。准备或 clean 校验失败也只跳过当前 Session，
-不停止后续队列，且不回滚已完成上传。该流程将完整 Session 视频逐字节复制，默认选择 BVH/CSV/TRC/MP4
+Session 必须满足上述帧数关系。“每个上传批次的 Session 数”默认是 `10`；填 `1` 时逐个提交，填入
+大于等于候选总数的值时全量作为一个批次。当前批次上传时，下一批会在后台同时准备，但远端上传严格
+串行。上传首次失败后会再重试 3 次；共 4 次仍失败则跳过该批并继续。准备或 clean 校验失败只排除对应
+Session，不停止后续队列，且不回滚已完成上传。原始文件在同一兼容 NTFS 卷上优先用硬链接暂存，失败
+时再逐字节复制；默认选择 BVH/CSV/TRC/MP4
 并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
 `[A-Z]+<一位或多位数字>`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会排除。
 
@@ -313,8 +314,10 @@ robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 `upload_batch_created_at`。工具会在传输前原子更新 `manifest.json` 与 `metadata.jsonl`；传输失败后
 重试会复用原日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。`_prepared/` 不会上传。
 `EgoMotionActions/Demo/` 只存放从旧版无批次结构迁移的示例。
-提交新索引前，工具会下载并合并远端 `metadata.jsonl`，保留无关批次与 Demo 行；本地相同
-`(primitive_id, session_id)` 的行覆盖远端旧行。只有 Session 文件传输成功后才提交合并索引。
+上传前，工具会下载并合并远端 `metadata.jsonl`，保留无关批次与 Demo 行；本地相同
+`(primitive_id, session_id)` 的行覆盖远端旧行。Session 文件、Dataset Card 和合并索引进入同一次
+`upload_folder`。ModelScope 通常对不超过 100 个文件的批次做一次原子提交；超过 SDK 单次提交容量时
+可能自动拆分，实时日志会打印实际提交数。
 
 上传默认使用 `.env` 中的 `MODELSCOPE_REPO_ID`；只有临时覆盖时才传
 `--repo-id owner/another-dataset`。仅 CLI 在明确需要时支持

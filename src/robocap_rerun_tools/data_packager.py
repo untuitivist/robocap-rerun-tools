@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -35,6 +36,19 @@ class PackagedFile:
 
 def is_video(path: Path) -> bool:
     return path.suffix.lower() in VIDEO_SUFFIXES
+
+
+def link_or_copy_file(source: Path, target: Path) -> bool:
+    """Hard-link a staged file when possible; return whether linking succeeded."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+        return False
+    return True
 
 
 def is_excluded(path: Path, session_dir: Path, include_artifacts: bool, include_rrd: bool) -> bool:
@@ -147,6 +161,7 @@ def copy_or_compress_file(
     proxy_bitrate: str,
     *,
     package_relative: Path | None = None,
+    prefer_hardlink: bool = False,
 ) -> PackagedFile:
     source_relative = source.relative_to(session_dir)
     target_relative = package_relative if package_relative is not None else source_relative
@@ -166,7 +181,10 @@ def copy_or_compress_file(
 
     target = staging_root / target_relative
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    if prefer_hardlink:
+        link_or_copy_file(source, target)
+    else:
+        shutil.copy2(source, target)
     return PackagedFile(
         source=source_relative.as_posix(),
         packaged_as=target_relative.as_posix(),

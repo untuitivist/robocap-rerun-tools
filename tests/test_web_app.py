@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -217,6 +218,8 @@ def test_statistics_can_rebuild_existing_report(tmp_path, monkeypatch) -> None:
 def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatch) -> None:
     from robocap_rerun_tools import cli, dataset_statistics, modelscope_publisher
 
+    monkeypatch.setattr(web_app, "STREAM_REFRESH_SECONDS", 0.01)
+
     uploaded = tmp_path / "EgoMotionActions" / "P01" / "session-uploaded"
     problem = tmp_path / "EgoMotionActions" / "P02" / "session-problem"
     clean_one = tmp_path / "EgoMotionActions" / "P03" / "session-clean-one"
@@ -278,23 +281,53 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
 
     monkeypatch.setattr(dataset_statistics, "summarize_session", tracked_summarize)
     validated_roots: list[Path] = []
+    staged_calls: list[tuple[Path, str, Path, tuple[Path, ...]]] = []
+    staged_counts: dict[Path, int] = {}
+    upload_calls: list[tuple[Path, int | None]] = []
+    second_batch_staged = threading.Event()
+    upload_lock = threading.Lock()
+    active_uploads = 0
+    maximum_active_uploads = 0
+    connection = SimpleNamespace(settings=object(), api=object(), username="tester")
+    monkeypatch.setattr(modelscope_publisher, "connect_modelscope", lambda: connection)
+
+    def fake_stage(session, primitive, *, dataset_root, mocap_files, **_kwargs):
+        staged_calls.append((session, primitive, dataset_root, tuple(mocap_files)))
+        staged_counts[dataset_root] = staged_counts.get(dataset_root, 0) + 1
+        if dataset_root.name == "batch_0002":
+            second_batch_staged.set()
 
     def fake_validate(root: Path) -> tuple[str, ...]:
         validated_roots.append(root)
-        return ("_prepared/only-session",)
+        return tuple(f"_prepared/session-{index}" for index in range(staged_counts[root]))
 
+    def fake_load(root: Path):
+        return SimpleNamespace(dataset_root=root)
+
+    def fake_upload(staged, _repo_id, *, max_workers, **_kwargs):
+        nonlocal active_uploads, maximum_active_uploads
+        with upload_lock:
+            active_uploads += 1
+            maximum_active_uploads = max(maximum_active_uploads, active_uploads)
+        upload_calls.append((staged.dataset_root, max_workers))
+        try:
+            if staged.dataset_root.name == "batch_0001":
+                assert second_batch_staged.wait(2)
+                threading.Event().wait(0.03)
+            if staged.dataset_root.name == "batch_0002":
+                raise modelscope_publisher.ModelScopePublisherError("simulated upload failure")
+        finally:
+            with upload_lock:
+                active_uploads -= 1
+
+    monkeypatch.setattr(modelscope_publisher, "stage_session", fake_stage)
+    monkeypatch.setattr(modelscope_publisher, "load_staged_dataset", fake_load)
+    monkeypatch.setattr(modelscope_publisher, "upload_staged_dataset", fake_upload)
     monkeypatch.setattr(web_app, "validate_pending_modelscope_frame_counts", fake_validate)
     commands: list[list[str]] = []
 
     def fake_stream(args):
         commands.append(list(args))
-        if args[0] == "modelscope-upload" and str(args[1]).endswith("session-clean-one"):
-            yield "simulated upload failure"
-            return web_app.StreamCommandResult(
-                1,
-                "simulated upload failure",
-                "simulated upload failure\nCommand failed with exit code 1.",
-            )
         yield "Done."
         return web_app.StreamCommandResult(0, "Done.", "Done.")
 
@@ -309,68 +342,38 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
             "20260901",
             True,
             rebuild_all_reports=True,
+            batch_size=1,
+            upload_workers=12,
         )
     )
 
-    assert commands[0] == ["modelscope-auth"]
     inspect_commands = [command for command in commands if command[0] == "inspect"]
     assert {Path(command[1]) for command in inspect_commands} == {
         problem.resolve(),
         clean_one.resolve(),
         clean_two.resolve(),
     }
-    stage_commands = [command for command in commands if command[0] == "modelscope-stage"]
-    upload_commands = [command for command in commands if command[0] == "modelscope-upload"]
-    expected_roots = {
-        "P03": tmp_path.resolve()
-        / "_modelscope_dataset"
-        / "sequential"
-        / "P03"
-        / "session-clean-one",
-        "A04": tmp_path.resolve()
-        / "_modelscope_dataset"
-        / "sequential"
-        / "A04"
-        / "session-clean-two",
-    }
-    expected_stages = {
-        str(clean_one.resolve()): ("P03", expected_roots["P03"]),
-        str(clean_two.resolve()): ("A04", expected_roots["A04"]),
-    }
-    assert len(stage_commands) == len(expected_stages)
-    for stage in stage_commands:
-        primitive, staged_root = expected_stages[stage[1]]
-        assert stage[stage.index("--primitive-id") + 1] == primitive
-        assert stage[stage.index("--dataset-root") + 1] == str(staged_root)
-        selected = [stage[index + 1] for index, item in enumerate(stage) if item == "--mocap-file"]
-        assert set(selected) == {
-            str(Path("mocap") / "body.trc"),
-            str(Path("mocap") / "third.mp4"),
-        }
-    expected_failed_upload = [
-        "modelscope-upload",
-        str(expected_roots["P03"]),
-        "--upload-date",
-        "20260901",
+    assert [(call[0], call[1]) for call in staged_calls] == [
+        (clean_two.resolve(), "A04"),
+        (clean_one.resolve(), "P03"),
     ]
-    expected_successful_upload = [
-        "modelscope-upload",
-        str(expected_roots["A04"]),
-        "--upload-date",
-        "20260901",
-    ]
-    assert upload_commands.count(expected_failed_upload) == 4
-    assert upload_commands.count(expected_successful_upload) == 1
-    assert set(validated_roots) == set(expected_roots.values())
+    assert all(
+        set(call[3]) == {Path("mocap/body.trc"), Path("mocap/third.mp4")}
+        for call in staged_calls
+    )
+    assert [root.name for root, _ in upload_calls].count("batch_0001") == 1
+    assert [root.name for root, _ in upload_calls].count("batch_0002") == 4
+    assert {workers for _, workers in upload_calls} == {12}
+    assert maximum_active_uploads == 1
+    assert set(validated_roots) == {call[2] for call in staged_calls}
     assert uploaded not in summarized
     assert set(summarized) == {problem.resolve(), clean_one.resolve(), clean_two.resolve()}
     assert "已上传跳过：1" in output
     assert "P01/session-uploaded" in output
     assert "P03/session-clean-one: 远端不完整，将重新上传" in output
     assert "session-problem: unchecked or frame-count difference" in output
-    assert "开始第 3/3 次重试" in output
-    assert "共尝试 4 次仍失败，跳过 P03/session-clean-one" in output
-    assert "逐个处理完成：新增 1；替换 0；失败跳过 1；已上传跳过 1；本地排除 1" in output
+    assert "批次 2 重试 3 次后仍失败，跳过 1 个 Session" in output
+    assert "批量处理完成：新增 1；替换 0；失败跳过 1；已上传跳过 1；本地排除 1" in output
 
 
 def test_modelscope_upload_date_defaults_to_today_and_accepts_manual(monkeypatch) -> None:
@@ -382,6 +385,25 @@ def test_modelscope_upload_date_defaults_to_today_and_accepts_manual(monkeypatch
         web_app.resolve_modelscope_upload_date("")
     with pytest.raises(ValueError, match="Upload date"):
         web_app.resolve_modelscope_upload_date("2026-09-01")
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "upload_workers"),
+    [(0, "auto"), (1.5, "auto"), (10, "0"), (10, "2.5")],
+)
+def test_statistics_batch_upload_rejects_invalid_batch_controls(
+    tmp_path, batch_size, upload_workers
+) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        list(
+            web_app.bulk_upload_clean_modelscope_sessions(
+                tmp_path,
+                8,
+                False,
+                batch_size=batch_size,
+                upload_workers=upload_workers,
+            )
+        )
 
 
 def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
@@ -425,6 +447,26 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
         "validate_pending_modelscope_frame_counts",
         lambda _root: ("_prepared/only-session",),
     )
+    connection = SimpleNamespace(settings=object(), api=object(), username="tester")
+    monkeypatch.setattr(modelscope_publisher, "connect_modelscope", lambda: connection)
+    stage_calls: list[tuple[Path, str, Path]] = []
+    upload_calls: list[dict[str, object]] = []
+
+    def fake_stage(source, primitive, *, dataset_root, **_kwargs):
+        stage_calls.append((source, primitive, dataset_root))
+
+    def fake_upload(_staged, _repo_id, **kwargs):
+        assert kwargs["api"] is connection.api
+        assert kwargs["settings"] is connection.settings
+        upload_calls.append(kwargs)
+
+    monkeypatch.setattr(modelscope_publisher, "stage_session", fake_stage)
+    monkeypatch.setattr(
+        modelscope_publisher,
+        "load_staged_dataset",
+        lambda root: SimpleNamespace(dataset_root=root),
+    )
+    monkeypatch.setattr(modelscope_publisher, "upload_staged_dataset", fake_upload)
     commands: list[list[str]] = []
 
     def fake_stream(args):
@@ -445,14 +487,13 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
         )
     )
 
-    assert [command[0] for command in commands] == [
-        "modelscope-auth",
-        "modelscope-stage",
-        "modelscope-upload",
-    ]
-    assert commands[-1][-2:] == ["--upload-date", "20260901"]
+    assert commands == []
+    assert len(stage_calls) == 1
+    assert stage_calls[0][0:2] == (session.resolve(), "P01")
+    assert len(upload_calls) == 1
+    assert upload_calls[0]["upload_date"] == "20260901"
     assert "替换候选：1" in output
-    assert "逐个处理完成：新增 0；替换 1" in output
+    assert "批量处理完成：新增 0；替换 1" in output
 
 
 def test_batch_primitive_supports_explicit_custom_action_hierarchy(tmp_path) -> None:

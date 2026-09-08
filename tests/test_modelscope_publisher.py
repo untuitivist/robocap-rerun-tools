@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from robocap_rerun_tools import data_packager
 from robocap_rerun_tools import modelscope_publisher as publisher
 from robocap_rerun_tools.dataset_intersection import (
     AlignedIntersectionPlan,
@@ -14,6 +15,26 @@ from robocap_rerun_tools.dataset_intersection import (
     FrameSlice,
 )
 from robocap_rerun_tools.mocap_metadata import build_mocap_capture_metadata
+
+
+def test_link_or_copy_file_prefers_hardlink(tmp_path: Path) -> None:
+    source = tmp_path / "source.bin"
+    target = tmp_path / "stage" / "target.bin"
+    source.write_bytes(b"capture")
+
+    assert data_packager.link_or_copy_file(source, target) is True
+    assert source.samefile(target)
+
+
+def test_link_or_copy_file_falls_back_to_copy(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.bin"
+    target = tmp_path / "stage" / "target.bin"
+    source.write_bytes(b"capture")
+    monkeypatch.setattr(data_packager.os, "link", lambda *_args: (_ for _ in ()).throw(OSError()))
+
+    assert data_packager.link_or_copy_file(source, target) is False
+    assert target.read_bytes() == b"capture"
+    assert not source.samefile(target)
 
 REAL_MEASURE_SESSION_DURATION_S = publisher.measure_session_duration_s
 
@@ -930,6 +951,7 @@ def test_upload_staged_session_uploads_every_indexed_session(
     calibration.mkdir(parents=True)
     (calibration / "camera.json").write_text("{}\n", encoding="utf-8")
     calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+    uploaded_metadata: list[dict[str, object]] = []
 
     class FakeApi:
         def whoami(self):
@@ -944,6 +966,12 @@ def test_upload_staged_session_uploads_every_indexed_session(
 
         def upload_folder(self, *args, **kwargs):
             calls.append(("upload_folder", args, kwargs))
+            uploaded_metadata.extend(
+                json.loads(line)
+                for line in (Path(args[2]) / publisher.METADATA_NAME)
+                .read_text(encoding="utf-8")
+                .splitlines()
+            )
 
         def upload_file(self, *args, **kwargs):
             calls.append(("upload_file", args, kwargs))
@@ -975,17 +1003,13 @@ def test_upload_staged_session_uploads_every_indexed_session(
         "EgoMotionActions/20260828/Walk [[]v2]/second_session/**",
         "raw_calibration/**",
         "README.md",
+        "metadata.jsonl",
     ]
     assert calls[2][2]["disable_tqdm"] is False
     assert calls[2][2]["commit_message"] == (
         "Upload batch 20260828 with 2 indexed session(s)"
     )
-    assert calls[3][0] == "upload_file"
-    assert calls[3][1][:2] == ("owner/egomocap", "dataset")
-    assert calls[3][1][3] == publisher.METADATA_NAME
-    uploaded_metadata = [
-        json.loads(line) for line in calls[3][1][2].decode("utf-8").splitlines()
-    ]
+    assert len(calls) == 3
     assert len(uploaded_metadata) == 2
     assert {entry["duration_s"] for entry in uploaded_metadata} == {12.5}
     final_session = (

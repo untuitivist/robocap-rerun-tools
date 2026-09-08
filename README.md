@@ -155,7 +155,7 @@ video, so multiple cameras are never added repeatedly. Missing inspection
 reports can be created serially with the selected 8/4 Mocap ratio before aggregation. Enable
 `Rebuild all inspection reports` to rerun inspection for every Segment in the current scope even
 when its HTML already exists; this takes precedence over the missing-only option and also applies to
-sequential clean-Session upload. The result
+batched clean-Session upload. The result
 separates unchecked, frame-count-difference, and error-free duration, then shows total duration,
 Session count, a
 `{Session: duration}` map, and a per-Session frame-anomaly list for each action. The anomaly list
@@ -176,7 +176,7 @@ metadata` updates the matching remote `metadata.jsonl` row and Session `manifest
 one ModelScope commit. Session and Mocap-directory cells are stable local identifiers; the operation
 does not rename directories, move remote data, or upload videos.
 
-The same tab uploads clean Sessions one by one. Its `YYYYMMDD` field starts with the uploader's local
+The same tab uploads clean Sessions in configurable batches. Its `YYYYMMDD` field starts with the uploader's local
 date and can be edited; every Session in that run uses the selected date. It first reads the target
 repository's remote `metadata.jsonl`. `Skip complete existing remote Sessions` is enabled by default.
 For each matching `(primitive_id, session_id)`, the tool downloads only its small manifest and checks
@@ -185,11 +185,14 @@ large capture files are not downloaded. A matching complete Session is excluded 
 generation, staging, or video processing. An indexed but incomplete Session is automatically sent
 through replacement upload for repair. Clear the option to re-upload complete matching Sessions too.
 Choosing a different date does not delete the old remote directory. Each selected Session must
-satisfy the frame-count relation and completes prepare, clean validation, and upload in an isolated
-staging root before the next starts. An upload failure is retried three times after the initial
-attempt; after four failed attempts the Session is skipped and processing continues. Preparation or
-clean-validation failure also skips only the current Session. Completed uploads are not rolled back,
-and failed staging data is retained for retry. The flow copies full-session video byte-for-byte,
+satisfy the frame-count relation. `Sessions per upload batch` defaults to `10`; `1` preserves
+one-Session commits, while a value at least equal to the candidate count submits all candidates in
+one batch. The next batch is prepared in the background while the current batch uploads, but remote
+uploads remain strictly serial. An upload failure is retried three times after the initial attempt;
+after four failed attempts that batch is skipped and processing continues. Preparation or clean
+validation failure excludes only the affected Session. Completed uploads are not rolled back, and
+failed staging data is retained for retry. Raw full-session files use NTFS hard links when source and
+staging are on the same compatible volume, then fall back to byte-for-byte copies,
 selects BVH/CSV/TRC/MP4 files except paths containing `unnamed`, includes no RRD, and reads the
 repository from `.env`.
 Sessions without an unambiguous `[A-Z]+<digits>` token (or an explicit custom action directory in an
@@ -366,9 +369,11 @@ atomically before transfer. If transfer fails, retrying reuses the assigned date
 `YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. `_prepared/` is excluded from
 upload.
 `EgoMotionActions/Demo/` is reserved for recordings migrated from the legacy non-batched layout.
-The uploader downloads and merges the existing remote `metadata.jsonl` before committing the new
-index, so unrelated batches and Demo rows are retained. Local `(primitive_id, session_id)` rows
-replace matching remote rows. The merged index is uploaded only after session-file transfer succeeds.
+The uploader downloads and merges the existing remote `metadata.jsonl` before upload, so unrelated
+batches and Demo rows are retained. Local `(primitive_id, session_id)` rows replace matching remote
+rows. Session files, the Dataset Card, and the merged index are passed to the same `upload_folder`
+operation. ModelScope normally commits batches of at most 100 files atomically; if a selected batch
+exceeds the SDK's single-commit capacity, the SDK may split it and the live log reports the count.
 
 The command uses `MODELSCOPE_REPO_ID` from `.env`. Pass `--repo-id owner/another-dataset` only to
 override the saved repository for one upload.
