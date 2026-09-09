@@ -66,7 +66,9 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     )
     assert rebuild_all["props"]["value"] is False
     assert "统计根目录" in config
-    assert "逐个上传无差帧 Session" in config
+    assert "批量上传无差帧 Session" in config
+    assert "每个上传批次的 Session 数" in config
+    assert config.count("上传任务输出") == 2
     assert "上传日期（YYYYMMDD）" in config
     assert "跳过远端已有且完整的 Session" in config
     skip_existing = next(
@@ -87,6 +89,24 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert sum(name.startswith("rrd_alignment_defaults") for name in api_names) == 2
     assert "保留原始视频" not in config
     assert "仓库不存在时创建" not in config
+
+    concurrent_functions = {
+        block_function.fn.__name__: (
+            block_function.concurrency_id,
+            block_function.concurrency_limit,
+        )
+        for block_function in app.fns.values()
+        if block_function.fn is not None
+    }
+    assert concurrent_functions["inspect_session"] == ("analysis", 1)
+    assert concurrent_functions["calculate_dataset_statistics"] == ("analysis", 1)
+    for function_name in (
+        "bulk_upload_clean_modelscope_sessions",
+        "stage_modelscope_data",
+        "upload_modelscope_data",
+        "batch_update_remote_mocap_metadata",
+    ):
+        assert concurrent_functions[function_name] == ("modelscope-upload", 1)
 
 
 def test_web_main_selects_an_available_system_port(monkeypatch) -> None:

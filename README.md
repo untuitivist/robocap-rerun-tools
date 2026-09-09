@@ -114,6 +114,11 @@ The bilingual Web UI provides inspection, collection statistics, packaging, time
 offset inspection, ModelScope staging/upload, report opening, RRD viewing, environment checks, and
 code updates.
 
+Inspection/statistics and ModelScope publishing use separate Web task queues and separate output
+panels. A long upload therefore does not block inspection or statistics in the same Web process.
+ModelScope write operations remain serial to protect the remote metadata index. Concurrent work can
+still share disk bandwidth, especially when staging cannot use NTFS hard links and must copy files.
+
 At the top of the page, enter the directory that contains the recording collection and click
 `Scan sessions`. The scanner finds direct children and nested layouts such as
 `EgoMotionActions/<batch>/<primitive_id>/<session_id>`, then fills a searchable Session dropdown with

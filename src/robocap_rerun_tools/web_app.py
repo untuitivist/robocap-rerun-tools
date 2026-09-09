@@ -394,6 +394,7 @@ LANGUAGE_PACKS = {
         "statistics_batch_size": "Sessions per upload batch",
         "statistics_upload_workers": "Upload workers",
         "statistics_batch_upload": "Batch upload clean Sessions",
+        "upload_output": "Upload task output",
         "package_output": "Output zip",
         "package_height": "Proxy height",
         "package_crf": "Proxy CRF",
@@ -540,6 +541,7 @@ LANGUAGE_PACKS = {
         "statistics_batch_size": "每个上传批次的 Session 数",
         "statistics_upload_workers": "上传并发数",
         "statistics_batch_upload": "批量上传无差帧 Session",
+        "upload_output": "上传任务输出",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
         "package_crf": "压缩 CRF",
@@ -3385,6 +3387,7 @@ def language_updates(language: str):
         gr.update(label=labels["statistics_batch_size"]),
         gr.update(label=labels["statistics_upload_workers"]),
         gr.update(value=labels["statistics_batch_upload"]),
+        gr.update(label=labels["upload_output"]),
         gr.update(label=labels["package_output"]),
         gr.update(label=labels["package_height"]),
         gr.update(label=labels["package_crf"]),
@@ -3454,6 +3457,7 @@ def language_updates(language: str):
         gr.update(label=labels["modelscope_max_workers"]),
         gr.update(value=labels["modelscope_stage"]),
         gr.update(value=labels["modelscope_upload"]),
+        gr.update(label=labels["upload_output"]),
         gr.update(value=labels["doc"]),
     ]
 
@@ -3519,6 +3523,8 @@ def build_app():
                 inspect_session,
                 inputs=[session_dir, segment, inspect_mocap_ratio],
                 outputs=output,
+                concurrency_id="analysis",
+                concurrency_limit=1,
             )
 
         with gr.Tab("检查报告 / Reports"):
@@ -3653,6 +3659,8 @@ def build_app():
                     statistics_rebuild_all,
                 ],
                 outputs=[output, statistics_result],
+                concurrency_id="analysis",
+                concurrency_limit=1,
             )
             statistics_mocap_metadata_help = gr.Markdown(
                 labels["statistics_mocap_metadata_help"]
@@ -3710,6 +3718,9 @@ def build_app():
                     labels["statistics_batch_upload"],
                     scale=1,
                 )
+            statistics_upload_output = gr.Textbox(
+                label=labels["upload_output"], lines=16
+            )
             statistics_batch_upload.click(
                 bulk_upload_clean_modelscope_sessions,
                 inputs=[
@@ -3723,7 +3734,9 @@ def build_app():
                     statistics_batch_size,
                     statistics_upload_workers,
                 ],
-                outputs=output,
+                outputs=statistics_upload_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
             )
 
         with gr.Tab("打包 / Package"):
@@ -3831,6 +3844,7 @@ def build_app():
             with gr.Row():
                 modelscope_stage = gr.Button(labels["modelscope_stage"], variant="primary")
                 modelscope_upload = gr.Button(labels["modelscope_upload"])
+            modelscope_output = gr.Textbox(label=labels["upload_output"], lines=16)
             modelscope_stage.click(
                 stage_modelscope_data,
                 inputs=[
@@ -3845,7 +3859,9 @@ def build_app():
                     modelscope_intersection_offset,
                     inspect_mocap_ratio,
                 ],
-                outputs=output,
+                outputs=modelscope_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
             )
             modelscope_upload.click(
                 upload_modelscope_data,
@@ -3856,7 +3872,9 @@ def build_app():
                     modelscope_use_cache,
                     modelscope_max_workers,
                 ],
-                outputs=output,
+                outputs=modelscope_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
             )
             statistics_mocap_metadata_update.click(
                 batch_update_remote_mocap_metadata,
@@ -3869,7 +3887,9 @@ def build_app():
                     modelscope_max_workers,
                     language,
                 ],
-                outputs=output,
+                outputs=statistics_upload_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
             )
 
         with gr.Tab("导出 RRD / Export"):
@@ -4102,6 +4122,7 @@ def build_app():
                 statistics_batch_size,
                 statistics_upload_workers,
                 statistics_batch_upload,
+                statistics_upload_output,
                 package_output,
                 package_height,
                 package_crf,
@@ -4171,10 +4192,12 @@ def build_app():
                 modelscope_max_workers,
                 modelscope_stage,
                 modelscope_upload,
+                modelscope_output,
                 docs,
             ],
         )
 
+    app.queue(default_concurrency_limit=1)
     return app
 
 

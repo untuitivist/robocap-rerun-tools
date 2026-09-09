@@ -118,6 +118,10 @@ start_web.bat
 - 环境、依赖和 Git 更新检查
 - 内置中文文档
 
+检查/统计与 ModelScope 发布使用相互独立的 Web 任务队列和输出窗口，因此长时间上传时仍可继续
+检查或统计。所有 ModelScope 写操作保持串行，避免远端 `metadata.jsonl` 发生写入竞争。并行任务仍会
+共享磁盘带宽；暂存无法使用 NTFS 硬链接而需要复制文件时，分析速度可能有所下降。
+
 页面顶部先填写包含多条录制数据的数据集根目录，再点击“扫描 Session”。扫描器兼容 Session
 直接位于根目录下，以及 `EgoMotionActions/<批次>/<动作>/<session_id>` 这类嵌套结构；下拉框使用相对路径
 区分同名 Session。Session 的判定标准是其根目录直接存在至少一个 `robocap_*` 源文件。
