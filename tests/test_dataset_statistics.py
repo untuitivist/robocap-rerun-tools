@@ -207,9 +207,12 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         "mocap missing",
     )
     assert (
-        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | Session 数 |"
+        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
+        "{Session: Session 时长} |"
         in markdown
     )
+    assert "| Session 数 |" not in markdown
+    assert "| Sessions |" not in english
     assert "- 未检查时长：**00:00:10.000**" in markdown
     assert "- 差帧时长：**00:00:10.000**" in markdown
     assert "- 无误时长：**00:00:10.000**" in markdown
@@ -226,11 +229,11 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert "00:00:30.000" in markdown
     assert (
         "| P01 | 00:00:00.000 | 00:00:00.000 | 00:00:10.000 | 00:00:10.000 | "
-        "100.00% | 1 |" in markdown
+        "100.00% | `" in markdown
     )
     assert (
         "| P02 | 00:00:00.000 | 00:00:10.000 | 00:00:00.000 | 00:00:10.000 | "
-        "0.00% | 1 |" in markdown
+        "0.00% | `" in markdown
     )
     assert '"session-clean": "00:00:10.000"' in markdown
     assert "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown

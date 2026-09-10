@@ -161,8 +161,7 @@ reports can be created serially with the selected 8/4 Mocap ratio before aggrega
 `Rebuild all inspection reports` to rerun inspection for every Segment in the current scope even
 when its HTML already exists; this takes precedence over the missing-only option and also applies to
 batched clean-Session upload. The result
-separates unchecked, frame-count-difference, and error-free duration, then shows total duration,
-Session count, a
+separates unchecked, frame-count-difference, and error-free duration, then shows total duration, a
 `{Session: duration}` map, and a per-Session frame-anomaly list for each action. The anomaly list
 distinguishes normal, Mocap extra/missing frames, and third-person extra/missing frames; categories
 from multiple Segments are combined. The three duration categories are mutually exclusive and sum
@@ -181,7 +180,8 @@ Duration uses the same total, error-free, with-errors, and unchecked summary, wh
 with-errors equals total and unchecked is a subset of with-errors. Error-type durations sum the
 Robocap reference-video duration of affected Segments. Because one Segment can have multiple error
 types, those type-specific durations can overlap and must not be added as the with-errors duration.
-These category summaries appear above the table and do not add columns to the per-action table.
+These category summaries appear above the table. The per-action table has neither category-summary
+columns nor a Session-count column.
 
 The same Statistics run scans direct `mocap*` directory names into an editable table. A complete
 `mocap-<action:[A-Z]+<digits>>-S<session-index>-<participant>-<count>p[<numeric-suffix>]` name yields the

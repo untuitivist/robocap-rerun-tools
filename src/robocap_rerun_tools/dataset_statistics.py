@@ -559,10 +559,10 @@ def render_statistics_markdown(
             "",
             (
                 "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
-                "Session 数 | {Session: Session 时长} | "
+                "{Session: Session 时长} | "
                 "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)} |"
             ),
-            "|---|---:|---:|---:|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---|---|",
         ]
     else:
         lines = [
@@ -602,12 +602,12 @@ def render_statistics_markdown(
             "",
             (
                 "| Primitive | Unchecked duration | Frame-count-difference duration | "
-                "Error-free duration | Total duration | Error-free ratio | Sessions | "
+                "Error-free duration | Total duration | Error-free ratio | "
                 "{Session: duration} | "
                 "{Session: [anomalies](normal, mocap extra, mocap missing, "
                 "third-person extra, third-person missing)} |"
             ),
-            "|---|---:|---:|---:|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---|---|",
         ]
 
     for primitive in primitives:
@@ -652,7 +652,6 @@ def render_statistics_markdown(
                         primitive.clean_duration_s,
                         primitive.duration_s,
                     ),
-                    str(len(primitive.sessions)),
                     f"`{_markdown_cell(mapping)}`",
                     f"`{_markdown_cell(anomaly_mapping)}`",
                 ]
