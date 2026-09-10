@@ -207,8 +207,9 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         "mocap missing",
     )
     assert (
-        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | Session 数 | "
-        "Session 统计（全部/无误/有错误/未检查） | 错误类型统计 |"
+        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
+        "时长统计（全部/无误/有错误/未检查） | 错误类型时长统计 | Session 数 | "
+        "Session 统计（全部/无误/有错误/未检查） | 错误类型 Session 统计 |"
         in markdown
     )
     assert "- 未检查时长：**00:00:10.000**" in markdown
@@ -220,15 +221,17 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert "Error-free duration" in english
     assert "Error-free ratio" in english
     assert "Session counts (total/error-free/with errors/unchecked)" in english
-    assert "Error-type counts" in english
+    assert "Duration summary (total/error-free/with errors/unchecked)" in english
+    assert "Error-type duration summary" in english
+    assert "Error-type Session counts" in english
     assert "00:00:30.000" in markdown
     assert (
         "| P01 | 00:00:00.000 | 00:00:00.000 | 00:00:10.000 | 00:00:10.000 | "
-        "100.00% | 1 |" in markdown
+        "100.00% | `" in markdown
     )
     assert (
         "| P02 | 00:00:00.000 | 00:00:10.000 | 00:00:00.000 | 00:00:10.000 | "
-        "0.00% | 1 |" in markdown
+        "0.00% | `" in markdown
     )
     assert '"session-clean": "00:00:10.000"' in markdown
     assert "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown
@@ -236,7 +239,20 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert '"session-problem": ["mocap少帧"]' in markdown
     assert '"session-missing": ["未检查"]' in markdown
     assert '- Session 统计：`{"全部": 3, "无误": 1, "有错误": 2, "未检查": 1}`' in markdown
-    assert '- 错误类型统计：`{"mocap少帧": 1, "未检查": 1}`' in markdown
+    assert (
+        '- 时长统计：`{"全部": "00:00:30.000", "无误": "00:00:10.000", '
+        '"有错误": "00:00:20.000", "未检查": "00:00:10.000"}`' in markdown
+    )
+    assert (
+        '- 错误类型 Session 统计：`{"未检查": 1, "mocap多帧": 0, '
+        '"mocap少帧": 1, "第三人称多帧": 0, "第三人称少帧": 0}`' in markdown
+    )
+    assert (
+        '- 错误类型时长统计：`{"未检查": "00:00:10.000", '
+        '"mocap多帧": "00:00:00.000", "mocap少帧": "00:00:10.000", '
+        '"第三人称多帧": "00:00:00.000", "第三人称少帧": "00:00:00.000"}`'
+        in markdown
+    )
     assert '`{"全部": 1, "无误": 1, "有错误": 0, "未检查": 0}`' in markdown
     assert '`{"全部": 1, "无误": 0, "有错误": 1, "未检查": 1}`' in markdown
 

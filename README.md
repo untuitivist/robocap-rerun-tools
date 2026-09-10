@@ -177,6 +177,11 @@ unchecked remains a diagnostic subset. A separate error-type count shows how man
 unchecked, Mocap extra/missing, or third-person extra/missing results, while the per-Session mapping
 continues to identify the affected recordings.
 
+Duration uses the same total, error-free, with-errors, and unchecked summary, where error-free plus
+with-errors equals total and unchecked is a subset of with-errors. Error-type durations sum the
+Robocap reference-video duration of affected Segments. Because one Segment can have multiple error
+types, those type-specific durations can overlap and must not be added as the with-errors duration.
+
 The same Statistics run scans direct `mocap*` directory names into an editable table. A complete
 `mocap-<action:[A-Z]+<digits>>-S<session-index>-<participant>-<count>p[<numeric-suffix>]` name yields the
 action ID, numeric collection Session index, participant, and repetition count. An optional numeric
