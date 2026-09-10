@@ -207,9 +207,7 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         "mocap missing",
     )
     assert (
-        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
-        "时长统计（全部/无误/有错误/未检查） | 错误类型时长统计 | Session 数 | "
-        "Session 统计（全部/无误/有错误/未检查） | 错误类型 Session 统计 |"
+        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | Session 数 |"
         in markdown
     )
     assert "- 未检查时长：**00:00:10.000**" in markdown
@@ -220,18 +218,19 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert "Frame-count-difference duration" in english
     assert "Error-free duration" in english
     assert "Error-free ratio" in english
-    assert "Session counts (total/error-free/with errors/unchecked)" in english
-    assert "Duration summary (total/error-free/with errors/unchecked)" in english
-    assert "Error-type duration summary" in english
-    assert "Error-type Session counts" in english
+    assert "Session counts:" in english
+    assert "Duration summary:" in english
+    assert "Error-type duration summary:" in english
+    assert "Error-type Session counts:" in english
+    assert "Session counts (total/error-free/with errors/unchecked)" not in english
     assert "00:00:30.000" in markdown
     assert (
         "| P01 | 00:00:00.000 | 00:00:00.000 | 00:00:10.000 | 00:00:10.000 | "
-        "100.00% | `" in markdown
+        "100.00% | 1 |" in markdown
     )
     assert (
         "| P02 | 00:00:00.000 | 00:00:10.000 | 00:00:00.000 | 00:00:10.000 | "
-        "0.00% | `" in markdown
+        "0.00% | 1 |" in markdown
     )
     assert '"session-clean": "00:00:10.000"' in markdown
     assert "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown
@@ -253,8 +252,10 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         '"第三人称多帧": "00:00:00.000", "第三人称少帧": "00:00:00.000"}`'
         in markdown
     )
-    assert '`{"全部": 1, "无误": 1, "有错误": 0, "未检查": 0}`' in markdown
-    assert '`{"全部": 1, "无误": 0, "有错误": 1, "未检查": 1}`' in markdown
+    assert "时长统计（全部/无误/有错误/未检查）" not in markdown
+    assert "错误类型时长统计 |" not in markdown
+    assert "Session 统计（全部/无误/有错误/未检查）" not in markdown
+    assert "错误类型 Session 统计 |" not in markdown
 
 
 def test_format_error_free_ratio_handles_zero_total() -> None:

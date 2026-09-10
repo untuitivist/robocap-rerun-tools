@@ -171,7 +171,7 @@ counts that do not satisfy `n:ratio*(n+1):(n+1)`; error-free covers valid report
 Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
-Each action and the dataset summary also report Session counts for total, error-free, with-errors,
+The dataset summary also reports Session counts for total, error-free, with-errors,
 and unchecked. With-errors includes unchecked, so error-free plus with-errors equals total;
 unchecked remains a diagnostic subset. A separate error-type count shows how many Sessions have
 unchecked, Mocap extra/missing, or third-person extra/missing results, while the per-Session mapping
@@ -181,6 +181,7 @@ Duration uses the same total, error-free, with-errors, and unchecked summary, wh
 with-errors equals total and unchecked is a subset of with-errors. Error-type durations sum the
 Robocap reference-video duration of affected Segments. Because one Segment can have multiple error
 types, those type-specific durations can overlap and must not be added as the with-errors duration.
+These category summaries appear above the table and do not add columns to the per-action table.
 
 The same Statistics run scans direct `mocap*` directory names into an editable table. A complete
 `mocap-<action:[A-Z]+<digits>>-S<session-index>-<participant>-<count>p[<numeric-suffix>]` name yields the
