@@ -207,7 +207,8 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         "mocap missing",
     )
     assert (
-        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | Session 数 |"
+        "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | Session 数 | "
+        "Session 统计（全部/无误/有错误/未检查） | 错误类型统计 |"
         in markdown
     )
     assert "- 未检查时长：**00:00:10.000**" in markdown
@@ -218,6 +219,8 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert "Frame-count-difference duration" in english
     assert "Error-free duration" in english
     assert "Error-free ratio" in english
+    assert "Session counts (total/error-free/with errors/unchecked)" in english
+    assert "Error-type counts" in english
     assert "00:00:30.000" in markdown
     assert (
         "| P01 | 00:00:00.000 | 00:00:00.000 | 00:00:10.000 | 00:00:10.000 | "
@@ -232,6 +235,10 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert '"session-clean": ["正常"]' in markdown
     assert '"session-problem": ["mocap少帧"]' in markdown
     assert '"session-missing": ["未检查"]' in markdown
+    assert '- Session 统计：`{"全部": 3, "无误": 1, "有错误": 2, "未检查": 1}`' in markdown
+    assert '- 错误类型统计：`{"mocap少帧": 1, "未检查": 1}`' in markdown
+    assert '`{"全部": 1, "无误": 1, "有错误": 0, "未检查": 0}`' in markdown
+    assert '`{"全部": 1, "无误": 0, "有错误": 1, "未检查": 1}`' in markdown
 
 
 def test_format_error_free_ratio_handles_zero_total() -> None:

@@ -171,6 +171,12 @@ counts that do not satisfy `n:ratio*(n+1):(n+1)`; error-free covers valid report
 Timestamp diff findings, inferred dropped frames,
 missing timestamps, and frame-index issues are ignored for this statistic.
 
+Each action and the dataset summary also report Session counts for total, error-free, with-errors,
+and unchecked. With-errors includes unchecked, so error-free plus with-errors equals total;
+unchecked remains a diagnostic subset. A separate error-type count shows how many Sessions have
+unchecked, Mocap extra/missing, or third-person extra/missing results, while the per-Session mapping
+continues to identify the affected recordings.
+
 The same Statistics run scans direct `mocap*` directory names into an editable table. A complete
 `mocap-<action:[A-Z]+<digits>>-S<session-index>-<participant>-<count>p[<numeric-suffix>]` name yields the
 action ID, numeric collection Session index, participant, and repetition count. An optional numeric

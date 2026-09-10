@@ -400,6 +400,47 @@ def session_frame_anomaly_labels(
     return tuple(values)
 
 
+def session_count_summary(
+    sessions: tuple[SessionStatistic, ...],
+    *,
+    language: str,
+) -> dict[str, int]:
+    is_chinese = language == "中文"
+    clean_count = sum(session_has_clean_frame_counts(session) for session in sessions)
+    unchecked_count = sum(
+        not session.segments or any(segment.status == "unchecked" for segment in session.segments)
+        for session in sessions
+    )
+    total_count = len(sessions)
+    labels = (
+        ("全部", "无误", "有错误", "未检查")
+        if is_chinese
+        else ("total", "error-free", "with errors", "unchecked")
+    )
+    return {
+        labels[0]: total_count,
+        labels[1]: clean_count,
+        labels[2]: total_count - clean_count,
+        labels[3]: unchecked_count,
+    }
+
+
+def session_anomaly_count_summary(
+    sessions: tuple[SessionStatistic, ...],
+    *,
+    language: str,
+) -> dict[str, int]:
+    normal_label = "正常" if language == "中文" else "normal"
+    counts: Counter[str] = Counter()
+    for session in sessions:
+        counts.update(
+            label
+            for label in session_frame_anomaly_labels(session, language=language)
+            if label != normal_label
+        )
+    return dict(counts)
+
+
 def render_statistics_markdown(
     dataset_root: Path,
     primitives: tuple[PrimitiveStatistic, ...],
@@ -414,6 +455,9 @@ def render_statistics_markdown(
     )
     clean_duration_s = sum(item.clean_duration_s for item in primitives)
     total_duration_s = unchecked_duration_s + frame_difference_duration_s + clean_duration_s
+    all_sessions = tuple(session for item in primitives for session in item.sessions)
+    overall_session_counts = session_count_summary(all_sessions, language=language)
+    overall_anomaly_counts = session_anomaly_count_summary(all_sessions, language=language)
     if is_chinese:
         lines = [
             "## 数据集时长统计",
@@ -424,14 +468,24 @@ def render_statistics_markdown(
             f"- 差帧时长：**{format_duration(frame_difference_duration_s)}**",
             f"- 无误时长：**{format_duration(clean_duration_s)}**",
             f"- 总时长：**{format_duration(total_duration_s)}**",
+            (
+                "- Session 统计：`"
+                + json.dumps(overall_session_counts, ensure_ascii=False, separators=(", ", ": "))
+                + "`"
+            ),
+            (
+                "- 错误类型统计：`"
+                + json.dumps(overall_anomaly_counts, ensure_ascii=False, separators=(", ", ": "))
+                + "`"
+            ),
             "",
             (
                 "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
-                "Session 数 | "
+                "Session 数 | Session 统计（全部/无误/有错误/未检查） | 错误类型统计 | "
                 "{Session: Session 时长} | "
                 "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)} |"
             ),
-            "|---|---:|---:|---:|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---:|---|---|---|---|",
         ]
     else:
         lines = [
@@ -446,15 +500,26 @@ def render_statistics_markdown(
             ),
             f"- Error-free duration: **{format_duration(clean_duration_s)}**",
             f"- Total duration: **{format_duration(total_duration_s)}**",
+            (
+                "- Session counts: `"
+                + json.dumps(overall_session_counts, ensure_ascii=False, separators=(", ", ": "))
+                + "`"
+            ),
+            (
+                "- Error-type counts: `"
+                + json.dumps(overall_anomaly_counts, ensure_ascii=False, separators=(", ", ": "))
+                + "`"
+            ),
             "",
             (
                 "| Primitive | Unchecked duration | Frame-count-difference duration | "
                 "Error-free duration | Total duration | Error-free ratio | Sessions | "
+                "Session counts (total/error-free/with errors/unchecked) | Error-type counts | "
                 "{Session: duration} | "
                 "{Session: [anomalies](normal, mocap extra, mocap missing, "
                 "third-person extra, third-person missing)} |"
             ),
-            "|---|---:|---:|---:|---:|---:|---:|---|---|",
+            "|---|---:|---:|---:|---:|---:|---:|---|---|---|---|",
         ]
 
     for primitive in primitives:
@@ -481,6 +546,16 @@ def render_statistics_markdown(
             ensure_ascii=False,
             separators=(", ", ": "),
         )
+        session_counts = json.dumps(
+            session_count_summary(primitive.sessions, language=language),
+            ensure_ascii=False,
+            separators=(", ", ": "),
+        )
+        anomaly_counts = json.dumps(
+            session_anomaly_count_summary(primitive.sessions, language=language),
+            ensure_ascii=False,
+            separators=(", ", ": "),
+        )
         primitive_label = (
             "未分类"
             if is_chinese and primitive.primitive_id == UNASSIGNED_PRIMITIVE
@@ -500,6 +575,8 @@ def render_statistics_markdown(
                         primitive.duration_s,
                     ),
                     str(len(primitive.sessions)),
+                    f"`{_markdown_cell(session_counts)}`",
+                    f"`{_markdown_cell(anomaly_counts)}`",
                     f"`{_markdown_cell(mapping)}`",
                     f"`{_markdown_cell(anomaly_mapping)}`",
                 ]
