@@ -15,6 +15,7 @@ SESSION_TIMESTAMP_PATTERN = re.compile(r"(?<!\d)(\d{8}_\d{6})(?!\d)")
 SESSION_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 CREATION_TIMEZONE = timezone(timedelta(hours=8), name="UTC+08:00")
 MOTION_SUFFIXES = frozenset({".trc", ".bvh", ".csv"})
+TIMESTAMP_REPORT_NAME = "timestamp_anomaly_detail_table.html"
 RecoveryProgress = Callable[[str, int, int | None, str], None]
 
 
@@ -29,6 +30,7 @@ class RecoveryTarget:
     session_dir: Path
     session_timestamp: datetime
     existing_directories: tuple[Path, ...]
+    report_paths: tuple[Path, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,18 @@ def contains_motion_file(directory: Path) -> bool:
     return any(
         path.is_file() and path.suffix.casefold() in MOTION_SUFFIXES
         for path in directory.rglob("*")
+    )
+
+
+def discover_timestamp_reports(session_dir: Path) -> tuple[Path, ...]:
+    artifacts = session_dir / "_artifacts"
+    if not artifacts.is_dir():
+        return ()
+    return tuple(
+        sorted(
+            (path for path in artifacts.rglob(TIMESTAMP_REPORT_NAME) if path.is_file()),
+            key=lambda path: str(path).casefold(),
+        )
     )
 
 
@@ -168,6 +182,7 @@ def build_recovery_plan(
                 session_dir=session,
                 session_timestamp=timestamp,
                 existing_directories=tuple(mocap_directories),
+                report_paths=discover_timestamp_reports(session),
             )
         )
         if progress is not None:
@@ -278,11 +293,8 @@ def copy_recovery_match(
         raise FileExistsError(f"Refusing to overwrite existing paths: {list(conflicts)}")
     destination = destination_for_match(match)
     existing = match.target.existing_directories
-    if not existing:
-        _copy_candidate_directory(match.candidate.path, destination, progress)
-        return destination
-
     backups: list[tuple[Path, Path]] = []
+    report_backups: list[tuple[Path, Path]] = []
     copy_started = False
     try:
         for directory in existing:
@@ -291,14 +303,22 @@ def copy_recovery_match(
             )
             directory.rename(backup)
             backups.append((directory, backup))
+        for report in match.target.report_paths:
+            backup = report.parent / f".{report.name}.robocap-recovery-backup-{uuid.uuid4().hex}"
+            report.rename(backup)
+            report_backups.append((report, backup))
         copy_started = True
         _copy_candidate_directory(match.candidate.path, destination, progress)
     except BaseException:
         if copy_started and destination.exists():
             shutil.rmtree(destination)
+        for report, backup in reversed(report_backups):
+            backup.rename(report)
         for directory, backup in reversed(backups):
             backup.rename(directory)
         raise
+    for _, backup in report_backups:
+        backup.unlink()
     for _, backup in backups:
         shutil.rmtree(backup)
     return destination

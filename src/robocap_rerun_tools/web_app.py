@@ -389,7 +389,7 @@ LANGUAGE_PACKS = {
         "statistics_recovery_preview": "Preview Mocap matches",
         "statistics_recovery_copy": "Copy matched Mocap directories",
         "statistics_recovery_confirm_replace": (
-            "Confirm deleting and replacing the existing mocap* directories listed in preview"
+            "Confirm deleting/replacing the existing mocap* directories and invalid reports listed in preview"
         ),
         "statistics_recovery_output": "Mocap recovery output",
         "statistics_batch_help": (
@@ -555,7 +555,7 @@ LANGUAGE_PACKS = {
         "statistics_recovery_source": "待匹配 Mocap 根目录",
         "statistics_recovery_preview": "预览 Mocap 匹配",
         "statistics_recovery_copy": "复制匹配的 Mocap 文件夹",
-        "statistics_recovery_confirm_replace": "确认删除并替换预览中列出的现有 mocap* 文件夹",
+        "statistics_recovery_confirm_replace": "确认删除/替换预览中的现有 mocap* 文件夹和失效检查报告",
         "statistics_recovery_output": "Mocap 补回输出",
         "statistics_batch_help": (
             "批量上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
@@ -2387,6 +2387,13 @@ def _mocap_recovery_report(
             f"candidate_created={match.candidate.created_at.isoformat()} | "
             f"delta={match.delta_seconds:.3f}s | {mode} -> {destination}"
         )
+        if match.target.report_paths:
+            report_list = ", ".join(str(path) for path in match.target.report_paths)
+            lines.append(
+                f"  将删除失效检查报告：{report_list}"
+                if is_chinese
+                else f"  delete invalid inspection report(s): {report_list}"
+            )
     if plan.skipped_same_name:
         lines.extend(["", "同名跳过：" if is_chinese else "Same-name matches skipped:"])
         for match in plan.skipped_same_name:
@@ -2658,14 +2665,18 @@ def copy_mocap_recovery(
         source_root,
         language,
     )
-    replacements = [match for match in plan.matches if match.target.existing_directories]
-    if replacements and not confirm_replace:
+    deletions = [
+        match
+        for match in plan.matches
+        if match.target.existing_directories or match.target.report_paths
+    ]
+    if deletions and not confirm_replace:
         message = (
-            "存在需要删除并替换的现有 mocap* 文件夹。请先预览列表并勾选替换确认。"
+            "存在需要删除/替换的现有 mocap* 文件夹或失效检查报告。请先预览列表并勾选确认。"
             if language == "中文"
             else (
-                "Existing mocap* directories must be deleted and replaced. Preview the list and "
-                "confirm replacement first."
+                "Existing mocap* directories or invalid inspection reports must be deleted. "
+                "Preview the list and confirm replacement first."
             )
         )
         yield "\n".join(
@@ -2699,9 +2710,13 @@ def copy_mocap_recovery(
         else:
             copied += 1
             copy_log.append(
-                f"[{index}/{len(plan.matches)}] 已复制到 {destination}"
+                f"[{index}/{len(plan.matches)}] 已复制到 {destination}；已删除失效报告 "
+                f"{len(match.target.report_paths)} 个"
                 if language == "中文"
-                else f"[{index}/{len(plan.matches)}] copied to {destination}"
+                else (
+                    f"[{index}/{len(plan.matches)}] copied to {destination}; removed "
+                    f"{len(match.target.report_paths)} invalid report(s)"
+                )
             )
         yield _mocap_recovery_report(
             plan,

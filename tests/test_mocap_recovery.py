@@ -23,6 +23,11 @@ def test_recovery_plan_matches_nearest_candidates_and_copies_without_removing_so
     dataset_root.mkdir()
     source_root.mkdir()
     missing = _session(dataset_root, "20260914_100000_session1")
+    missing_report = (
+        missing / "_artifacts" / "segment1" / "inspection" / recovery.TIMESTAMP_REPORT_NAME
+    )
+    missing_report.parent.mkdir(parents=True)
+    missing_report.write_text("stale", encoding="utf-8")
     empty = _session(dataset_root, "20260914_101000_session2")
     existing_empty = empty / "mocap-empty"
     existing_empty.mkdir()
@@ -81,6 +86,7 @@ def test_recovery_plan_matches_nearest_candidates_and_copies_without_removing_so
         ambiguous / "mocap-unused",
     ]
     assert (missing / "mocap-first" / "body.trc").read_text(encoding="utf-8") == "first"
+    assert not missing_report.exists()
     assert not existing_empty.exists()
     assert (empty / "Mocap-second" / "nested" / "body.CSV").read_text(
         encoding="utf-8"
@@ -128,6 +134,9 @@ def test_recovery_plan_skips_same_name_and_includes_frame_difference(
     same_mocap = same / "mocap-same"
     same_mocap.mkdir()
     (same_mocap / "old.trc").write_text("old", encoding="utf-8")
+    same_report = same / "_artifacts" / "segment1" / "inspection" / recovery.TIMESTAMP_REPORT_NAME
+    same_report.parent.mkdir(parents=True)
+    same_report.write_text("valid", encoding="utf-8")
     different = _session(dataset_root, "20260914_101000_session2")
     different_mocap = different / "mocap-old"
     different_mocap.mkdir()
@@ -150,9 +159,11 @@ def test_recovery_plan_skips_same_name_and_includes_frame_difference(
     assert [(item.target.session_dir, item.candidate.path.name) for item in plan.skipped_same_name] == [
         (same, "mocap-same")
     ]
+    assert plan.skipped_same_name[0].target.report_paths == (same_report,)
     assert [(item.target.session_dir, item.candidate.path.name) for item in plan.matches] == [
         (different, "mocap-new")
     ]
+    assert same_report.is_file()
 
 
 def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -> None:
@@ -165,11 +176,15 @@ def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -
     (first / "a.trc").write_text("a", encoding="utf-8")
     (second / "b.bvh").write_text("b", encoding="utf-8")
     (candidate / "new.csv").write_text("new", encoding="utf-8")
+    report = session / "_artifacts" / "segment1" / "inspection" / recovery.TIMESTAMP_REPORT_NAME
+    report.parent.mkdir(parents=True)
+    report.write_text("stale", encoding="utf-8")
     match = recovery.RecoveryMatch(
         recovery.RecoveryTarget(
             session,
             _utc_datetime("20260914_100000"),
             (first, second),
+            (report,),
         ),
         recovery.MocapCandidate(candidate, _utc_datetime("20260914_100000")),
         0.0,
@@ -187,6 +202,7 @@ def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -
     assert not first.exists()
     assert not second.exists()
     assert (copied / "new.csv").read_text(encoding="utf-8") == "new"
+    assert not report.exists()
     copy_events = [event for event in events if event[0] == "copy_bytes"]
     assert copy_events[0][1:3] == (0, 3)
     assert copy_events[-1][1:3] == (3, 3)
@@ -204,11 +220,15 @@ def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
     (first / "a.trc").write_text("a", encoding="utf-8")
     (second / "b.bvh").write_text("b", encoding="utf-8")
     (candidate / "new.csv").write_text("new", encoding="utf-8")
+    report = session / "_artifacts" / "segment1" / "inspection" / recovery.TIMESTAMP_REPORT_NAME
+    report.parent.mkdir(parents=True)
+    report.write_text("stale", encoding="utf-8")
     match = recovery.RecoveryMatch(
         recovery.RecoveryTarget(
             session,
             _utc_datetime("20260914_100000"),
             (first, second),
+            (report,),
         ),
         recovery.MocapCandidate(candidate, _utc_datetime("20260914_100000")),
         0.0,
@@ -229,6 +249,7 @@ def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
     assert (first / "a.trc").read_text(encoding="utf-8") == "a"
     assert (second / "b.bvh").read_text(encoding="utf-8") == "b"
     assert not (session / "mocap-new").exists()
+    assert report.read_text(encoding="utf-8") == "stale"
 
 
 def test_session_utc_matches_creation_time_in_utc_plus_8(tmp_path: Path, monkeypatch) -> None:

@@ -69,7 +69,7 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "待匹配 Mocap 根目录" in config
     assert "预览 Mocap 匹配" in config
     assert "复制匹配的 Mocap 文件夹" in config
-    assert "确认删除并替换预览中列出的现有 mocap* 文件夹" in config
+    assert "确认删除/替换预览中的现有 mocap* 文件夹和失效检查报告" in config
     assert "Mocap 补回输出" in config
     assert "批量上传无差帧 Session" in config
     assert "每个上传批次的 Session 数" in config
@@ -133,6 +133,9 @@ def test_mocap_recovery_preview_streams_progress(tmp_path) -> None:
     candidate.mkdir(parents=True)
     (session / "robocap_segment1_video_left.mp4").write_bytes(b"video")
     (candidate / "body.trc").write_text("data", encoding="utf-8")
+    report = session / "_artifacts" / "segment1" / "inspection" / "timestamp_anomaly_detail_table.html"
+    report.parent.mkdir(parents=True)
+    report.write_text("stale", encoding="utf-8")
 
     snapshots = list(web_app.preview_mocap_recovery(dataset_root, source_root, "中文"))
 
@@ -141,6 +144,7 @@ def test_mocap_recovery_preview_streams_progress(tmp_path) -> None:
     assert "扫描与匹配完成" in snapshots[-1]
     assert "Mocap 补回匹配" in snapshots[-1]
     assert "session_utc=" in snapshots[-1]
+    assert "将删除失效检查报告" in snapshots[-1]
 
 
 def test_web_main_selects_an_available_system_port(monkeypatch) -> None:

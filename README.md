@@ -189,7 +189,9 @@ times are displayed in UTC+08:00, and timezone-aware instants are compared. Defi
 differences. Preview shows every delta and every directory replacement before copying. If the
 matched candidate has the same directory name as the existing `mocap*`, it is skipped. Otherwise,
 the existing directory is transactionally replaced by a complete copy after explicit confirmation;
-copy failure restores the original directory. A Session with multiple `mocap*` directories is also
+all timestamp inspection HTML reports under that Session's `_artifacts` are invalidated so Statistics
+can rebuild them. Reports are backed up during copying and restored together with the original Mocap
+directories if copying fails. A Session with multiple `mocap*` directories is also
 recovered: all existing directories are listed in preview, then replaced by the one matched
 candidate. Unparseable times and unmatched items remain for manual review. Source and dataset roots
 may not overlap, and source data is never moved or deleted. The final output section always lists
