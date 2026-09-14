@@ -175,12 +175,21 @@ def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -
         0.0,
     )
 
-    copied = recovery.copy_recovery_match(match)
+    events: list[tuple[str, int, int | None, str]] = []
+    copied = recovery.copy_recovery_match(
+        match,
+        lambda stage, current, total, detail: events.append(
+            (stage, current, total, detail)
+        ),
+    )
 
     assert copied == session / "mocap-new"
     assert not first.exists()
     assert not second.exists()
     assert (copied / "new.csv").read_text(encoding="utf-8") == "new"
+    copy_events = [event for event in events if event[0] == "copy_bytes"]
+    assert copy_events[0][1:3] == (0, 3)
+    assert copy_events[-1][1:3] == (3, 3)
 
 
 def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
@@ -241,3 +250,29 @@ def test_session_utc_matches_creation_time_in_utc_plus_8(tmp_path: Path, monkeyp
     assert session_time == datetime(2026, 9, 14, 10, 0, tzinfo=UTC)
     assert creation_time.isoformat() == "2026-09-14T18:00:00+08:00"
     assert (session_time - creation_time).total_seconds() == 0
+
+
+def test_recovery_plan_reports_scan_and_matching_progress(tmp_path: Path) -> None:
+    dataset_root = tmp_path / "dataset"
+    source_root = tmp_path / "source"
+    dataset_root.mkdir()
+    source_root.mkdir()
+    session = _session(dataset_root, "20260914_100000_session1")
+    candidate = source_root / "nested" / "mocap-candidate"
+    candidate.mkdir(parents=True)
+    (candidate / "body.trc").write_text("data", encoding="utf-8")
+    events: list[tuple[str, int, int | None, str]] = []
+
+    recovery.build_recovery_plan(
+        dataset_root,
+        source_root,
+        [session],
+        lambda stage, current, total, detail: events.append(
+            (stage, current, total, detail)
+        ),
+    )
+
+    assert any(stage == "session" and current == total == 1 for stage, current, total, _ in events)
+    assert any(stage == "candidate_scan" for stage, *_ in events)
+    assert any(stage == "candidate" and "mocap-candidate" in detail for stage, _, _, detail in events)
+    assert any(stage == "matching" and current == total for stage, current, total, _ in events)

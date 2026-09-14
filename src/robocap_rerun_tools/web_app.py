@@ -2420,7 +2420,11 @@ def _mocap_recovery_report(
     return "\n".join(lines)
 
 
-def _build_web_mocap_recovery_plan(dataset_root: object, source_root: object):
+def _build_web_mocap_recovery_plan(
+    dataset_root: object,
+    source_root: object,
+    progress=None,
+):
     from robocap_rerun_tools.mocap_recovery import build_recovery_plan
 
     root = dataset_root_path(dataset_root)
@@ -2428,16 +2432,196 @@ def _build_web_mocap_recovery_plan(dataset_root: object, source_root: object):
     if not source_text:
         raise ValueError("Mocap recovery source root is required.")
     source = Path(source_text).expanduser().resolve()
-    return root, source, build_recovery_plan(root, source, discover_session_directories(root))
+    sessions = discover_session_directories(root)
+    return root, source, build_recovery_plan(root, source, sessions, progress)
+
+
+def _format_mocap_recovery_progress(
+    stage: str,
+    current: int,
+    total: int | None,
+    detail: str,
+    *,
+    language: str,
+) -> str:
+    is_chinese = language == "中文"
+    prefix = f"[{current}/{total}]" if total is not None else f"[{current}]"
+    if stage == "session":
+        status, name = detail.split("|", 1)
+        labels = {
+            "clean": ("无需补回", "clean"),
+            "target": ("待补回", "recovery target"),
+            "unparseable": ("时间戳无法解析", "timestamp unparseable"),
+        }
+        label = labels[status][0 if is_chinese else 1]
+        return f"{prefix} {'扫描 Session' if is_chinese else 'Scan Session'}: {name} | {label}"
+    if stage == "candidate_scan":
+        return f"{prefix} {'扫描候选目录' if is_chinese else 'Scan candidate directory'}: {detail}"
+    if stage == "candidate":
+        status, path = detail.split("|", 1)
+        label = (
+            "可用候选"
+            if status == "usable" and is_chinese
+            else "usable candidate"
+            if status == "usable"
+            else "缺少 TRC/BVH/CSV"
+            if is_chinese
+            else "missing TRC/BVH/CSV"
+        )
+        return f"{prefix} {label}: {path}"
+    if stage == "matching":
+        return f"{prefix} {'建立一对一匹配' if is_chinese else 'Build one-to-one matches'}: {detail}"
+    return f"{prefix} {stage}: {detail}"
+
+
+def _stream_web_mocap_recovery_plan(
+    dataset_root: object,
+    source_root: object,
+    language: str,
+) -> Generator[str, None, tuple[Path, Path, object, tuple[str, ...]]]:
+    events: queue.Queue[tuple[str, int, int | None, str]] = queue.Queue(maxsize=512)
+    outcome: dict[str, object] = {}
+    history: deque[str] = deque(maxlen=STREAM_LOG_MAX_LINES)
+    started = time.monotonic()
+
+    def progress(stage: str, current: int, total: int | None, detail: str) -> None:
+        events.put((stage, current, total, detail))
+
+    def worker() -> None:
+        try:
+            outcome["result"] = _build_web_mocap_recovery_plan(
+                dataset_root,
+                source_root,
+                progress,
+            )
+        except Exception as exc:  # noqa: BLE001 - propagate worker failures to the Web generator.
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=worker, name="mocap-recovery-scan", daemon=True)
+    thread.start()
+    current_line = ""
+    while thread.is_alive() or not events.empty():
+        try:
+            event = events.get(timeout=0.2)
+        except queue.Empty:
+            elapsed = time.monotonic() - started
+            heartbeat = (
+                f"运行中，已用时 {elapsed:.1f}s"
+                if language == "中文"
+                else f"Running, elapsed {elapsed:.1f}s"
+            )
+            yield "\n".join((*history, current_line, heartbeat)).strip()
+            continue
+        drained = [event]
+        while True:
+            try:
+                drained.append(events.get_nowait())
+            except queue.Empty:
+                break
+        for stage, current, total, detail in drained:
+            formatted = _format_mocap_recovery_progress(
+                stage,
+                current,
+                total,
+                detail,
+                language=language,
+            )
+            if stage == "candidate_scan":
+                current_line = formatted
+            else:
+                history.append(formatted)
+        elapsed = time.monotonic() - started
+        status = (
+            f"扫描中，已用时 {elapsed:.1f}s"
+            if language == "中文"
+            else f"Scanning, elapsed {elapsed:.1f}s"
+        )
+        yield "\n".join((*history, current_line, status)).strip()
+
+    thread.join()
+    error = outcome.get("error")
+    if error is not None:
+        raise error
+    root, source, plan = outcome["result"]
+    history.append("扫描与匹配完成。" if language == "中文" else "Scan and matching complete.")
+    return root, source, plan, tuple(history)
 
 
 def preview_mocap_recovery(
     dataset_root: object,
     source_root: object,
     language: str = "中文",
-) -> str:
-    root, source, plan = _build_web_mocap_recovery_plan(dataset_root, source_root)
-    return _mocap_recovery_report(plan, root, source, language=language)
+) -> Iterator[str]:
+    root, source, plan, progress_log = yield from _stream_web_mocap_recovery_plan(
+        dataset_root,
+        source_root,
+        language,
+    )
+    yield "\n".join(
+        (*progress_log, "", _mocap_recovery_report(plan, root, source, language=language))
+    )
+
+
+def _stream_mocap_recovery_copy(
+    match: object,
+    history: deque[str],
+    language: str,
+) -> Generator[str, None, Path]:
+    from robocap_rerun_tools.mocap_recovery import copy_recovery_match
+
+    events: queue.Queue[tuple[int, int | None, str]] = queue.Queue(maxsize=128)
+    outcome: dict[str, object] = {}
+    started = time.monotonic()
+
+    def progress(stage: str, current: int, total: int | None, detail: str) -> None:
+        if stage == "copy_bytes":
+            events.put((current, total, detail))
+
+    def worker() -> None:
+        try:
+            outcome["result"] = copy_recovery_match(match, progress)
+        except Exception as exc:  # noqa: BLE001 - propagate worker failures to the Web generator.
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=worker, name="mocap-recovery-copy", daemon=True)
+    thread.start()
+    current_line = ""
+    while thread.is_alive() or not events.empty():
+        try:
+            event = events.get(timeout=0.2)
+        except queue.Empty:
+            elapsed = time.monotonic() - started
+            heartbeat = (
+                f"复制中，已用时 {elapsed:.1f}s"
+                if language == "中文"
+                else f"Copying, elapsed {elapsed:.1f}s"
+            )
+            yield "\n".join((*history, current_line, heartbeat)).strip()
+            continue
+        while True:
+            try:
+                event = events.get_nowait()
+            except queue.Empty:
+                break
+        current, total, detail = event
+        total_bytes = total or 0
+        percent = 100.0 if total_bytes == 0 else current * 100.0 / total_bytes
+        current_line = (
+            f"复制 {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | "
+            f"{detail}"
+            if language == "中文"
+            else (
+                f"Copy {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | "
+                f"{detail}"
+            )
+        )
+        yield "\n".join((*history, current_line)).strip()
+
+    thread.join()
+    error = outcome.get("error")
+    if error is not None:
+        raise error
+    return outcome["result"]
 
 
 def copy_mocap_recovery(
@@ -2446,9 +2630,11 @@ def copy_mocap_recovery(
     confirm_replace: bool,
     language: str = "中文",
 ) -> Iterator[str]:
-    from robocap_rerun_tools.mocap_recovery import copy_recovery_match
-
-    root, source, plan = _build_web_mocap_recovery_plan(dataset_root, source_root)
+    root, source, plan, progress_log = yield from _stream_web_mocap_recovery_plan(
+        dataset_root,
+        source_root,
+        language,
+    )
     replacements = [match for match in plan.matches if match.target.existing_directories]
     if replacements and not confirm_replace:
         message = (
@@ -2459,14 +2645,32 @@ def copy_mocap_recovery(
                 "confirm replacement first."
             )
         )
-        yield f"{_mocap_recovery_report(plan, root, source, language=language)}\n\n{message}"
+        yield "\n".join(
+            (
+                *progress_log,
+                "",
+                _mocap_recovery_report(plan, root, source, language=language),
+                "",
+                message,
+            )
+        )
         return
     copied = 0
-    copy_log: list[str] = []
-    yield _mocap_recovery_report(plan, root, source, language=language)
+    copy_log: deque[str] = deque(progress_log, maxlen=STREAM_LOG_MAX_LINES)
+    yield "\n".join(
+        (*copy_log, "", _mocap_recovery_report(plan, root, source, language=language))
+    )
     for index, match in enumerate(plan.matches, start=1):
+        copy_log.append(
+            f"[{index}/{len(plan.matches)}] 正在复制/替换：{match.target.session_dir.name}"
+            if language == "中文"
+            else f"[{index}/{len(plan.matches)}] Copy/replace: {match.target.session_dir.name}"
+        )
+        yield "\n".join(
+            (*copy_log, "", _mocap_recovery_report(plan, root, source, language=language))
+        )
         try:
-            destination = copy_recovery_match(match)
+            destination = yield from _stream_mocap_recovery_copy(match, copy_log, language)
         except (OSError, ValueError) as exc:
             copy_log.append(f"FAILED {match.target.session_dir}: {exc}")
         else:

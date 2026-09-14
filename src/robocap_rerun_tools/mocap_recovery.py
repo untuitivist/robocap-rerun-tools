@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ SESSION_TIMESTAMP_PATTERN = re.compile(r"(?<!\d)(\d{8}_\d{6})(?!\d)")
 SESSION_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 CREATION_TIMEZONE = timezone(timedelta(hours=8), name="UTC+08:00")
 MOTION_SUFFIXES = frozenset({".trc", ".bvh", ".csv"})
+RecoveryProgress = Callable[[str, int, int | None, str], None]
 
 
 @dataclass(frozen=True)
@@ -88,19 +90,28 @@ def session_has_frame_count_difference(session_dir: Path) -> bool:
     return False
 
 
-def discover_candidate_directories(root: Path) -> tuple[tuple[MocapCandidate, ...], tuple[Path, ...]]:
+def discover_candidate_directories(
+    root: Path,
+    progress: RecoveryProgress | None = None,
+) -> tuple[tuple[MocapCandidate, ...], tuple[Path, ...]]:
     candidates: list[MocapCandidate] = []
     without_motion: list[Path] = []
-    for current, directory_names, _ in os.walk(root):
+    for scanned, (current, directory_names, _) in enumerate(os.walk(root), start=1):
         current_path = Path(current)
+        if progress is not None:
+            progress("candidate_scan", scanned, None, str(current_path))
         mocap_names = [name for name in directory_names if is_mocap_directory_name(name)]
         directory_names[:] = [name for name in directory_names if name not in mocap_names]
         for name in mocap_names:
             path = (current_path / name).resolve()
             if contains_motion_file(path):
                 candidates.append(MocapCandidate(path, candidate_creation_time(path)))
+                status = "usable"
             else:
                 without_motion.append(path)
+                status = "no_motion"
+            if progress is not None:
+                progress("candidate", len(candidates) + len(without_motion), None, f"{status}|{path}")
     return (
         tuple(sorted(candidates, key=lambda item: (item.created_at, str(item.path).casefold()))),
         tuple(sorted(without_motion, key=lambda path: str(path).casefold())),
@@ -124,6 +135,7 @@ def build_recovery_plan(
     dataset_root: Path,
     source_root: Path,
     sessions: list[Path],
+    progress: RecoveryProgress | None = None,
 ) -> RecoveryPlan:
     dataset_root = dataset_root.expanduser().resolve()
     source_root = source_root.expanduser().resolve()
@@ -134,7 +146,7 @@ def build_recovery_plan(
 
     targets: list[RecoveryTarget] = []
     unparseable: list[Path] = []
-    for session in sessions:
+    for index, session in enumerate(sessions, start=1):
         mocap_directories = discover_mocap_directories(session)
         has_motion = any(contains_motion_file(path) for path in mocap_directories)
         if (
@@ -142,10 +154,14 @@ def build_recovery_plan(
             and has_motion
             and not session_has_frame_count_difference(session)
         ):
+            if progress is not None:
+                progress("session", index, len(sessions), f"clean|{session.name}")
             continue
         timestamp = parse_session_timestamp(session)
         if timestamp is None:
             unparseable.append(session)
+            if progress is not None:
+                progress("session", index, len(sessions), f"unparseable|{session.name}")
             continue
         targets.append(
             RecoveryTarget(
@@ -154,8 +170,17 @@ def build_recovery_plan(
                 existing_directories=tuple(mocap_directories),
             )
         )
+        if progress is not None:
+            progress("session", index, len(sessions), f"target|{session.name}")
 
-    candidates, without_motion = discover_candidate_directories(source_root)
+    candidates, without_motion = discover_candidate_directories(source_root, progress)
+    if progress is not None:
+        progress(
+            "matching",
+            0,
+            len(targets) * len(candidates),
+            f"targets={len(targets)}|candidates={len(candidates)}",
+        )
     available_targets = set(range(len(targets)))
     available_candidates = set(range(len(candidates)))
     matched_pairs: list[RecoveryMatch] = []
@@ -176,6 +201,8 @@ def build_recovery_plan(
         )
         available_targets.remove(target_index)
         available_candidates.remove(candidate_index)
+    if progress is not None:
+        progress("matching", len(pairs), len(pairs), f"matched={len(matched_pairs)}")
 
     matches: list[RecoveryMatch] = []
     skipped_same_name: list[RecoveryMatch] = []
@@ -208,14 +235,51 @@ def copy_conflicts(match: RecoveryMatch) -> tuple[Path, ...]:
     return (destination,) if destination.exists() and destination.resolve() not in existing else ()
 
 
-def copy_recovery_match(match: RecoveryMatch) -> Path:
+def _copy_candidate_directory(
+    source: Path,
+    destination: Path,
+    progress: RecoveryProgress | None,
+) -> None:
+    if progress is None:
+        shutil.copytree(source, destination, copy_function=shutil.copy2)
+        return
+
+    files = [path for path in source.rglob("*") if path.is_file()]
+    total_bytes = sum(path.stat().st_size for path in files)
+    copied_bytes = 0
+    progress("copy_bytes", 0, total_bytes, str(source))
+
+    def copy_file(source_file: str, destination_file: str) -> str:
+        nonlocal copied_bytes
+        source_path = Path(source_file)
+        destination_path = Path(destination_file)
+        with source_path.open("rb") as reader, destination_path.open("wb") as writer:
+            while chunk := reader.read(4 * 1024 * 1024):
+                writer.write(chunk)
+                copied_bytes += len(chunk)
+                progress(
+                    "copy_bytes",
+                    copied_bytes,
+                    total_bytes,
+                    str(source_path.relative_to(source)),
+                )
+        shutil.copystat(source_path, destination_path)
+        return str(destination_path)
+
+    shutil.copytree(source, destination, copy_function=copy_file)
+
+
+def copy_recovery_match(
+    match: RecoveryMatch,
+    progress: RecoveryProgress | None = None,
+) -> Path:
     conflicts = copy_conflicts(match)
     if conflicts:
         raise FileExistsError(f"Refusing to overwrite existing paths: {list(conflicts)}")
     destination = destination_for_match(match)
     existing = match.target.existing_directories
     if not existing:
-        shutil.copytree(match.candidate.path, destination, copy_function=shutil.copy2)
+        _copy_candidate_directory(match.candidate.path, destination, progress)
         return destination
 
     backups: list[tuple[Path, Path]] = []
@@ -228,7 +292,7 @@ def copy_recovery_match(match: RecoveryMatch) -> Path:
             directory.rename(backup)
             backups.append((directory, backup))
         copy_started = True
-        shutil.copytree(match.candidate.path, destination, copy_function=shutil.copy2)
+        _copy_candidate_directory(match.candidate.path, destination, progress)
     except BaseException:
         if copy_started and destination.exists():
             shutil.rmtree(destination)

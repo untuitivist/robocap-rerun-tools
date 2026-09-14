@@ -193,7 +193,9 @@ copy failure restores the original directory. A Session with multiple `mocap*` d
 recovered: all existing directories are listed in preview, then replaced by the one matched
 candidate. Unparseable times and unmatched items remain for manual review. Source and dataset roots
 may not overlap, and source data is never moved or deleted. The final output section always lists
-candidate `mocap*` directories without TRC/CSV/BVH.
+candidate `mocap*` directories without TRC/CSV/BVH. Preview and copy actions stream bounded progress
+logs while scanning Sessions, traversing the candidate root, building matches, and replacing each
+Session, so large directory trees do not leave the Web output idle.
 
 Duration uses the same total, error-free, with-errors, and unchecked summary, where error-free plus
 with-errors equals total and unchecked is a subset of with-errors. Error-type durations sum the

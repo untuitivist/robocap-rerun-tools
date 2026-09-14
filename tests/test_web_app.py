@@ -116,6 +116,25 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
         assert concurrent_functions[function_name] == ("modelscope-upload", 1)
 
 
+def test_mocap_recovery_preview_streams_progress(tmp_path) -> None:
+    dataset_root = tmp_path / "dataset"
+    source_root = tmp_path / "source"
+    session = dataset_root / "20260914_100000_session1"
+    candidate = source_root / "exports" / "mocap-candidate"
+    session.mkdir(parents=True)
+    candidate.mkdir(parents=True)
+    (session / "robocap_segment1_video_left.mp4").write_bytes(b"video")
+    (candidate / "body.trc").write_text("data", encoding="utf-8")
+
+    snapshots = list(web_app.preview_mocap_recovery(dataset_root, source_root, "中文"))
+
+    assert len(snapshots) >= 2
+    assert any("扫描 Session" in snapshot for snapshot in snapshots[:-1])
+    assert "扫描与匹配完成" in snapshots[-1]
+    assert "Mocap 补回匹配" in snapshots[-1]
+    assert "session_utc=" in snapshots[-1]
+
+
 def test_web_main_selects_an_available_system_port(monkeypatch) -> None:
     from robocap_rerun_tools import modelscope_publisher
 
