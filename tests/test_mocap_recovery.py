@@ -1,11 +1,11 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from robocap_rerun_tools import mocap_recovery as recovery
 
 
-def _local_datetime(value: str) -> datetime:
-    return datetime.strptime(value, "%Y%m%d_%H%M%S").astimezone()
+def _utc_datetime(value: str) -> datetime:
+    return datetime.strptime(value, "%Y%m%d_%H%M%S").replace(tzinfo=UTC)
 
 
 def _session(root: Path, name: str) -> Path:
@@ -46,9 +46,9 @@ def test_recovery_plan_matches_nearest_candidates_and_copies_without_removing_so
     (unused / "body.bvh").write_text("unused", encoding="utf-8")
     (invalid / "notes.txt").write_text("invalid", encoding="utf-8")
     creation_times = {
-        "mocap-first": _local_datetime("20260914_100100"),
-        "Mocap-second": _local_datetime("20260914_100900"),
-        "mocap-unused": _local_datetime("20260914_120000"),
+        "mocap-first": _utc_datetime("20260914_100100"),
+        "Mocap-second": _utc_datetime("20260914_100900"),
+        "mocap-unused": _utc_datetime("20260914_120000"),
     }
     monkeypatch.setattr(
         recovery,
@@ -101,12 +101,12 @@ def test_recovery_copy_replaces_existing_directory_with_different_name(tmp_path:
     (destination / "body.trc").write_text("old", encoding="utf-8")
     target = recovery.RecoveryTarget(
         tmp_path / "session",
-        _local_datetime("20260914_100000"),
+        _utc_datetime("20260914_100000"),
         (destination,),
     )
     match = recovery.RecoveryMatch(
         target,
-        recovery.MocapCandidate(source, _local_datetime("20260914_100000")),
+        recovery.MocapCandidate(source, _utc_datetime("20260914_100000")),
         0.0,
     )
 
@@ -139,8 +139,8 @@ def test_recovery_plan_skips_same_name_and_includes_frame_difference(
         candidate.mkdir()
         (candidate / "body.csv").write_text("new", encoding="utf-8")
     creation_times = {
-        "mocap-same": _local_datetime("20260914_100001"),
-        "mocap-new": _local_datetime("20260914_101001"),
+        "mocap-same": _utc_datetime("20260914_100001"),
+        "mocap-new": _utc_datetime("20260914_101001"),
     }
     monkeypatch.setattr(recovery, "candidate_creation_time", lambda path: creation_times[path.name])
     monkeypatch.setattr(recovery, "session_has_frame_count_difference", lambda _path: True)
@@ -168,10 +168,10 @@ def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -
     match = recovery.RecoveryMatch(
         recovery.RecoveryTarget(
             session,
-            _local_datetime("20260914_100000"),
+            _utc_datetime("20260914_100000"),
             (first, second),
         ),
-        recovery.MocapCandidate(candidate, _local_datetime("20260914_100000")),
+        recovery.MocapCandidate(candidate, _utc_datetime("20260914_100000")),
         0.0,
     )
 
@@ -198,10 +198,10 @@ def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
     match = recovery.RecoveryMatch(
         recovery.RecoveryTarget(
             session,
-            _local_datetime("20260914_100000"),
+            _utc_datetime("20260914_100000"),
             (first, second),
         ),
-        recovery.MocapCandidate(candidate, _local_datetime("20260914_100000")),
+        recovery.MocapCandidate(candidate, _utc_datetime("20260914_100000")),
         0.0,
     )
 
@@ -220,3 +220,24 @@ def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
     assert (first / "a.trc").read_text(encoding="utf-8") == "a"
     assert (second / "b.bvh").read_text(encoding="utf-8") == "b"
     assert not (session / "mocap-new").exists()
+
+
+def test_session_utc_matches_creation_time_in_utc_plus_8(tmp_path: Path, monkeypatch) -> None:
+    session = tmp_path / "20260914_100000_session1"
+    candidate = tmp_path / "mocap-candidate"
+    candidate.mkdir()
+    east_8 = timezone(timedelta(hours=8))
+    creation_timestamp = datetime(2026, 9, 14, 18, 0, tzinfo=east_8).timestamp()
+
+    class Stat:
+        st_birthtime = creation_timestamp
+        st_ctime = creation_timestamp
+
+    monkeypatch.setattr(Path, "stat", lambda _self: Stat())
+
+    session_time = recovery.parse_session_timestamp(session)
+    creation_time = recovery.candidate_creation_time(candidate)
+
+    assert session_time == datetime(2026, 9, 14, 10, 0, tzinfo=UTC)
+    assert creation_time.isoformat() == "2026-09-14T18:00:00+08:00"
+    assert (session_time - creation_time).total_seconds() == 0

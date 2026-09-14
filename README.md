@@ -184,7 +184,8 @@ workflows.
 The Statistics tab can recover missing Mocap directories from a separate candidate root. It
 recursively discovers `mocap*` directories containing TRC/CSV/BVH and globally pairs them one-to-one
 with deficient Sessions by nearest filesystem creation time to the Session name's
-`YYYYMMDD_HHMMSS`. Deficient Sessions include missing motion files and inspected frame-count
+`YYYYMMDD_HHMMSS`. Session-name timestamps are interpreted as UTC; candidate filesystem creation
+times are displayed in UTC+08:00, and timezone-aware instants are compared. Deficient Sessions include missing motion files and inspected frame-count
 differences. Preview shows every delta and every directory replacement before copying. If the
 matched candidate has the same directory name as the existing `mocap*`, it is skipped. Otherwise,
 the existing directory is transactionally replaced by a complete copy after explicit confirmation;

@@ -5,13 +5,14 @@ import re
 import shutil
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from .session_layout import discover_mocap_directories, is_mocap_directory_name
 
 SESSION_TIMESTAMP_PATTERN = re.compile(r"(?<!\d)(\d{8}_\d{6})(?!\d)")
 SESSION_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
+CREATION_TIMEZONE = timezone(timedelta(hours=8), name="UTC+08:00")
 MOTION_SUFFIXES = frozenset({".trc", ".bvh", ".csv"})
 
 
@@ -57,7 +58,7 @@ def parse_session_timestamp(session_dir: Path) -> datetime | None:
     if match is None:
         return None
     try:
-        return datetime.strptime(match.group(1), SESSION_TIMESTAMP_FORMAT).astimezone()
+        return datetime.strptime(match.group(1), SESSION_TIMESTAMP_FORMAT).replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -65,7 +66,7 @@ def parse_session_timestamp(session_dir: Path) -> datetime | None:
 def candidate_creation_time(directory: Path) -> datetime:
     stat = directory.stat()
     timestamp = getattr(stat, "st_birthtime", stat.st_ctime)
-    return datetime.fromtimestamp(timestamp, UTC).astimezone()
+    return datetime.fromtimestamp(timestamp, UTC).astimezone(CREATION_TIMEZONE)
 
 
 def session_has_frame_count_difference(session_dir: Path) -> bool:

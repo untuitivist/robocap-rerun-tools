@@ -377,9 +377,10 @@ LANGUAGE_PACKS = {
         "statistics_mocap_metadata_update": "Batch update remote Mocap metadata",
         "statistics_recovery_help": (
             "Match Sessions with missing, unusable, frame-mismatched, or multiple mocap directories "
-            "to `mocap*` directories under another root. Session `YYYYMMDD_HHMMSS` is compared with "
-            "each folder's filesystem creation time. Each candidate is used at most once. Preview "
-            "the directories to be deleted, then explicitly confirm replacement."
+            "to `mocap*` directories under another root. Session `YYYYMMDD_HHMMSS` is UTC and is "
+            "compared with each folder's filesystem creation time shown in UTC+08:00. Each candidate "
+            "is used at most once. Preview the directories to be deleted, then explicitly confirm "
+            "replacement."
         ),
         "statistics_recovery_source": "Mocap recovery source root",
         "statistics_recovery_preview": "Preview Mocap matches",
@@ -540,8 +541,8 @@ LANGUAGE_PACKS = {
         "statistics_mocap_metadata_update": "批量更新远端 Mocap 元数据",
         "statistics_recovery_help": (
             "为没有 mocap*、mocap* 中没有 TRC/BVH/CSV、帧数不对齐或存在多个 mocap* 的 Session，"
-            "从另一目录递归寻找候选。使用 Session 名称中的 `YYYYMMDD_HHMMSS` 与文件夹创建时间"
-            "匹配，每个候选只使用一次。请先预览将删除的目录，再明确勾选确认并替换。"
+            "从另一目录递归寻找候选。Session 名称中的 `YYYYMMDD_HHMMSS` 按 UTC 解释，文件夹创建"
+            "时间按东八区显示后比较，每个候选只使用一次。请先预览将删除的目录，再明确勾选确认并替换。"
         ),
         "statistics_recovery_source": "待匹配 Mocap 根目录",
         "statistics_recovery_preview": "预览 Mocap 匹配",
@@ -2359,6 +2360,8 @@ def _mocap_recovery_report(
             f"[{index}/{len(plan.matches)}] "
             f"{_mocap_recovery_path_label(match.target.session_dir, dataset_root)} <- "
             f"{_mocap_recovery_path_label(match.candidate.path, source_root)} | "
+            f"session_utc={match.target.session_timestamp.isoformat()} | "
+            f"candidate_created={match.candidate.created_at.isoformat()} | "
             f"delta={match.delta_seconds:.3f}s | {mode} -> {destination}"
         )
     if plan.skipped_same_name:
@@ -2367,6 +2370,8 @@ def _mocap_recovery_report(
             lines.append(
                 f"- {_mocap_recovery_path_label(match.target.session_dir, dataset_root)} | "
                 f"{match.target.existing_directories[0]} == {match.candidate.path.name} | "
+                f"session_utc={match.target.session_timestamp.isoformat()} | "
+                f"candidate_created={match.candidate.created_at.isoformat()} | "
                 f"delta={match.delta_seconds:.3f}s"
             )
     if copy_log:
