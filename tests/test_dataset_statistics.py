@@ -236,21 +236,24 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         "0.00% | `" in markdown
     )
     assert '"session-clean": "00:00:10.000"' in markdown
-    assert "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown
+    assert "{Session: [异常s](未检查原因, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown
     assert '"session-clean": ["正常"]' in markdown
     assert '"session-problem": ["mocap少帧"]' in markdown
-    assert '"session-missing": ["未检查"]' in markdown
+    assert '"session-missing": ["mocap中没有TRC/BVH/CSV"]' in markdown
     assert '- Session 统计：`{"全部": 3, "无误": 1, "有错误": 2, "未检查": 1}`' in markdown
     assert (
         '- 时长统计：`{"全部": "00:00:30.000", "无误": "00:00:10.000", '
         '"有错误": "00:00:20.000", "未检查": "00:00:10.000"}`' in markdown
     )
     assert (
-        '- 错误类型 Session 统计：`{"未检查": 1, "mocap多帧": 0, '
+        '- 错误类型 Session 统计：`{"没有mocap文件夹": 0, '
+        '"mocap中没有TRC/BVH/CSV": 1, "有动捕文件但没有有效检查报告": 0, "mocap多帧": 0, '
         '"mocap少帧": 1, "第三人称多帧": 0, "第三人称少帧": 0}`' in markdown
     )
     assert (
-        '- 错误类型时长统计：`{"未检查": "00:00:10.000", '
+        '- 错误类型时长统计：`{"没有mocap文件夹": "00:00:00.000", '
+        '"mocap中没有TRC/BVH/CSV": "00:00:10.000", '
+        '"有动捕文件但没有有效检查报告": "00:00:00.000", '
         '"mocap多帧": "00:00:00.000", "mocap少帧": "00:00:10.000", '
         '"第三人称多帧": "00:00:00.000", "第三人称少帧": "00:00:00.000"}`'
         in markdown
@@ -259,6 +262,56 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert "错误类型时长统计 |" not in markdown
     assert "Session 统计（全部/无误/有错误/未检查）" not in markdown
     assert "错误类型 Session 统计 |" not in markdown
+
+
+def test_unchecked_statistics_distinguish_mocap_availability(
+    tmp_path: Path, monkeypatch
+) -> None:
+    no_directory = tmp_path / "session-no-directory"
+    no_motion_file = tmp_path / "session-no-motion-file"
+    no_report = tmp_path / "session-no-report"
+    for session in (no_directory, no_motion_file, no_report):
+        session.mkdir()
+        (session / "robocap_segment1_video_left.mp4").write_bytes(b"")
+    (no_motion_file / "mocap-empty").mkdir()
+    nested = no_report / "mocap-recording" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "body.TRC").write_text("Frame#\tTime\n", encoding="utf-8")
+    monkeypatch.setattr(statistics, "probe_video_duration", lambda path, ffprobe: (5.0, None))
+
+    sessions = tuple(
+        statistics.summarize_session(tmp_path, session, "ffprobe")
+        for session in (no_directory, no_motion_file, no_report)
+    )
+
+    assert [statistics.session_unchecked_reason(session) for session in sessions] == [
+        "missing_mocap_directory",
+        "missing_mocap_motion_file",
+        "missing_valid_inspection",
+    ]
+    assert [statistics.session_frame_anomaly_labels(session, language="中文") for session in sessions] == [
+        ("没有mocap文件夹",),
+        ("mocap中没有TRC/BVH/CSV",),
+        ("有动捕文件但没有有效检查报告",),
+    ]
+    assert statistics.session_anomaly_count_summary(sessions, language="中文") == {
+        "没有mocap文件夹": 1,
+        "mocap中没有TRC/BVH/CSV": 1,
+        "有动捕文件但没有有效检查报告": 1,
+        "mocap多帧": 0,
+        "mocap少帧": 0,
+        "第三人称多帧": 0,
+        "第三人称少帧": 0,
+    }
+    assert statistics.session_anomaly_duration_summary(sessions, language="中文") == {
+        "没有mocap文件夹": "00:00:05.000",
+        "mocap中没有TRC/BVH/CSV": "00:00:05.000",
+        "有动捕文件但没有有效检查报告": "00:00:05.000",
+        "mocap多帧": "00:00:00.000",
+        "mocap少帧": "00:00:00.000",
+        "第三人称多帧": "00:00:00.000",
+        "第三人称少帧": "00:00:00.000",
+    }
 
 
 def test_format_error_free_ratio_handles_zero_total() -> None:

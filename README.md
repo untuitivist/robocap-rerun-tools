@@ -176,6 +176,11 @@ unchecked remains a diagnostic subset. A separate error-type count shows how man
 unchecked, Mocap extra/missing, or third-person extra/missing results, while the per-Session mapping
 continues to identify the affected recordings.
 
+Unchecked Sessions are classified by their current source state: no direct `mocap*` directory, no
+TRC/BVH/CSV recursively under a discovered `mocap*` directory, or motion files present without a
+valid inspection report. Mocap directory discovery uses the same case-insensitive rule as the other
+workflows.
+
 Duration uses the same total, error-free, with-errors, and unchecked summary, where error-free plus
 with-errors equals total and unchecked is a subset of with-errors. Error-type durations sum the
 Robocap reference-video duration of affected Segments. Because one Segment can have multiple error

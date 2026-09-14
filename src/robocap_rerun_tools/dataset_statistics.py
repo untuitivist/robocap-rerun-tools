@@ -25,6 +25,12 @@ FRAME_ANOMALY_ORDER = (
     "third_person_extra",
     "third_person_missing",
 )
+MOCAP_INSPECTION_SUFFIXES = frozenset({".trc", ".bvh", ".csv"})
+UNCHECKED_REASON_ORDER = (
+    "missing_mocap_directory",
+    "missing_mocap_motion_file",
+    "missing_valid_inspection",
+)
 
 
 @dataclass(frozen=True)
@@ -379,6 +385,33 @@ def _markdown_cell(value: str) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
 
 
+def session_unchecked_reason(session: SessionStatistic) -> str:
+    mocap_directories = discover_mocap_directories(session.session_dir)
+    if not mocap_directories:
+        return "missing_mocap_directory"
+    if not any(
+        path.is_file() and path.suffix.casefold() in MOCAP_INSPECTION_SUFFIXES
+        for directory in mocap_directories
+        for path in directory.rglob("*")
+    ):
+        return "missing_mocap_motion_file"
+    return "missing_valid_inspection"
+
+
+def unchecked_reason_labels(language: str) -> dict[str, str]:
+    if language == "中文":
+        return {
+            "missing_mocap_directory": "没有mocap文件夹",
+            "missing_mocap_motion_file": "mocap中没有TRC/BVH/CSV",
+            "missing_valid_inspection": "有动捕文件但没有有效检查报告",
+        }
+    return {
+        "missing_mocap_directory": "missing mocap directory",
+        "missing_mocap_motion_file": "no TRC/BVH/CSV in mocap",
+        "missing_valid_inspection": "motion file exists but no valid inspection report",
+    }
+
+
 def session_frame_anomaly_labels(
     session: SessionStatistic,
     *,
@@ -394,7 +427,8 @@ def session_frame_anomaly_labels(
     anomaly_codes = {anomaly for segment in session.segments for anomaly in segment.frame_anomalies}
     values = [labels[anomaly] for anomaly in FRAME_ANOMALY_ORDER if anomaly in anomaly_codes]
     if not session.segments or any(segment.status == "unchecked" for segment in session.segments):
-        values.insert(0, "未检查" if is_chinese else "unchecked")
+        reason = session_unchecked_reason(session)
+        values.insert(0, unchecked_reason_labels(language)[reason])
     if not values:
         values.append("正常" if is_chinese else "normal")
     return tuple(values)
@@ -452,16 +486,11 @@ def session_anomaly_count_summary(
     language: str,
 ) -> dict[str, int]:
     is_chinese = language == "中文"
-    error_labels = (
-        ("未检查", "mocap多帧", "mocap少帧", "第三人称多帧", "第三人称少帧")
+    reason_labels = unchecked_reason_labels(language)
+    error_labels = tuple(reason_labels[code] for code in UNCHECKED_REASON_ORDER) + (
+        ("mocap多帧", "mocap少帧", "第三人称多帧", "第三人称少帧")
         if is_chinese
-        else (
-            "unchecked",
-            "mocap extra",
-            "mocap missing",
-            "third-person extra",
-            "third-person missing",
-        )
+        else ("mocap extra", "mocap missing", "third-person extra", "third-person missing")
     )
     normal_label = "正常" if is_chinese else "normal"
     counts: Counter[str] = Counter({label: 0 for label in error_labels})
@@ -481,7 +510,7 @@ def session_anomaly_duration_summary(
 ) -> dict[str, str]:
     is_chinese = language == "中文"
     labels = {
-        "unchecked": "未检查" if is_chinese else "unchecked",
+        **unchecked_reason_labels(language),
         "mocap_extra": "mocap多帧" if is_chinese else "mocap extra",
         "mocap_missing": "mocap少帧" if is_chinese else "mocap missing",
         "third_person_extra": "第三人称多帧" if is_chinese else "third-person extra",
@@ -489,10 +518,11 @@ def session_anomaly_duration_summary(
     }
     durations = {code: 0.0 for code in labels}
     for session in sessions:
+        unchecked_reason = session_unchecked_reason(session)
         for segment in session.segments:
             duration_s = segment.duration_s or 0.0
             if segment.status == "unchecked":
-                durations["unchecked"] += duration_s
+                durations[unchecked_reason] += duration_s
             for anomaly in segment.frame_anomalies:
                 durations[anomaly] += duration_s
     return {labels[code]: format_duration(durations[code]) for code in labels}
@@ -560,7 +590,8 @@ def render_statistics_markdown(
             (
                 "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
                 "{Session: Session 时长} | "
-                "{Session: [异常s](正常, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)} |"
+                "{Session: [异常s](未检查原因, mocap多帧, mocap少帧, "
+                "第三人称多帧, 第三人称少帧)} |"
             ),
             "|---|---:|---:|---:|---:|---:|---|---|",
         ]
@@ -604,7 +635,7 @@ def render_statistics_markdown(
                 "| Primitive | Unchecked duration | Frame-count-difference duration | "
                 "Error-free duration | Total duration | Error-free ratio | "
                 "{Session: duration} | "
-                "{Session: [anomalies](normal, mocap extra, mocap missing, "
+                "{Session: [anomalies](unchecked reason, mocap extra, mocap missing, "
                 "third-person extra, third-person missing)} |"
             ),
             "|---|---:|---:|---:|---:|---:|---|---|",
@@ -670,7 +701,8 @@ def render_statistics_markdown(
                     "= 总时长。时间戳 diff、推算丢帧、缺失时间戳和 frame_index 等其他问题不改变"
                     "这项帧数分类。每个 Segment 只使用一条 Robocap "
                     "参考视频计时。异常列表按每个 Segment 的实际帧数与期望帧数比较后，在 Session "
-                    "内取并集；缺失或无效报告显示为“未检查”。"
+                    "内取并集；未检查会进一步区分没有 mocap 文件夹、mocap 中没有 TRC/BVH/CSV，"
+                    "以及已有动捕文件但没有有效检查报告。"
                     "错误类型时长按受影响 Segment 的 Robocap 参考视频时长累计；同一 Segment "
                     "若有多种错误会分别计入，所以各错误类型时长不能相加作为有错误时长。"
                 ),
@@ -689,7 +721,8 @@ def render_statistics_markdown(
                     "and frame-index findings do not change this frame-count classification. Each "
                     "segment is timed from one Robocap reference video. The "
                     "anomaly list compares actual and expected frame counts per Segment, then "
-                    "takes their union per Session; missing or invalid reports are unchecked."
+                    "takes their union per Session. Unchecked results distinguish a missing mocap "
+                    "directory, no TRC/BVH/CSV in mocap, and motion files without a valid report."
                     " Error-type durations sum the Robocap reference-video duration of affected "
                     "segments. A segment with multiple errors contributes to each type, so these "
                     "type durations must not be added together as the with-errors duration."
