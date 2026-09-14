@@ -181,6 +181,19 @@ TRC/BVH/CSV recursively under a discovered `mocap*` directory, or motion files p
 valid inspection report. Mocap directory discovery uses the same case-insensitive rule as the other
 workflows.
 
+The Statistics tab can recover missing Mocap directories from a separate candidate root. It
+recursively discovers `mocap*` directories containing TRC/CSV/BVH and globally pairs them one-to-one
+with deficient Sessions by nearest filesystem creation time to the Session name's
+`YYYYMMDD_HHMMSS`. Deficient Sessions include missing motion files and inspected frame-count
+differences. Preview shows every delta and every directory replacement before copying. If the
+matched candidate has the same directory name as the existing `mocap*`, it is skipped. Otherwise,
+the existing directory is transactionally replaced by a complete copy after explicit confirmation;
+copy failure restores the original directory. A Session with multiple `mocap*` directories is also
+recovered: all existing directories are listed in preview, then replaced by the one matched
+candidate. Unparseable times and unmatched items remain for manual review. Source and dataset roots
+may not overlap, and source data is never moved or deleted. The final output section always lists
+candidate `mocap*` directories without TRC/CSV/BVH.
+
 Duration uses the same total, error-free, with-errors, and unchecked summary, where error-free plus
 with-errors equals total and unchecked is a subset of with-errors. Error-type durations sum the
 Robocap reference-video duration of affected Segments. Because one Segment can have multiple error

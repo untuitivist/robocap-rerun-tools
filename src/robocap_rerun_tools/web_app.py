@@ -375,6 +375,19 @@ LANGUAGE_PACKS = {
         ),
         "statistics_mocap_metadata_refresh": "Scan Mocap naming metadata",
         "statistics_mocap_metadata_update": "Batch update remote Mocap metadata",
+        "statistics_recovery_help": (
+            "Match Sessions with missing, unusable, frame-mismatched, or multiple mocap directories "
+            "to `mocap*` directories under another root. Session `YYYYMMDD_HHMMSS` is compared with "
+            "each folder's filesystem creation time. Each candidate is used at most once. Preview "
+            "the directories to be deleted, then explicitly confirm replacement."
+        ),
+        "statistics_recovery_source": "Mocap recovery source root",
+        "statistics_recovery_preview": "Preview Mocap matches",
+        "statistics_recovery_copy": "Copy matched Mocap directories",
+        "statistics_recovery_confirm_replace": (
+            "Confirm deleting and replacing the existing mocap* directories listed in preview"
+        ),
+        "statistics_recovery_output": "Mocap recovery output",
         "statistics_batch_help": (
             "Batch upload reads remote metadata, then checks each matching Session's manifest, "
             "declared files, counts, and byte sizes without downloading large capture files. The "
@@ -525,6 +538,16 @@ LANGUAGE_PACKS = {
         ),
         "statistics_mocap_metadata_refresh": "扫描 Mocap 命名元数据",
         "statistics_mocap_metadata_update": "批量更新远端 Mocap 元数据",
+        "statistics_recovery_help": (
+            "为没有 mocap*、mocap* 中没有 TRC/BVH/CSV、帧数不对齐或存在多个 mocap* 的 Session，"
+            "从另一目录递归寻找候选。使用 Session 名称中的 `YYYYMMDD_HHMMSS` 与文件夹创建时间"
+            "匹配，每个候选只使用一次。请先预览将删除的目录，再明确勾选确认并替换。"
+        ),
+        "statistics_recovery_source": "待匹配 Mocap 根目录",
+        "statistics_recovery_preview": "预览 Mocap 匹配",
+        "statistics_recovery_copy": "复制匹配的 Mocap 文件夹",
+        "statistics_recovery_confirm_replace": "确认删除并替换预览中列出的现有 mocap* 文件夹",
+        "statistics_recovery_output": "Mocap 补回输出",
         "statistics_batch_help": (
             "批量上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
             "文件数量和字节数；不会为此下载大型采集文件。日期框默认填入本地当天的 `YYYYMMDD`，"
@@ -2286,6 +2309,178 @@ def batch_update_remote_mocap_metadata(
     yield "\n".join(history)
 
 
+def _mocap_recovery_path_label(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return str(path)
+
+
+def _mocap_recovery_report(
+    plan: object,
+    dataset_root: Path,
+    source_root: Path,
+    *,
+    language: str,
+    copied: int = 0,
+    copy_log: tuple[str, ...] = (),
+) -> str:
+    from robocap_rerun_tools.mocap_recovery import destination_for_match
+
+    is_chinese = language == "中文"
+    lines = [
+        "Mocap 补回匹配" if is_chinese else "Mocap recovery matches",
+        f"Session 根目录：{dataset_root}" if is_chinese else f"Session root: {dataset_root}",
+        f"候选根目录：{source_root}" if is_chinese else f"Candidate root: {source_root}",
+        (
+            f"待复制/替换：{len(plan.matches)}；同名跳过：{len(plan.skipped_same_name)}；"
+            f"已完成：{copied}"
+            if is_chinese
+            else (
+                f"Pending copy/replace: {len(plan.matches)}; same-name skipped: "
+                f"{len(plan.skipped_same_name)}; completed: {copied}"
+            )
+        ),
+        "",
+    ]
+    for index, match in enumerate(plan.matches, start=1):
+        existing = match.target.existing_directories
+        mode = (
+            f"删除并替换现有目录 {', '.join(str(path) for path in existing)}"
+            if existing and is_chinese
+            else f"delete and replace existing directories {', '.join(str(path) for path in existing)}"
+            if existing
+            else "复制整个文件夹"
+            if is_chinese
+            else "copy complete directory"
+        )
+        destination = destination_for_match(match)
+        lines.append(
+            f"[{index}/{len(plan.matches)}] "
+            f"{_mocap_recovery_path_label(match.target.session_dir, dataset_root)} <- "
+            f"{_mocap_recovery_path_label(match.candidate.path, source_root)} | "
+            f"delta={match.delta_seconds:.3f}s | {mode} -> {destination}"
+        )
+    if plan.skipped_same_name:
+        lines.extend(["", "同名跳过：" if is_chinese else "Same-name matches skipped:"])
+        for match in plan.skipped_same_name:
+            lines.append(
+                f"- {_mocap_recovery_path_label(match.target.session_dir, dataset_root)} | "
+                f"{match.target.existing_directories[0]} == {match.candidate.path.name} | "
+                f"delta={match.delta_seconds:.3f}s"
+            )
+    if copy_log:
+        lines.extend(["", "复制日志：" if is_chinese else "Copy log:"])
+        lines.extend(f"- {item}" for item in copy_log)
+
+    sections = (
+        ("未匹配 Session", "Unmatched Sessions", plan.unmatched_sessions),
+        (
+            "时间戳无法解析的 Session",
+            "Sessions with unparseable timestamps",
+            plan.unparseable_sessions,
+        ),
+        (
+            "未使用但包含 TRC/BVH/CSV 的候选",
+            "Unused candidates containing TRC/BVH/CSV",
+            plan.unmatched_candidates,
+        ),
+    )
+    for chinese_title, english_title, values in sections:
+        title = chinese_title if is_chinese else english_title
+        lines.extend(["", f"{title}（{len(values)}）："])
+        for value in values:
+            path = value.path if hasattr(value, "path") else value
+            root = source_root if hasattr(value, "path") else dataset_root
+            lines.append(f"- {_mocap_recovery_path_label(path, root)}")
+
+    # Keep this final so operators can copy the requested manual-review list directly.
+    lines.extend(
+        [
+            "",
+            (
+                f"候选中没有 TRC/CSV/BVH 的 mocap* 文件夹（{len(plan.candidates_without_motion)}）："
+                if is_chinese
+                else (
+                    "Candidate mocap* directories without TRC/CSV/BVH "
+                    f"({len(plan.candidates_without_motion)}):"
+                )
+            ),
+        ]
+    )
+    lines.extend(
+        f"- {_mocap_recovery_path_label(path, source_root)}"
+        for path in plan.candidates_without_motion
+    )
+    return "\n".join(lines)
+
+
+def _build_web_mocap_recovery_plan(dataset_root: object, source_root: object):
+    from robocap_rerun_tools.mocap_recovery import build_recovery_plan
+
+    root = dataset_root_path(dataset_root)
+    source_text = str(source_root or "").strip()
+    if not source_text:
+        raise ValueError("Mocap recovery source root is required.")
+    source = Path(source_text).expanduser().resolve()
+    return root, source, build_recovery_plan(root, source, discover_session_directories(root))
+
+
+def preview_mocap_recovery(
+    dataset_root: object,
+    source_root: object,
+    language: str = "中文",
+) -> str:
+    root, source, plan = _build_web_mocap_recovery_plan(dataset_root, source_root)
+    return _mocap_recovery_report(plan, root, source, language=language)
+
+
+def copy_mocap_recovery(
+    dataset_root: object,
+    source_root: object,
+    confirm_replace: bool,
+    language: str = "中文",
+) -> Iterator[str]:
+    from robocap_rerun_tools.mocap_recovery import copy_recovery_match
+
+    root, source, plan = _build_web_mocap_recovery_plan(dataset_root, source_root)
+    replacements = [match for match in plan.matches if match.target.existing_directories]
+    if replacements and not confirm_replace:
+        message = (
+            "存在需要删除并替换的现有 mocap* 文件夹。请先预览列表并勾选替换确认。"
+            if language == "中文"
+            else (
+                "Existing mocap* directories must be deleted and replaced. Preview the list and "
+                "confirm replacement first."
+            )
+        )
+        yield f"{_mocap_recovery_report(plan, root, source, language=language)}\n\n{message}"
+        return
+    copied = 0
+    copy_log: list[str] = []
+    yield _mocap_recovery_report(plan, root, source, language=language)
+    for index, match in enumerate(plan.matches, start=1):
+        try:
+            destination = copy_recovery_match(match)
+        except (OSError, ValueError) as exc:
+            copy_log.append(f"FAILED {match.target.session_dir}: {exc}")
+        else:
+            copied += 1
+            copy_log.append(
+                f"[{index}/{len(plan.matches)}] 已复制到 {destination}"
+                if language == "中文"
+                else f"[{index}/{len(plan.matches)}] copied to {destination}"
+            )
+        yield _mocap_recovery_report(
+            plan,
+            root,
+            source,
+            language=language,
+            copied=copied,
+            copy_log=tuple(copy_log),
+        )
+
+
 def calculate_dataset_statistics(
     dataset_root: object,
     mocap_ratio: int,
@@ -3381,6 +3576,12 @@ def language_updates(language: str):
         gr.update(value=labels["statistics_mocap_metadata_refresh"]),
         gr.update(value=labels["statistics_mocap_metadata_update"]),
         gr.update(label=labels["statistics_mocap_metadata"]),
+        gr.update(value=labels["statistics_recovery_help"]),
+        gr.update(label=labels["statistics_recovery_source"]),
+        gr.update(value=labels["statistics_recovery_preview"]),
+        gr.update(value=labels["statistics_recovery_copy"]),
+        gr.update(label=labels["statistics_recovery_confirm_replace"]),
+        gr.update(label=labels["statistics_recovery_output"]),
         gr.update(value=labels["statistics_batch_help"]),
         gr.update(label=labels["statistics_upload_date"]),
         gr.update(label=labels["statistics_skip_existing"]),
@@ -3680,6 +3881,45 @@ def build_app():
                 type="array",
                 interactive=True,
                 label=labels["statistics_mocap_metadata"],
+            )
+            statistics_recovery_help = gr.Markdown(labels["statistics_recovery_help"])
+            with gr.Row():
+                statistics_recovery_source = gr.Textbox(
+                    label=labels["statistics_recovery_source"],
+                    placeholder=r"Z:\path\to\exported_mocap_folders",
+                    scale=4,
+                )
+                statistics_recovery_preview = gr.Button(
+                    labels["statistics_recovery_preview"], scale=1
+                )
+                statistics_recovery_copy = gr.Button(
+                    labels["statistics_recovery_copy"], variant="primary", scale=1
+                )
+            statistics_recovery_confirm_replace = gr.Checkbox(
+                value=False,
+                label=labels["statistics_recovery_confirm_replace"],
+            )
+            statistics_recovery_output = gr.Textbox(
+                label=labels["statistics_recovery_output"], lines=18
+            )
+            statistics_recovery_preview.click(
+                preview_mocap_recovery,
+                inputs=[dataset_root, statistics_recovery_source, language],
+                outputs=statistics_recovery_output,
+                concurrency_id="analysis",
+                concurrency_limit=1,
+            )
+            statistics_recovery_copy.click(
+                copy_mocap_recovery,
+                inputs=[
+                    dataset_root,
+                    statistics_recovery_source,
+                    statistics_recovery_confirm_replace,
+                    language,
+                ],
+                outputs=statistics_recovery_output,
+                concurrency_id="analysis",
+                concurrency_limit=1,
             )
             statistics_event.then(
                 statistics_mocap_metadata_rows,
@@ -4116,6 +4356,12 @@ def build_app():
                 statistics_mocap_metadata_refresh,
                 statistics_mocap_metadata_update,
                 statistics_mocap_metadata,
+                statistics_recovery_help,
+                statistics_recovery_source,
+                statistics_recovery_preview,
+                statistics_recovery_copy,
+                statistics_recovery_confirm_replace,
+                statistics_recovery_output,
                 statistics_batch_help,
                 statistics_upload_date,
                 statistics_skip_existing,
