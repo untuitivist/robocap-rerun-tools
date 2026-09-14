@@ -265,7 +265,7 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
   raw_calibration/                       # 必需：由独立标定流程维护
     <device_id>/                         # 通过明确的 device ID 查找
   EgoMotionActions/                      # 工具生成的动作数据
-    <YYYYMMDD>/                          # 新上传按上传电脑本地日期归档
+    <YYYYMMDD>/                          # Session UTC 时间转东八区日期；无时间戳时用手动回退值
       <primitive_id>/                    # [A-Z]+<任意位数字> 惯例或自定义动作名称
         <session_id>/
           robocap_<segment>_video_*.mp4       # 必需：六路第一人称相机
@@ -339,7 +339,8 @@ robocap-rerun modelscope-stage Z:\DATASETS\Frodobots\nokov\20260803_081935_sessi
 robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
 
-上传开始时，所有待上传 Session 按上传电脑的本地日期归档到
+统计页批量上传默认开启日期自动匹配：Session 名中的时间按 UTC 解析并转换为东八区日期；无时间戳时
+使用可编辑日期框的回退值。不同日期先分组，再按批次大小拆分。上传后归档到
 `EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`，精确 ISO 开始时间保留在
 `upload_batch_created_at`。工具会在传输前原子更新 `manifest.json` 与 `metadata.jsonl`；传输失败后
 重试会复用原日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。`_prepared/` 不会上传。

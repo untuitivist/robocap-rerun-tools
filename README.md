@@ -214,8 +214,10 @@ metadata` updates the matching remote `metadata.jsonl` row and Session `manifest
 one ModelScope commit. Session and Mocap-directory cells are stable local identifiers; the operation
 does not rename directories, move remote data, or upload videos.
 
-The same tab uploads clean Sessions in configurable batches. Its `YYYYMMDD` field starts with the uploader's local
-date and can be edited; every Session in that run uses the selected date. It first reads the target
+The same tab uploads clean Sessions in configurable batches. Its `YYYYMMDD` field starts with the
+current UTC+08:00 date and can be edited. Auto-match is enabled by default: a timestamped Session name
+is parsed as UTC and converted to its UTC+08:00 calendar date; the field is used as fallback when a
+timestamp is absent. Candidates are grouped by date before applying the configured batch size. It first reads the target
 repository's remote `metadata.jsonl`. `Skip complete existing remote Sessions` is enabled by default.
 For each matching `(primitive_id, session_id)`, the tool downloads only its small manifest and checks
 the remote report, every declared file, file count, and byte size against that manifest and metadata;
@@ -281,7 +283,7 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
   raw_calibration/                       # required: maintained by calibration workflow
     <device_id>/                         # files are resolved by explicit device ID
   EgoMotionActions/                      # generated action data
-    <YYYYMMDD>/                          # selected upload date; defaults to uploader-local date
+    <YYYYMMDD>/                          # Session UTC time converted to UTC+08:00, or manual fallback
       <primitive_id>/                    # [A-Z]+<digits> convention or a custom action name
         <session_id>/
           robocap_<segment>_video_*.mp4       # required: six first-person cameras
@@ -397,11 +399,11 @@ that have not changed:
 robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 ```
 
-Use `--upload-date YYYYMMDD` to select the destination date explicitly. The Statistics tab always
-passes the value shown in its upload-date field.
+Use `--upload-date YYYYMMDD` to select the destination date explicitly. The Statistics tab passes
+either each Session's auto-matched UTC+08:00 date or the value shown in its fallback date field.
 
-When upload starts, every pending session receives the selected date, which defaults to the uploader's
-local date, and is moved to `EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`. The exact ISO
+When upload starts, every pending session receives its resolved date and is moved to
+`EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/`. The exact ISO
 start time remains in `upload_batch_created_at`. The manifest and `metadata.jsonl` paths are updated
 atomically before transfer. If transfer fails, retrying reuses the assigned date. Legacy
 `YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. `_prepared/` is excluded from

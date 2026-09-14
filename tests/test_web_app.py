@@ -75,6 +75,14 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "每个上传批次的 Session 数" in config
     assert config.count("上传任务输出") == 2
     assert "上传日期（YYYYMMDD）" in config
+    assert "按 Session 时间自动匹配上传日期（UTC 转东八区；无时间戳时使用日期框）" in config
+    auto_upload_date = next(
+        component
+        for component in config_data["components"]
+        if component.get("props", {}).get("label")
+        == "按 Session 时间自动匹配上传日期（UTC 转东八区；无时间戳时使用日期框）"
+    )
+    assert auto_upload_date["props"]["value"] is True
     assert "跳过远端已有且完整的 Session" in config
     skip_existing = next(
         component
@@ -433,6 +441,59 @@ def test_modelscope_upload_date_defaults_to_today_and_accepts_manual(monkeypatch
         web_app.resolve_modelscope_upload_date("2026-09-01")
 
 
+def test_session_upload_date_converts_utc_to_utc_plus_8_and_falls_back(tmp_path) -> None:
+    before_midnight = tmp_path / "20260914_155959_session1"
+    after_midnight = tmp_path / "20260914_160000_session2"
+    no_timestamp = tmp_path / "session3"
+
+    assert web_app.resolve_session_upload_date(before_midnight, "20260801", True) == (
+        "20260914",
+        True,
+    )
+    assert web_app.resolve_session_upload_date(after_midnight, "20260801", True) == (
+        "20260915",
+        True,
+    )
+    assert web_app.resolve_session_upload_date(no_timestamp, "20260801", True) == (
+        "20260801",
+        False,
+    )
+    assert web_app.resolve_session_upload_date(after_midnight, "20260801", False) == (
+        "20260801",
+        False,
+    )
+
+
+def test_batch_upload_candidates_never_mix_resolved_dates(tmp_path) -> None:
+    def candidate(index: int, upload_date: str) -> web_app.BatchUploadCandidate:
+        return web_app.BatchUploadCandidate(
+            session=tmp_path / f"session-{index}",
+            primitive="P01",
+            session_id=f"session-{index}",
+            mocap_files=(),
+            is_replacement=False,
+            upload_date=upload_date,
+            upload_date_is_automatic=True,
+        )
+
+    batches = web_app.group_batch_upload_candidates(
+        [
+            candidate(1, "20260914"),
+            candidate(2, "20260915"),
+            candidate(3, "20260914"),
+            candidate(4, "20260914"),
+        ],
+        2,
+    )
+
+    assert [[item.session_id for item in batch] for batch in batches] == [
+        ["session-1", "session-3"],
+        ["session-4"],
+        ["session-2"],
+    ]
+    assert all(len({item.upload_date for item in batch}) == 1 for batch in batches)
+
+
 @pytest.mark.parametrize(
     ("batch_size", "upload_workers"),
     [(0, "auto"), (1.5, "auto"), (10, "0"), (10, "2.5")],
@@ -457,7 +518,7 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
 ) -> None:
     from robocap_rerun_tools import cli, dataset_statistics, modelscope_publisher
 
-    session = tmp_path / "EgoMotionActions" / "P01" / "session-uploaded"
+    session = tmp_path / "EgoMotionActions" / "P01" / "20260831_163000_session-uploaded"
     mocap = session / "mocap"
     mocap.mkdir(parents=True)
     (session / "robocap_segment1_video_left.mp4").write_bytes(b"raw-video")
@@ -480,8 +541,8 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
             sessions=(
                 modelscope_publisher.RemoteSessionIntegrity(
                     "P01",
-                    "session-uploaded",
-                    "EgoMotionActions/20260828/P01/session-uploaded",
+                    "20260831_163000_session-uploaded",
+                    "EgoMotionActions/20260828/P01/20260831_163000_session-uploaded",
                     "20260828",
                     True,
                 ),
@@ -528,8 +589,9 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
             8,
             True,
             "中文",
-            "20260901",
+            "20260828",
             False,
+            auto_match_upload_date=True,
         )
     )
 

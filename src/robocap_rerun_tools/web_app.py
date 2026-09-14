@@ -185,8 +185,10 @@ failed transfer reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain 
 The Statistics tab also uploads clean Sessions sequentially. It reads remote `metadata.jsonl` first,
 then verifies each matching Session against its remote manifest and declared file sizes without
 downloading large capture files.
-The upload date field is initialized to the uploader's current local `YYYYMMDD` and remains editable;
-every Session in one run uses that date. Existing `(primitive_id, session_id)` entries are skipped by
+The upload date field is initialized to the current UTC+08:00 `YYYYMMDD` and remains editable. Batch
+upload auto-matches each timestamped Session by converting its UTC name to UTC+08:00; the field is
+the fallback for names without timestamps. Batches never mix dates. Existing
+`(primitive_id, session_id)` entries are skipped by
 default only when their manifest, required report, declared files, counts, and byte sizes all match.
 Incomplete entries are re-uploaded for repair. Clearing the skip option uploads complete entries again
 too and replaces their metadata rows. If a different date is selected, the prior remote directory is
@@ -315,8 +317,9 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 日期 `YYYYMMDD`，并移动到 `EgoMotionActions/<日期>/<动作>/<session>/`；完整开始时间仍保存在元数据
 中，传输失败后重试会复用该日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。
 "统计"页还提供 clean Session 分批上传。它先读取远端 `metadata.jsonl`，然后按 manifest 声明核对
-匹配 Session 的远端文件、数量和字节数，不下载大型采集文件。上传日期框默认填入上传电脑本地当天的
-`YYYYMMDD`，允许手工修改；同一次运行的所有 Session 使用同一个日期。默认开启"跳过远端已有且
+匹配 Session 的远端文件、数量和字节数，不下载大型采集文件。上传日期框默认填入东八区当天的
+`YYYYMMDD`，允许手工修改。批量上传默认把 Session 名中的 UTC 时间转为东八区日期；无时间戳时
+回退到日期框，不同日期不会混入同一批次。默认开启"跳过远端已有且
 完整的 Session"；不完整项会自动重新上传修复。关闭后，远端完整项也会重新上传并替换同键元数据。
 若改用其他日期，旧远端目录不会自动删除。各 Session 必须满足精确帧数关系，使用默认 Mocap 文件且
 不带 RRD。批次大小默认 10；填 1 时逐个上传，大于等于候选总数时全量作为一批。当前批上传时后台
@@ -392,8 +395,10 @@ LANGUAGE_PACKS = {
         "statistics_batch_help": (
             "Batch upload reads remote metadata, then checks each matching Session's manifest, "
             "declared files, counts, and byte sizes without downloading large capture files. The "
-            "editable date is initialized to today's local `YYYYMMDD`, and every Session in this run "
-            "uses it. Only complete existing Sessions are skipped by default; incomplete Sessions are "
+            "editable date is initialized to today's UTC+08:00 `YYYYMMDD`. Auto-match converts each "
+            "timestamped Session name from UTC to UTC+08:00; the field is the fallback, and different "
+            "dates use separate batches. Only complete existing Sessions are skipped by default; "
+            "incomplete Sessions are "
             "re-uploaded for repair. Clear the skip option to re-upload complete Sessions too and "
             "replace matching metadata rows. A different date leaves the old remote directory "
             "untouched. Each selected Session must satisfy `n:ratio*(n+1):n+1`. Batch size `1` "
@@ -404,6 +409,9 @@ LANGUAGE_PACKS = {
             "is skipped. BVH/CSV/TRC/MP4 are selected except `unnamed`; RRD is excluded."
         ),
         "statistics_upload_date": "Upload date (YYYYMMDD)",
+        "statistics_auto_upload_date": (
+            "Auto-match each Session date (UTC to UTC+08:00; date field is fallback)"
+        ),
         "statistics_skip_existing": "Skip complete existing remote Sessions",
         "statistics_batch_size": "Sessions per upload batch",
         "statistics_upload_workers": "Upload workers",
@@ -551,8 +559,9 @@ LANGUAGE_PACKS = {
         "statistics_recovery_output": "Mocap 补回输出",
         "statistics_batch_help": (
             "批量上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
-            "文件数量和字节数；不会为此下载大型采集文件。日期框默认填入本地当天的 `YYYYMMDD`，"
-            "允许修改；本次所有 Session 使用同一日期。默认只跳过远端已有且完整的 Session；远端"
+            "文件数量和字节数；不会为此下载大型采集文件。日期框默认填入东八区当天的 `YYYYMMDD`，"
+            "允许修改。自动匹配会把 Session 名中的 UTC 时间换算为东八区日期；无时间戳时使用日期框，"
+            "不同日期分开成批。默认只跳过远端已有且完整的 Session；远端"
             "不完整项会重新上传修复。取消勾选后，完整项也会重新上传并替换同键元数据。改用其他"
             "日期不会删除旧远端目录。选中的 Session 必须满足 `n:ratio*(n+1):n+1`。批次大小为 "
             "`1` 时逐个提交，大于等于候选总数时全量一次提交，默认 `10`。当前批次上传时会在后台"
@@ -561,6 +570,9 @@ LANGUAGE_PACKS = {
             "并排除 `unnamed`，不包含 RRD。"
         ),
         "statistics_upload_date": "上传日期（YYYYMMDD）",
+        "statistics_auto_upload_date": (
+            "按 Session 时间自动匹配上传日期（UTC 转东八区；无时间戳时使用日期框）"
+        ),
         "statistics_skip_existing": "跳过远端已有且完整的 Session",
         "statistics_batch_size": "每个上传批次的 Session 数",
         "statistics_upload_workers": "上传并发数",
@@ -701,6 +713,17 @@ class StreamCommandResult:
     returncode: int
     output: str
     rendered: str
+
+
+@dataclass(frozen=True)
+class BatchUploadCandidate:
+    session: Path
+    primitive: str
+    session_id: str
+    mocap_files: tuple[Path, ...]
+    is_replacement: bool
+    upload_date: str
+    upload_date_is_automatic: bool
 
 
 class LiveCommandOutput:
@@ -2902,7 +2925,9 @@ def validate_pending_modelscope_frame_counts(dataset_root: Path) -> tuple[str, .
 
 
 def current_modelscope_upload_date() -> str:
-    return datetime.now().astimezone().strftime("%Y%m%d")
+    from robocap_rerun_tools.mocap_recovery import CREATION_TIMEZONE
+
+    return datetime.now().astimezone(CREATION_TIMEZONE).strftime("%Y%m%d")
 
 
 def resolve_modelscope_upload_date(value: object | None) -> str:
@@ -2912,6 +2937,35 @@ def resolve_modelscope_upload_date(value: object | None) -> str:
     if not requested:
         raise ValueError("Upload date is required and must use YYYYMMDD.")
     return validate_upload_date(requested)
+
+
+def resolve_session_upload_date(
+    session: Path,
+    fallback_date: str,
+    automatic: bool,
+) -> tuple[str, bool]:
+    if not automatic:
+        return fallback_date, False
+    from robocap_rerun_tools.mocap_recovery import CREATION_TIMEZONE, parse_session_timestamp
+
+    timestamp = parse_session_timestamp(session)
+    if timestamp is None:
+        return fallback_date, False
+    return timestamp.astimezone(CREATION_TIMEZONE).strftime("%Y%m%d"), True
+
+
+def group_batch_upload_candidates(
+    candidates: list[BatchUploadCandidate],
+    batch_size: int,
+) -> list[list[BatchUploadCandidate]]:
+    by_date: dict[str, list[BatchUploadCandidate]] = {}
+    for candidate in candidates:
+        by_date.setdefault(candidate.upload_date, []).append(candidate)
+    return [
+        dated[index : index + batch_size]
+        for dated in by_date.values()
+        for index in range(0, len(dated), batch_size)
+    ]
 
 
 def bulk_upload_clean_modelscope_sessions(
@@ -2924,6 +2978,7 @@ def bulk_upload_clean_modelscope_sessions(
     rebuild_all_reports: bool = False,
     batch_size: object = 10,
     upload_workers: object = "auto",
+    auto_match_upload_date: bool = False,
 ) -> Iterator[str]:
     from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
@@ -3006,13 +3061,16 @@ def bulk_upload_clean_modelscope_sessions(
     add(f"统计根目录：{root}" if is_chinese else f"Statistics root: {root}")
     add(
         (
-            f"上传日期：{selected_upload_date}；"
+            f"上传日期：{'按 Session UTC 转东八区自动匹配' if auto_match_upload_date else selected_upload_date}；"
+            f"无时间戳回退日期：{selected_upload_date}；"
             "跳过远端已有且完整的 Session："
             f"{'是' if skip_existing else '否（完整项也重新上传并覆盖元数据）'}"
         )
         if is_chinese
         else (
-            f"Upload date: {selected_upload_date}; skip complete existing remote Sessions: "
+            f"Upload date: {'auto-match Session UTC to UTC+08:00' if auto_match_upload_date else selected_upload_date}; "
+            f"timestamp fallback date: {selected_upload_date}; "
+            "skip complete existing remote Sessions: "
             f"{'yes' if skip_existing else 'no (re-upload complete items and replace metadata)'}"
         )
     )
@@ -3227,7 +3285,7 @@ def bulk_upload_clean_modelscope_sessions(
             )
 
     ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
-    candidates: list[tuple[Path, str, str, list[Path], bool]] = []
+    candidates: list[BatchUploadCandidate] = []
     for index, (session, primitive, session_id) in enumerate(pending, start=1):
         add(
             f"[{index}/{len(pending)}] 筛选：{session.name}"
@@ -3251,10 +3309,25 @@ def bulk_upload_clean_modelscope_sessions(
             continue
         key = (primitive, session_id)
         is_replacement = key in remote_keys
-        candidates.append((session, primitive, session_id, mocap_files, is_replacement))
+        session_date, date_is_automatic = resolve_session_upload_date(
+            session,
+            selected_upload_date,
+            auto_match_upload_date,
+        )
+        candidates.append(
+            BatchUploadCandidate(
+                session=session,
+                primitive=primitive,
+                session_id=session_id,
+                mocap_files=tuple(mocap_files),
+                is_replacement=is_replacement,
+                upload_date=session_date,
+                upload_date_is_automatic=date_is_automatic,
+            )
+        )
         yield render()
 
-    replacement_count = sum(1 for item in candidates if item[4])
+    replacement_count = sum(1 for item in candidates if item.is_replacement)
     new_count = len(candidates) - replacement_count
     add(
         (
@@ -3269,9 +3342,13 @@ def bulk_upload_clean_modelscope_sessions(
             f"{len(remote_skipped)}; locally excluded: {len(excluded)}"
         )
     )
-    for session, primitive, session_id, _, is_replacement in candidates:
-        action = "replace" if is_replacement else "new"
-        add(f"+ {primitive}/{session_id}: {session} [{action}, date={selected_upload_date}]")
+    for candidate in candidates:
+        action = "replace" if candidate.is_replacement else "new"
+        date_source = "auto UTC+8" if candidate.upload_date_is_automatic else "fallback/manual"
+        add(
+            f"+ {candidate.primitive}/{candidate.session_id}: {candidate.session} "
+            f"[{action}, date={candidate.upload_date}, {date_source}]"
+        )
     for reason in excluded:
         add(f"- {reason}")
     yield render()
@@ -3284,22 +3361,21 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
 
-    batches = [
-        candidates[index : index + resolved_batch_size]
-        for index in range(0, len(candidates), resolved_batch_size)
-    ]
+    batches = group_batch_upload_candidates(candidates, resolved_batch_size)
     run_id = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
     event_queue: queue.Queue[str] = queue.Queue()
 
     def task_progress(scope: str):
         return lambda message: event_queue.put(f"[{scope}] {message}")
 
-    def prepare_batch(batch_index: int, items: list[tuple]):
+    def prepare_batch(batch_index: int, items: list[BatchUploadCandidate]):
         staged_root = root / "_modelscope_dataset" / "batches" / run_id / f"batch_{batch_index:04d}"
         prepared: list[tuple] = []
         failures: list[str] = []
         for item_index, item in enumerate(items, start=1):
-            session, primitive, session_id, mocap_files, _ = item
+            session = item.session
+            primitive = item.primitive
+            session_id = item.session_id
             scope = f"prepare {batch_index}/{len(batches)} {item_index}/{len(items)}"
             event_queue.put(f"[{scope}] {primitive}/{session_id} -> {staged_root}")
             try:
@@ -3307,7 +3383,7 @@ def bulk_upload_clean_modelscope_sessions(
                     session,
                     primitive,
                     dataset_root=staged_root,
-                    mocap_files=mocap_files,
+                    mocap_files=item.mocap_files,
                     progress=task_progress(scope),
                 )
                 prepared.append(item)
@@ -3323,16 +3399,27 @@ def bulk_upload_clean_modelscope_sessions(
                     )
             except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
                 failures.extend(
-                    f"{item[1]}/{item[2]}: batch validation failed ({exc})" for item in prepared
+                    f"{item.primitive}/{item.session_id}: batch validation failed ({exc})"
+                    for item in prepared
                 )
                 prepared = []
         return staged_root, prepared, failures
 
-    def upload_batch(batch_index: int, staged_root: Path, items: list[tuple]):
+    def upload_batch(
+        batch_index: int,
+        staged_root: Path,
+        items: list[BatchUploadCandidate],
+    ):
+        batch_upload_date = items[0].upload_date
+        if any(item.upload_date != batch_upload_date for item in items):
+            return ValueError(f"Upload batch {batch_index} contains multiple upload dates.")
         attempts = SEQUENTIAL_UPLOAD_RETRIES + 1
         for attempt in range(1, attempts + 1):
             scope = f"upload {batch_index}/{len(batches)} attempt {attempt}/{attempts}"
-            event_queue.put(f"[{scope}] {len(items)} Session(s), workers={workers_label}")
+            event_queue.put(
+                f"[{scope}] {len(items)} Session(s), date={batch_upload_date}, "
+                f"workers={workers_label}"
+            )
             try:
                 upload_staged_dataset(
                     load_staged_dataset(staged_root),
@@ -3340,7 +3427,7 @@ def bulk_upload_clean_modelscope_sessions(
                     settings=connection.settings,
                     api=connection.api,
                     username=connection.username,
-                    upload_date=selected_upload_date,
+                    upload_date=batch_upload_date,
                     max_workers=resolved_upload_workers,
                     progress=task_progress(scope),
                 )
@@ -3414,8 +3501,8 @@ def bulk_upload_clean_modelscope_sessions(
                         )
                     )
                 else:
-                    completed_replacements += sum(1 for item in prepared if item[4])
-                    completed_new += sum(1 for item in prepared if not item[4])
+                    completed_replacements += sum(1 for item in prepared if item.is_replacement)
+                    completed_new += sum(1 for item in prepared if not item.is_replacement)
                     add(
                         f"批次 {batch_index}/{len(batches)} 上传完成：{len(prepared)} 个 Session。"
                         if is_chinese
@@ -3793,6 +3880,7 @@ def language_updates(language: str):
         gr.update(label=labels["statistics_recovery_output"]),
         gr.update(value=labels["statistics_batch_help"]),
         gr.update(label=labels["statistics_upload_date"]),
+        gr.update(label=labels["statistics_auto_upload_date"]),
         gr.update(label=labels["statistics_skip_existing"]),
         gr.update(label=labels["statistics_batch_size"]),
         gr.update(label=labels["statistics_upload_workers"]),
@@ -4148,6 +4236,11 @@ def build_app():
                     placeholder="YYYYMMDD",
                     scale=2,
                 )
+                statistics_auto_upload_date = gr.Checkbox(
+                    label=labels["statistics_auto_upload_date"],
+                    value=True,
+                    scale=2,
+                )
                 statistics_skip_existing = gr.Checkbox(
                     label=labels["statistics_skip_existing"],
                     value=True,
@@ -4182,6 +4275,7 @@ def build_app():
                     statistics_rebuild_all,
                     statistics_batch_size,
                     statistics_upload_workers,
+                    statistics_auto_upload_date,
                 ],
                 outputs=statistics_upload_output,
                 concurrency_id="modelscope-upload",
@@ -4573,6 +4667,7 @@ def build_app():
                 statistics_recovery_output,
                 statistics_batch_help,
                 statistics_upload_date,
+                statistics_auto_upload_date,
                 statistics_skip_existing,
                 statistics_batch_size,
                 statistics_upload_workers,
