@@ -119,6 +119,23 @@ panels. A long upload therefore does not block inspection or statistics in the s
 ModelScope write operations remain serial to protect the remote metadata index. Concurrent work can
 still share disk bandwidth, especially when staging cannot use NTFS hard links and must copy files.
 
+The separate **Statistics Report** tab creates a shareable inventory under
+`_reports/statistics_report_<YYYYMMDD_HHMMSS>/`:
+
+- `statistics_report.html`: standalone offline overview with searchable Session, Segment,
+  inspection, and file tables.
+- `sessions.csv`: complete relative path, duration, status, UTC/UTC+8 capture time, parsed action
+  ID, collection index, participant, repetition count, and file summary.
+- `segments.csv`: reference video, duration, report path, status, and anomaly category per Segment.
+- `inspections.csv`: ratio, actual/expected frame counts, differences, parse errors, and scalar
+  inspection payload fields.
+- `files.csv`: every file's complete dataset-relative and Session-relative path, category, size,
+  extension, and UTC+8 modification time.
+- A sibling `statistics_report_<YYYYMMDD_HHMMSS>.zip` containing all five files above.
+
+Paths are relative to the selected dataset root, so equal basenames in different subdirectories
+remain distinguishable. Existing `_reports/` directories are excluded from later scans.
+
 At the top of the page, enter the directory that contains the recording collection and click
 `Scan sessions`. The scanner finds direct children and nested layouts such as
 `EgoMotionActions/<batch>/<primitive_id>/<session_id>`, then fills a searchable Session dropdown with

@@ -98,6 +98,22 @@ uv run python -m pytest -q
 
 ## Web 界面
 
+### 完整统计报告
+
+独立的 **统计报告** 页面会递归统计数据集根目录下识别到的全部 Session，并输出到
+`_reports/statistics_report_<YYYYMMDD_HHMMSS>/`：
+
+- `statistics_report.html`：完全离线、可搜索筛选的 Session、Segment、检查报告和文件总览。
+- `sessions.csv`：完整相对路径、时长、检查状态、UTC/东八区时间、动作编号、采集序号、参与者、
+  重复次数及文件汇总。
+- `segments.csv`：各 Segment 的参考视频、时长、检查报告路径、状态和异常类型。
+- `inspections.csv`：比例、实际/期望帧数、差值、解析错误和检查报告中的标量字段。
+- `files.csv`：每个文件相对于数据集根目录及 Session 的完整路径、分类、扩展名、大小和东八区修改时间。
+- 同级生成 `statistics_report_<YYYYMMDD_HHMMSS>.zip`，包含上述五个文件，可直接分享。
+
+报告不会把路径缩短成 basename，因此不同子目录下的同名 Session 和文件仍可区分。已有
+`_reports/` 目录从后续扫描中排除，避免报告内容被重复统计。
+
 之后每次启动直接运行：
 
 ```bat

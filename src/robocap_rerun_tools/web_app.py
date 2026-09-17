@@ -96,6 +96,11 @@ scope. `Rebuild all inspection reports` takes precedence when both options are e
 choice applies to sequential clean-Session upload.
 It also scans compact Mocap directory metadata into an editable table. Selected rows can update the
 remote `metadata.jsonl` and matching Session manifests in one commit without uploading videos.
+The separate `Statistics Report` tab creates a portable dataset inventory. It preserves every
+Session and file path relative to the selected dataset root, records duration, parsed Mocap naming
+metadata, inspection results, and file details, then writes a standalone offline HTML report, four
+UTF-8 CSV tables, and a ZIP under `_reports/`. Existing `_reports/` content is never scanned back
+into a later report.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
 control is turned off and disabled instead of pretending that wrist data can be exported.
 Only GT formats that are present create views. BVH/TRC/CSV/XRS skeleton views are arranged from left
@@ -325,6 +330,10 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 不带 RRD。批次大小默认 10；填 1 时逐个上传，大于等于候选总数时全量作为一批。当前批上传时后台
 准备下一批，远端写入仍严格串行。原始文件优先使用同卷 NTFS 硬链接，失败时复制。上传首次失败后
 再重试 3 次；共 4 次仍失败则跳过该批并继续。准备或 clean 校验失败只排除对应 Session；已完成上传
+
+独立的“统计报告”页会生成可转发的数据集清单。所有 Session 和文件都记录相对于所选数据集根目录的
+完整路径，同时统计时长、Mocap 命名元数据、检查结果与文件明细。输出位于 `_reports/`，包含单文件
+离线 HTML、四张 UTF-8 CSV 和一个 ZIP；已有 `_reports/` 内容不会被下一次报告重新统计。
 不会回滚。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
@@ -416,6 +425,18 @@ LANGUAGE_PACKS = {
         "statistics_batch_size": "Sessions per upload batch",
         "statistics_upload_workers": "Upload workers",
         "statistics_batch_upload": "Batch upload clean Sessions",
+        "statistics_report_help": (
+            "Generate a portable, complete inventory for every detected Session under the dataset "
+            "root. All Session, Mocap, inspection, video, and file paths retain their full path "
+            "relative to that root. The output contains a standalone offline HTML report, four "
+            "UTF-8 CSV detail tables, and one ZIP containing the report files."
+        ),
+        "statistics_report_generate": "Generate statistics report",
+        "statistics_report_html": "Statistics report HTML",
+        "statistics_report_zip": "Statistics report ZIP",
+        "statistics_report_open_html": "Open HTML report",
+        "statistics_report_open_directory": "Open report directory",
+        "statistics_report_output": "Statistics report output",
         "upload_output": "Upload task output",
         "package_output": "Output zip",
         "package_height": "Proxy height",
@@ -577,6 +598,17 @@ LANGUAGE_PACKS = {
         "statistics_batch_size": "每个上传批次的 Session 数",
         "statistics_upload_workers": "上传并发数",
         "statistics_batch_upload": "批量上传无差帧 Session",
+        "statistics_report_help": (
+            "扫描数据集根目录下识别到的全部 Session，保留 Session、Mocap、检查报告、视频和每个"
+            "文件相对于根目录的完整路径。输出包括可离线分享的单文件 HTML、四张 UTF-8 CSV 明细表，"
+            "以及包含全部报告文件的 ZIP。"
+        ),
+        "statistics_report_generate": "生成完整统计报告",
+        "statistics_report_html": "统计报告 HTML",
+        "statistics_report_zip": "统计报告 ZIP",
+        "statistics_report_open_html": "打开 HTML 报告",
+        "statistics_report_open_directory": "打开报告目录",
+        "statistics_report_output": "统计报告输出",
         "upload_output": "上传任务输出",
         "package_output": "输出 zip",
         "package_height": "压缩视频高度",
@@ -2101,9 +2133,7 @@ def statistics_mocap_metadata_rows(dataset_root: object) -> list[list[object]]:
         mocap_dirs = discover_mocap_directories(session)
         primitive = infer_batch_modelscope_primitive(root, session)
         if not mocap_dirs:
-            rows.append(
-                [False, session_label, "", "", None, "", None, "MISSING mocap* directory"]
-            )
+            rows.append([False, session_label, "", "", None, "", None, "MISSING mocap* directory"])
             continue
         ambiguous = len(mocap_dirs) > 1
         for mocap_dir in mocap_dirs:
@@ -2194,9 +2224,7 @@ def build_remote_mocap_metadata_updates(
 
     root = dataset_root_path(dataset_root)
     sessions = discover_session_directories(root)
-    sessions_by_label = {
-        _statistics_session_label(root, session): session for session in sessions
-    }
+    sessions_by_label = {_statistics_session_label(root, session): session for session in sessions}
     updates: list[RemoteMocapMetadataUpdate] = []
     seen: set[tuple[str, str]] = set()
     for row_number, row in enumerate(_dataframe_rows(table), start=1):
@@ -2500,7 +2528,9 @@ def _format_mocap_recovery_progress(
         )
         return f"{prefix} {label}: {path}"
     if stage == "matching":
-        return f"{prefix} {'建立一对一匹配' if is_chinese else 'Build one-to-one matches'}: {detail}"
+        return (
+            f"{prefix} {'建立一对一匹配' if is_chinese else 'Build one-to-one matches'}: {detail}"
+        )
     return f"{prefix} {stage}: {detail}"
 
 
@@ -2637,8 +2667,7 @@ def _stream_mocap_recovery_copy(
         total_bytes = total or 0
         percent = 100.0 if total_bytes == 0 else current * 100.0 / total_bytes
         current_line = (
-            f"复制 {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | "
-            f"{detail}"
+            f"复制 {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | {detail}"
             if language == "中文"
             else (
                 f"Copy {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | "
@@ -2691,9 +2720,7 @@ def copy_mocap_recovery(
         return
     copied = 0
     copy_log: deque[str] = deque(progress_log, maxlen=STREAM_LOG_MAX_LINES)
-    yield "\n".join(
-        (*copy_log, "", _mocap_recovery_report(plan, root, source, language=language))
-    )
+    yield "\n".join((*copy_log, "", _mocap_recovery_report(plan, root, source, language=language)))
     for index, match in enumerate(plan.matches, start=1):
         copy_log.append(
             f"[{index}/{len(plan.matches)}] 正在复制/替换：{match.target.session_dir.name}"
@@ -2870,6 +2897,143 @@ def calculate_dataset_statistics(
                 add(f"- {statistic.session_dir.name}: {error}")
     add("统计完成。" if is_chinese else "Statistics complete.")
     yield output(), markdown
+
+
+def generate_statistics_report_web(
+    dataset_root: object,
+    language: str = "中文",
+) -> Iterator[tuple[str, str, str]]:
+    from robocap_rerun_tools.cli import resolve_ffprobe
+    from robocap_rerun_tools.statistics_report import generate_statistics_report
+
+    root = dataset_root_path(dataset_root)
+    sessions = discover_session_directories(root)
+    is_chinese = language == "中文"
+    if not sessions:
+        message = "未发现 Session。" if is_chinese else "No sessions were discovered."
+        yield message, "", ""
+        return
+
+    updates: queue.Queue[tuple[int, int, str]] = queue.Queue()
+    result_holder: dict[str, object] = {}
+
+    def progress(current: int, total: int, relative_path: str) -> None:
+        updates.put((current, total, relative_path))
+
+    def run() -> None:
+        try:
+            ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
+            result_holder["result"] = generate_statistics_report(
+                root,
+                sessions,
+                ffprobe,
+                progress=progress,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            result_holder["error"] = exc
+
+    worker = threading.Thread(target=run, name="statistics-report", daemon=True)
+    worker.start()
+    history = [
+        (f"统计根目录：{root}" if is_chinese else f"Statistics root: {root}"),
+        (
+            f"识别到 Session：{len(sessions)}"
+            if is_chinese
+            else f"Detected sessions: {len(sessions)}"
+        ),
+    ]
+    yield "\n".join(history), "", ""
+    while worker.is_alive() or not updates.empty():
+        try:
+            current, total, relative_path = updates.get(timeout=STREAM_REFRESH_SECONDS)
+        except queue.Empty:
+            continue
+        action = "扫描" if is_chinese else "Scan"
+        history.append(f"[{current}/{total}] {action}: {relative_path}")
+        yield "\n".join(history[-STREAM_LOG_MAX_LINES:]), "", ""
+    worker.join()
+
+    error = result_holder.get("error")
+    if error is not None:
+        prefix = "统计报告生成失败" if is_chinese else "Statistics report failed"
+        history.append(f"{prefix}: {error}")
+        yield "\n".join(history[-STREAM_LOG_MAX_LINES:]), "", ""
+        return
+
+    result = result_holder["result"]
+    if is_chinese:
+        history.extend(
+            [
+                "统计报告生成完成。",
+                f"Session：{result.session_count}；Segment：{result.segment_count}；文件：{result.file_count}",
+                f"HTML：{result.html_path}",
+                f"ZIP：{result.zip_path}",
+            ]
+        )
+    else:
+        history.extend(
+            [
+                "Statistics report complete.",
+                f"Sessions: {result.session_count}; segments: {result.segment_count}; files: {result.file_count}",
+                f"HTML: {result.html_path}",
+                f"ZIP: {result.zip_path}",
+            ]
+        )
+    yield "\n".join(history[-STREAM_LOG_MAX_LINES:]), str(result.html_path), str(result.zip_path)
+
+
+def open_statistics_report_path(
+    dataset_root: object,
+    selected_path: object,
+    open_directory: bool,
+    language: str = "中文",
+) -> str:
+    root = dataset_root_path(dataset_root)
+    reports_root = (root / "_reports").resolve()
+    raw_path = str(selected_path or "").strip().strip('"')
+    if not raw_path:
+        return "请先生成统计报告。" if language == "中文" else "Generate a report first."
+    path = Path(raw_path).expanduser().resolve()
+    try:
+        path.relative_to(reports_root)
+    except ValueError:
+        return (
+            f"路径不在当前数据集的报告目录中：{path}"
+            if language == "中文"
+            else f"Path is outside the current dataset report directory: {path}"
+        )
+    target = path.parent if open_directory else path
+    if open_directory:
+        if not target.is_dir():
+            return (
+                f"报告目录不存在：{target}"
+                if language == "中文"
+                else f"Report directory does not exist: {target}"
+            )
+    elif not target.is_file() or target.suffix.casefold() != ".html":
+        return (
+            f"HTML 报告不存在：{target}"
+            if language == "中文"
+            else f"HTML report does not exist: {target}"
+        )
+    try:
+        launch_default_application(target)
+    except OSError as exc:
+        prefix = "无法打开报告" if language == "中文" else "Could not open report"
+        return f"{prefix}: {exc}"
+    return f"已打开：{target}" if language == "中文" else f"Opened: {target}"
+
+
+def open_statistics_report_html(
+    dataset_root: object, selected_path: object, language: str = "中文"
+) -> str:
+    return open_statistics_report_path(dataset_root, selected_path, False, language)
+
+
+def open_statistics_report_directory(
+    dataset_root: object, selected_path: object, language: str = "中文"
+) -> str:
+    return open_statistics_report_path(dataset_root, selected_path, True, language)
 
 
 def infer_batch_modelscope_primitive(dataset_root: Path, session_dir: Path) -> str | None:
@@ -3901,6 +4065,13 @@ def language_updates(language: str):
         gr.update(label=labels["statistics_upload_workers"]),
         gr.update(value=labels["statistics_batch_upload"]),
         gr.update(label=labels["upload_output"]),
+        gr.update(value=labels["statistics_report_help"]),
+        gr.update(value=labels["statistics_report_generate"]),
+        gr.update(label=labels["statistics_report_html"]),
+        gr.update(label=labels["statistics_report_zip"]),
+        gr.update(value=labels["statistics_report_open_html"]),
+        gr.update(value=labels["statistics_report_open_directory"]),
+        gr.update(label=labels["statistics_report_output"]),
         gr.update(label=labels["package_output"]),
         gr.update(label=labels["package_height"]),
         gr.update(label=labels["package_crf"]),
@@ -4077,9 +4248,7 @@ def build_app():
                 frame_compare_end_frame = gr.Number(
                     label=labels["frame_compare_end_frame"], value=59, precision=0
                 )
-                frame_compare_ratio = gr.Textbox(
-                    label=labels["frame_compare_ratio"], value="auto"
-                )
+                frame_compare_ratio = gr.Textbox(label=labels["frame_compare_ratio"], value="auto")
                 frame_compare_mocap_offset = gr.Number(
                     label=labels["frame_compare_mocap_offset"],
                     value=default_offset,
@@ -4175,9 +4344,7 @@ def build_app():
                 concurrency_id="analysis",
                 concurrency_limit=1,
             )
-            statistics_mocap_metadata_help = gr.Markdown(
-                labels["statistics_mocap_metadata_help"]
-            )
+            statistics_mocap_metadata_help = gr.Markdown(labels["statistics_mocap_metadata_help"])
             with gr.Row():
                 statistics_mocap_metadata_refresh = gr.Button(
                     labels["statistics_mocap_metadata_refresh"]
@@ -4275,9 +4442,7 @@ def build_app():
                     labels["statistics_batch_upload"],
                     scale=1,
                 )
-            statistics_upload_output = gr.Textbox(
-                label=labels["upload_output"], lines=16
-            )
+            statistics_upload_output = gr.Textbox(label=labels["upload_output"], lines=16)
             statistics_batch_upload.click(
                 bulk_upload_clean_modelscope_sessions,
                 inputs=[
@@ -4295,6 +4460,44 @@ def build_app():
                 outputs=statistics_upload_output,
                 concurrency_id="modelscope-upload",
                 concurrency_limit=1,
+            )
+
+        with gr.Tab("统计报告 / Statistics Report"):
+            statistics_report_help = gr.Markdown(labels["statistics_report_help"])
+            statistics_report_generate = gr.Button(
+                labels["statistics_report_generate"], variant="primary"
+            )
+            with gr.Row():
+                statistics_report_html = gr.Textbox(label=labels["statistics_report_html"], scale=1)
+                statistics_report_zip = gr.Textbox(label=labels["statistics_report_zip"], scale=1)
+            with gr.Row():
+                statistics_report_open_html = gr.Button(labels["statistics_report_open_html"])
+                statistics_report_open_directory = gr.Button(
+                    labels["statistics_report_open_directory"]
+                )
+            statistics_report_output = gr.Textbox(
+                label=labels["statistics_report_output"], lines=18
+            )
+            statistics_report_generate.click(
+                generate_statistics_report_web,
+                inputs=[dataset_root, language],
+                outputs=[
+                    statistics_report_output,
+                    statistics_report_html,
+                    statistics_report_zip,
+                ],
+                concurrency_id="analysis",
+                concurrency_limit=1,
+            )
+            statistics_report_open_html.click(
+                open_statistics_report_html,
+                inputs=[dataset_root, statistics_report_html, language],
+                outputs=statistics_report_output,
+            )
+            statistics_report_open_directory.click(
+                open_statistics_report_directory,
+                inputs=[dataset_root, statistics_report_zip, language],
+                outputs=statistics_report_output,
             )
 
         with gr.Tab("打包 / Package"):
@@ -4688,6 +4891,13 @@ def build_app():
                 statistics_upload_workers,
                 statistics_batch_upload,
                 statistics_upload_output,
+                statistics_report_help,
+                statistics_report_generate,
+                statistics_report_html,
+                statistics_report_zip,
+                statistics_report_open_html,
+                statistics_report_open_directory,
+                statistics_report_output,
                 package_output,
                 package_height,
                 package_crf,
