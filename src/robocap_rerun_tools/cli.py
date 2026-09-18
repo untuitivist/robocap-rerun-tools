@@ -1911,6 +1911,7 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
             video_frame_offset=args.offset,
             reference_video_label=args.reference_video,
             dry_run=args.dry_run,
+            quality_target=getattr(args, "quality_target", "normal"),
         )
     except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
         print(f"ModelScope staging failed: {exc}", file=sys.stderr)
@@ -2082,6 +2083,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Prepare one session for a date-grouped ModelScope upload.",
     )
     modelscope_stage_parser.add_argument("session_dir", type=Path)
+    modelscope_stage_parser.add_argument("--quality-target", choices=("normal", "fault"), default="normal")
     modelscope_stage_parser.add_argument(
         "--primitive-id",
         required=True,

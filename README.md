@@ -2,6 +2,30 @@
 
 [中文文档](README.zh-CN.md)
 
+## Fault Dataset Uploads
+
+The **Fault Dataset** Web tab provides separate single-Session preparation/upload and batch
+upload to `untuitivist/EgoMotionActions-fault`. Save its repository in
+`MODELSCOPE_ERROR_REPO_ID` in `.env`; token and endpoint are shared with normal uploads.
+
+Scan/select Mocap and optional RRD files, prepare the current Session, then upload it. Batch upload
+uses the selected root, with optional missing/all inspection, batch size (default 10), retries,
+and integrity-aware skipping. Dates can be entered as `YYYYMMDD` or derived from the Session
+timestamp in UTC+08:00. Layout remains `EgoMotionActions/YYYYMMDD/action_id/session_id/`.
+
+Admission requires valid frame-count reports for the selected Segments and at least one mismatch
+against `n:ratio*(n+1):n+1` (Robocap:Mocap:third-person, ratio 4 or 8). Clean Sessions and invalid
+or unchecked reports are excluded. Small timestamp anomalies alone do not qualify. Videos stay
+original and complete: no compression, cropping, or interpolation. Each Session is stored once,
+with `quality_status`, all `error_types`, and per-Segment counts/differences in `quality_details`
+in both `metadata.jsonl` and `manifest.json`. Fault staging is isolated from normal uploads.
+
+CLI: add `--quality-target fault` to `robocap-rerun modelscope-stage`; upload the resulting
+staging directory using `modelscope-upload`. The target marker prevents uploading fault staging
+to the normal repository. `scripts/initialize_fault_dataset.py --output <directory>` previews
+shared documentation/calibration copying; `--apply` copies and verifies those assets without
+copying recording Sessions or the normal metadata index.
+
 Robocap Rerun Tools inspects and aligns Robocap, NOKOV motion capture, third-person video, and
 optional robowrist streams, then exports synchronized Rerun `.rrd` recordings. Time-aligned exports
 use `capture_time` as the primary timeline; frame-aligned exports use the integer `frame` timeline.

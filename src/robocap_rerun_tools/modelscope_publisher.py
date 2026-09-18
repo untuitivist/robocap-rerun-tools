@@ -12,7 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -384,7 +384,8 @@ def ensure_env_file(env_path: Path = DEFAULT_ENV_PATH) -> Path:
             "# Local secrets. Do not commit this file.\n"
             f"{TOKEN_KEY}=\n"
             f"{ENDPOINT_KEY}={DEFAULT_ENDPOINT}\n"
-            f"{REPO_ID_KEY}=\n",
+            f"{REPO_ID_KEY}=\n"
+            "MODELSCOPE_ERROR_REPO_ID=untuitivist/EgoMotionActions-fault\n",
             encoding="utf-8",
             newline="\n",
         )
@@ -394,6 +395,7 @@ def ensure_env_file(env_path: Path = DEFAULT_ENV_PATH) -> Path:
             TOKEN_KEY: "",
             ENDPOINT_KEY: DEFAULT_ENDPOINT,
             REPO_ID_KEY: "",
+            "MODELSCOPE_ERROR_REPO_ID": "untuitivist/EgoMotionActions-fault",
         }
         for key, value in defaults.items():
             if key not in values:
@@ -1225,7 +1227,15 @@ def stage_session(
     reference_video_label: str = "left",
     dry_run: bool = False,
     progress: Callable[[str], None] | None = print,
+    quality_target: str = "normal",
 ) -> StageResult:
+    from .fault_publishing import (
+        bind_staging_target,
+        collect_fault_quality,
+        fault_readme,
+        fault_settings,
+    )
+
     source = session_dir.expanduser().resolve()
     if not source.is_dir():
         raise FileNotFoundError(source)
@@ -1235,7 +1245,15 @@ def stage_session(
         )
     primitive = validate_primitive_id(primitive_id)
     resolved_session_id = validate_session_id(session_id or source.name)
-    root = (dataset_root or default_dataset_root(source)).expanduser().resolve()
+    if quality_target not in {"normal", "fault"}:
+        raise ValueError("Unknown publishing target")
+    quality = collect_fault_quality(source, segment) if quality_target == "fault" else None
+    if quality is not None and aligned_intersection:
+        raise ValueError("Fault data must preserve full original recordings; cropping is disabled.")
+    default_root = default_dataset_root(source)
+    if quality_target == "fault":
+        default_root = default_root / "fault" / source.name
+    root = (dataset_root or default_root).expanduser().resolve()
     relative_session = prepared_session_path(primitive, resolved_session_id)
     target = root / Path(relative_session)
     _validate_stage_locations(source, root, target)
@@ -1317,6 +1335,7 @@ def stage_session(
             mocap_capture=(mocap_capture.as_record() if mocap_capture else None),
         )
 
+    bind_staging_target(root, quality_target)
     target.mkdir(parents=True, exist_ok=True)
     reset_staged_mocap_directories(target, progress)
     reset_staged_rerun_directory(target)
@@ -1416,6 +1435,8 @@ def stage_session(
     }
     if mocap_capture is not None:
         manifest["mocap_capture"] = mocap_capture.as_record()
+    if quality is not None:
+        manifest.update(quality)
     if intersection_plan is not None:
         manifest["alignment"] = intersection_plan.as_manifest()
     manifest_path.write_text(
@@ -1438,10 +1459,16 @@ def stage_session(
     }
     if mocap_capture is not None:
         metadata_record["mocap_capture"] = mocap_capture.as_record()
+    if quality is not None:
+        metadata_record.update(quality)
     if intersection_plan is not None:
         metadata_record["alignment"] = intersection_plan.as_metadata()
     metadata_path = _update_metadata(root, metadata_record)
     readme_path = _write_dataset_readme(root)
+    if quality is not None:
+        readme_path.write_text(
+            fault_readme(_dataset_readme(), fault_settings().repo_id), encoding="utf-8"
+        )
     return StageResult(
         dataset_root=root,
         session_dir=target,
@@ -1684,11 +1711,7 @@ def finalize_upload_batch(
                 )
                 move.source.parent.mkdir(parents=True, exist_ok=True)
                 move.target.replace(move.source)
-            if (
-                move.backup is not None
-                and move.backup.is_dir()
-                and not move.target.exists()
-            ):
+            if move.backup is not None and move.backup.is_dir() and not move.target.exists():
                 move.target.parent.mkdir(parents=True, exist_ok=True)
                 move.backup.replace(move.target)
         shutil.rmtree(replacement_root, ignore_errors=True)
@@ -2013,6 +2036,9 @@ def _audit_remote_session_entry(
         issues.append(f"manifest dataset_path must be {session_path}")
     if manifest.get("upload_batch_id") != batch_id:
         issues.append(f"manifest upload_batch_id must match metadata ({batch_id!r})")
+    for key in ("quality_status", "error_types", "quality_details"):
+        if entry.get(key) != manifest.get(key):
+            issues.append(f"manifest {key} does not match metadata")
     try:
         _validate_manifest_video_policy(manifest, Path(expected_manifest))
     except ModelScopePublisherError as exc:
@@ -2110,6 +2136,7 @@ def audit_remote_sessions(
     settings: ModelScopeSettings | None = None,
     api: Any | None = None,
     progress: Callable[[str], None] | None = print,
+    expected_quality: Mapping[tuple[str, str], dict] | None = None,
 ) -> RemoteSessionIntegrityReport:
     if max_workers < 1:
         raise ValueError("max_workers must be positive.")
@@ -2172,6 +2199,19 @@ def audit_remote_sessions(
             for completed, future in enumerate(as_completed(futures), start=1):
                 key = futures[future]
                 status = future.result()
+                if expected_quality is not None:
+                    expected = expected_quality.get(key)
+                    if not expected or any(
+                        by_key[key].get(field) != value for field, value in expected.items()
+                    ):
+                        status = replace(
+                            status,
+                            complete=False,
+                            issues=(
+                                *status.issues,
+                                "fault quality metadata changed or requires inspection",
+                            ),
+                        )
                 statuses[key] = status
                 if progress is not None:
                     state = (
@@ -2275,10 +2315,7 @@ def update_remote_mocap_metadata(
                     raise ModelScopePublisherError(
                         f"Remote manifest must be a JSON object: {manifest_repo_path}"
                     )
-                if (
-                    manifest.get("primitive_id") != key[0]
-                    or manifest.get("session_id") != key[1]
-                ):
+                if manifest.get("primitive_id") != key[0] or manifest.get("session_id") != key[1]:
                     raise ModelScopePublisherError(
                         f"Remote manifest identity does not match {key[0]}/{key[1]}: "
                         f"{manifest_repo_path}"
@@ -2371,6 +2408,20 @@ def upload_staged_dataset(
 ) -> UploadResult:
     staged = load_staged_dataset(staged.dataset_root)
     resolved = settings or load_modelscope_settings()
+    from .fault_publishing import TARGET_MARKER, fault_settings, validate_fault_staging
+
+    marker = staged.dataset_root / TARGET_MARKER
+    fault_target = (
+        marker.exists() and json.loads(marker.read_text(encoding="utf-8")).get("target") == "fault"
+    )
+    configured_fault = fault_settings(resolved.env_path).repo_id
+    if fault_target:
+        validate_fault_staging(staged.dataset_root)
+        repo_id = repo_id or configured_fault
+        if repo_id != configured_fault:
+            raise ValueError("Fault staging can only upload to the configured fault repository.")
+    elif (repo_id or resolved.repo_id) == configured_fault:
+        raise ValueError("Normal staging cannot upload to the fault repository.")
     if not resolved.token:
         raise ModelScopePublisherError(f"{TOKEN_KEY} is not configured in {resolved.env_path}.")
     repository = _resolve_repository(resolved, repo_id)

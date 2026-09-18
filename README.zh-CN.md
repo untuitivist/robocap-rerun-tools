@@ -2,6 +2,33 @@
 
 [English documentation](README.md)
 
+## 错误数据集上传
+
+Web 的 **错误数据上传 / Fault Dataset** 页面提供独立的单项上传和批量上传入口，默认仓库为
+`untuitivist/EgoMotionActions-fault`。仓库名保存到 `.env` 的 `MODELSCOPE_ERROR_REPO_ID`，
+与正常数据集共用 Token 和 endpoint，不修改正常数据集仓库配置。
+
+单项操作：选择 Session，扫描并勾选 Mocap、可选 RRD 文件，准备后上传。
+批量操作：使用顶部根目录，设置检查比例、补做或重做检查、日期和批次大小，再点击批量上传。
+批次默认 10；上传当前批次时准备下一批，失败额外重试 3 次。开启跳过已有时，检查远端完整性
+及错误信息是否相同。日期支持手填 `YYYYMMDD` 或按 Session UTC 时间戳转东八区自动匹配。
+目录仍为 `EgoMotionActions/YYYYMMDD/动作编号/session_id/`。
+
+收录条件：所选 Segment 有有效检查报告，并至少一项不满足
+`Robocap : Mocap : 第三人称 = n : ratio*(n+1) : n+1`，ratio 支持 4、8。
+未检查、报告无效和帧数完全正常的数据不进入错误库；仅有其他小异常不算差帧。
+视频始终保留原始完整文件，不压缩、不裁切、不插值。多种错误只保存一份 Session，
+在 `metadata.jsonl` 和 `manifest.json` 中同时记录：
+
+- `quality_status`: `error`。
+- `error_types`: `mocap_extra`、`mocap_missing`、`third_person_extra`、`third_person_missing`。
+- `quality_details`: 每个 Segment 的比例、实际与期望帧数、差值、错误列表及源报告 SHA-256。
+
+错误数据使用独立暂存区；暂存标记阻止正常与错误数据混传。命令行在 `modelscope-stage` 添加
+`--quality-target fault`，随后对输出的暂存目录执行 `modelscope-upload`。
+`scripts/initialize_fault_dataset.py --output <目录>` 预览共享说明和标定文件复制列表，
+加 `--apply` 执行并逐文件验证；不复制正常 Session 或正常库元数据索引。
+
 这个工具用于检查并对齐 Robocap、NOKOV 动捕、第三人称视频和可选 robowrist 数据，然后生成
 同步的 Rerun `.rrd`。时间对齐导出以 `capture_time` 为主时间轴；帧对齐导出以整数 `frame`
 为主时间轴。

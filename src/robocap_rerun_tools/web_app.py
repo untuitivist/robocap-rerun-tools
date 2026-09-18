@@ -3158,7 +3158,17 @@ def bulk_upload_clean_modelscope_sessions(
     batch_size: object = 10,
     upload_workers: object = "auto",
     auto_match_upload_date: bool = False,
+    quality_target: str = "normal",
 ) -> Iterator[str]:
+    from robocap_rerun_tools.fault_publishing import (
+        collect_fault_quality,
+        fault_settings,
+        validate_fault_staging,
+    )
+
+    if quality_target not in {"normal", "fault"}:
+        raise ValueError("Unknown publishing target")
+    is_fault = quality_target == "fault"
     from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
         discover_segment_references,
@@ -3294,7 +3304,7 @@ def bulk_upload_clean_modelscope_sessions(
 
     add("检查 ModelScope 身份。" if is_chinese else "Check ModelScope authentication.")
     try:
-        connection = connect_modelscope()
+        connection = connect_modelscope(fault_settings()) if is_fault else connect_modelscope()
     except (OSError, ValueError, ModelScopePublisherError) as exc:
         add(f"ModelScope authentication failed: {exc}")
         yield render()
@@ -3324,11 +3334,24 @@ def bulk_upload_clean_modelscope_sessions(
 
     def audit_worker() -> None:
         try:
+            quality_options = {}
+            if is_fault:
+                expected_quality = {}
+                if not rebuild_all_reports:
+                    for source, primitive, session_id in identified:
+                        try:
+                            expected_quality[(primitive, session_id)] = collect_fault_quality(
+                                source
+                            )
+                        except (OSError, ValueError, TypeError):
+                            continue
+                quality_options["expected_quality"] = expected_quality
             audit_outcome["result"] = audit_remote_sessions(
                 ((primitive, session_id) for _, primitive, session_id in identified),
                 settings=connection.settings,
                 api=connection.api,
                 progress=audit_progress,
+                **quality_options,
             )
         except (OSError, ValueError, ModelScopePublisherError) as exc:
             audit_outcome["error"] = exc
@@ -3472,7 +3495,14 @@ def bulk_upload_clean_modelscope_sessions(
             else f"[{index}/{len(pending)}] Filter: {session.name}"
         )
         statistic = summarize_session(root, session, ffprobe)
-        if not session_has_clean_frame_counts(statistic):
+        if is_fault:
+            try:
+                collect_fault_quality(session)
+            except (OSError, ValueError, TypeError) as exc:
+                excluded.append(f"{session}: {exc}")
+                yield render()
+                continue
+        elif not session_has_clean_frame_counts(statistic):
             excluded.append(f"{session}: unchecked or frame-count difference")
             yield render()
             continue
@@ -3533,9 +3563,9 @@ def bulk_upload_clean_modelscope_sessions(
     yield render()
     if not candidates:
         add(
-            "没有新的无差帧 Session 可上传。"
+            "没有符合目标数据集条件的 Session 可上传。"
             if is_chinese
-            else "No new clean Session is available to upload."
+            else "No eligible Session is available to upload."
         )
         yield render()
         return
@@ -3549,6 +3579,15 @@ def bulk_upload_clean_modelscope_sessions(
 
     def prepare_batch(batch_index: int, items: list[BatchUploadCandidate]):
         staged_root = root / "_modelscope_dataset" / "batches" / run_id / f"batch_{batch_index:04d}"
+        if is_fault:
+            staged_root = (
+                root
+                / "_modelscope_dataset"
+                / "fault"
+                / "batches"
+                / run_id
+                / f"batch_{batch_index:04d}"
+            )
         prepared: list[tuple] = []
         failures: list[str] = []
         for item_index, item in enumerate(items, start=1):
@@ -3564,13 +3603,18 @@ def bulk_upload_clean_modelscope_sessions(
                     dataset_root=staged_root,
                     mocap_files=item.mocap_files,
                     progress=task_progress(scope),
+                    **({"quality_target": "fault"} if is_fault else {}),
                 )
                 prepared.append(item)
             except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
                 failures.append(f"{primitive}/{session_id}: {exc}")
         if prepared:
             try:
-                pending_paths = validate_pending_modelscope_frame_counts(staged_root)
+                pending_paths = (
+                    validate_fault_staging(staged_root)
+                    if is_fault
+                    else validate_pending_modelscope_frame_counts(staged_root)
+                )
                 if len(pending_paths) != len(prepared):
                     raise ValueError(
                         f"Batch {batch_index} staged {len(prepared)} Session(s), but validation "
@@ -3818,6 +3862,7 @@ def stage_modelscope_data(
     intersection_ratio: str,
     intersection_offset: float,
     inspection_mocap_ratio: int = 8,
+    quality_target: str = "normal",
 ) -> Iterator[str]:
     if not selected_mocap_files:
         yield (
@@ -3833,6 +3878,8 @@ def stage_modelscope_data(
         "--inspection-mocap-ratio",
         str(int(inspection_mocap_ratio)),
     ]
+    if quality_target == "fault":
+        args.extend(["--quality-target", "fault"])
     if optional_text(segment):
         args.extend(["--segment", segment.strip()])
     if refresh_inspection:
@@ -3860,11 +3907,18 @@ def upload_modelscope_data(
     revision: str,
     use_cache: bool,
     max_workers: int,
+    quality_target: str = "normal",
+    upload_date: str | None = None,
 ) -> Iterator[str]:
     from robocap_rerun_tools.modelscope_publisher import default_dataset_root
 
     resolved_session = Path(session_path(session_dir))
     resolved_root = default_dataset_root(resolved_session)
+    if quality_target == "fault":
+        from robocap_rerun_tools.fault_publishing import fault_settings
+
+        resolved_root = resolved_root / "fault" / resolved_session.name
+        repo_id = fault_settings().repo_id
     args = [
         "modelscope-upload",
         str(resolved_root),
@@ -3877,7 +3931,95 @@ def upload_modelscope_data(
         args.extend(["--repo-id", repo_id.strip()])
     if not use_cache:
         args.append("--no-cache")
+    if upload_date:
+        args.extend(["--upload-date", resolve_modelscope_upload_date(upload_date)])
     yield from stream_cli_command(args)
+
+
+def stage_fault_modelscope_data(
+    session_dir,
+    segment,
+    primitive_id,
+    refresh_inspection,
+    selected_mocap_files,
+    selected_rrd_files,
+    inspection_mocap_ratio,
+):
+    yield from stage_modelscope_data(
+        session_dir,
+        segment,
+        primitive_id,
+        refresh_inspection,
+        selected_mocap_files,
+        selected_rrd_files,
+        False,
+        "auto",
+        0,
+        inspection_mocap_ratio,
+        quality_target="fault",
+    )
+
+
+def upload_fault_modelscope_data(
+    session_dir, revision, use_cache, max_workers, upload_date, auto_date
+):
+    date, _ = resolve_session_upload_date(
+        Path(session_path(session_dir)),
+        resolve_modelscope_upload_date(upload_date),
+        auto_date,
+    )
+    yield from upload_modelscope_data(
+        session_dir,
+        "",
+        revision,
+        use_cache,
+        max_workers,
+        quality_target="fault",
+        upload_date=date,
+    )
+
+
+def reset_fault_session_selection(session_dir):
+    import gradio as gr
+
+    return (
+        infer_modelscope_primitive(session_dir) or "",
+        gr.update(choices=[], value=[]),
+        gr.update(choices=[], value=[]),
+    )
+
+
+def bulk_upload_fault_modelscope_sessions(
+    dataset_root,
+    mocap_ratio,
+    fill_missing_reports,
+    language,
+    upload_date,
+    skip_existing,
+    rebuild_all_reports,
+    batch_size,
+    upload_workers,
+    auto_match_upload_date,
+):
+    yield from bulk_upload_clean_modelscope_sessions(
+        dataset_root,
+        mocap_ratio,
+        fill_missing_reports,
+        language,
+        upload_date,
+        skip_existing,
+        rebuild_all_reports,
+        batch_size,
+        upload_workers,
+        auto_match_upload_date,
+        quality_target="fault",
+    )
+
+
+def save_fault_modelscope_settings(repository):
+    from robocap_rerun_tools.fault_publishing import save_fault_repository
+
+    return f"已保存 / Saved: {save_fault_repository(repository)}"
 
 
 def inspect_offset(
@@ -4649,6 +4791,137 @@ def build_app():
                     language,
                 ],
                 outputs=statistics_upload_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
+            )
+
+        with gr.Tab("错误数据上传 / Fault Dataset"):
+            from robocap_rerun_tools.fault_publishing import fault_settings
+
+            fault_repo = gr.Textbox(
+                label="错误数据集 / Fault repository", value=fault_settings().repo_id
+            )
+            fault_save = gr.Button("保存仓库 / Save repository")
+            fault_primitive = gr.Textbox(
+                label="动作编号 / Action ID", value=initial_modelscope_primitive
+            )
+            fault_refresh = gr.Checkbox(
+                label="准备时重做检查 / Reinspect when preparing", value=False
+            )
+            with gr.Row():
+                fault_revision = gr.Textbox(label="分支 / Revision", value="master")
+                fault_cache = gr.Checkbox(label="使用上传缓存 / Use upload cache", value=True)
+                fault_single_workers = gr.Number(
+                    label="单项上传并发 / Single upload workers", value=4, minimum=1, precision=0
+                )
+            gr.Markdown(
+                "仅上传检查有效且存在差帧的 Session；保留原始完整视频。 / Valid inspections with frame-count differences only; full original videos."
+            )
+            with gr.Row():
+                fault_scan_mocap = gr.Button("扫描 Mocap / Scan Mocap")
+                fault_scan_rrd = gr.Button("扫描 RRD / Scan RRD")
+            fault_mocap = gr.CheckboxGroup(
+                label="错误数据 Mocap 文件 / Fault Mocap files", choices=[]
+            )
+            fault_rrd = gr.CheckboxGroup(label="错误数据 RRD 文件 / Fault RRD files", choices=[])
+            with gr.Row():
+                fault_stage = gr.Button("准备当前错误 Session / Prepare fault Session")
+                fault_upload = gr.Button(
+                    "上传当前错误 Session / Upload fault Session", variant="primary"
+                )
+            fault_date = gr.Textbox(
+                label="错误数据上传日期 / Upload date (YYYYMMDD)", value=initial_upload_date
+            )
+            fault_auto_date = gr.Checkbox(
+                label="按 Session UTC 转东八区日期 / Match UTC+8 date", value=True
+            )
+            fault_skip = gr.Checkbox(
+                label="跳过远端完整且错误信息相同的 Session / Skip unchanged complete Sessions",
+                value=True,
+            )
+            with gr.Row():
+                fault_ratio = gr.Radio(label="动捕比例 / Mocap ratio", choices=[8, 4], value=8)
+                fault_missing = gr.Checkbox(label="补做缺失检查 / Inspect missing", value=True)
+                fault_rebuild = gr.Checkbox(label="全部重做检查 / Reinspect all", value=False)
+            with gr.Row():
+                fault_batch_size = gr.Number(
+                    label="错误数据批次大小 / Batch size", value=10, precision=0, minimum=1
+                )
+                fault_workers = gr.Dropdown(
+                    label="错误数据上传并发 / Upload workers",
+                    choices=["auto", "1", "2", "4", "8"],
+                    value="auto",
+                )
+            fault_batch = gr.Button(
+                "批量上传差帧 Session / Batch upload fault Sessions", variant="primary"
+            )
+            fault_output = gr.Textbox(label="错误数据输出 / Fault output", lines=18)
+            fault_save.click(
+                save_fault_modelscope_settings,
+                inputs=[fault_repo],
+                outputs=fault_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
+            )
+            fault_scan_mocap.click(
+                scan_modelscope_mocap_files,
+                inputs=[session_dir],
+                outputs=[fault_output, fault_mocap],
+            )
+            fault_scan_rrd.click(
+                scan_modelscope_rrd_files,
+                inputs=[session_dir, segment],
+                outputs=[fault_output, fault_rrd],
+            )
+            fault_stage.click(
+                stage_fault_modelscope_data,
+                inputs=[
+                    session_dir,
+                    segment,
+                    fault_primitive,
+                    fault_refresh,
+                    fault_mocap,
+                    fault_rrd,
+                    fault_ratio,
+                ],
+                outputs=fault_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
+            )
+            fault_upload.click(
+                upload_fault_modelscope_data,
+                inputs=[
+                    session_dir,
+                    fault_revision,
+                    fault_cache,
+                    fault_single_workers,
+                    fault_date,
+                    fault_auto_date,
+                ],
+                outputs=fault_output,
+                concurrency_id="modelscope-upload",
+                concurrency_limit=1,
+            )
+            session_dir.change(
+                reset_fault_session_selection,
+                inputs=session_dir,
+                outputs=[fault_primitive, fault_mocap, fault_rrd],
+            )
+            fault_batch.click(
+                bulk_upload_fault_modelscope_sessions,
+                inputs=[
+                    dataset_root,
+                    fault_ratio,
+                    fault_missing,
+                    language,
+                    fault_date,
+                    fault_skip,
+                    fault_rebuild,
+                    fault_batch_size,
+                    fault_workers,
+                    fault_auto_date,
+                ],
+                outputs=fault_output,
                 concurrency_id="modelscope-upload",
                 concurrency_limit=1,
             )
