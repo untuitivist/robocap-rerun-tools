@@ -4,6 +4,19 @@
 
 ## 错误数据集上传
 
+### 上传时自动补充人员信息
+
+单项及批量上传都会读取目标仓库最新的 `participants.jsonl`，按
+`mocap_capture.participant` 匹配人员（忽略大小写和首尾空白），将 `gender`、`height_cm`、
+`weight_kg` 写入 Session 的 `participant_gender`、`participant_height_cm`、
+`participant_weight_kg`，同时保存到 `metadata.jsonl` 和 `manifest.json`。
+错误库缺少人员表时，回退读取 `.env` 中正常数据集仓库的人员表。
+
+未知测量值保留 `null`。未匹配会在输出中警告；覆盖同一个人的已有 Session 时保留远端已知值，
+人员发生变化则不继承旧人员信息。人员表重复、格式错误或网络读取失败时停止该次提交。
+无需重新暂存即可读取人员表更新；此功能不批量修改历史 Session，也不改写远端人员表。
+开启“跳过已有”且被跳过的 Session 不会因此自动补写字段。
+
 Web 的 **错误数据上传 / Fault Dataset** 页面提供独立的单项上传和批量上传入口，默认仓库为
 `untuitivist/EgoMotionActions-fault`。仓库名保存到 `.env` 的 `MODELSCOPE_ERROR_REPO_ID`，
 与正常数据集共用 Token 和 endpoint，不修改正常数据集仓库配置。

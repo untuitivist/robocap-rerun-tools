@@ -1031,6 +1031,47 @@ def test_upload_staged_session_uploads_every_indexed_session(
     )
 
 
+def test_upload_refreshes_participants_in_index_and_manifest(tmp_path: Path) -> None:
+    staged = stage_fixture(tmp_path)
+    entry = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
+    entry["mocap_capture"] = {"participant": "alice"}
+    staged.metadata_path.write_text(json.dumps(entry), encoding="utf-8")
+    manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
+    manifest["mocap_capture"] = entry["mocap_capture"]
+    staged.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    remote = tmp_path / "remote.jsonl"
+    remote.write_text("", encoding="utf-8")
+    catalog = tmp_path / "participants.jsonl"
+    catalog.write_text('{"participant":"alice","gender":"female","height_cm":160,"weight_kg":50}', encoding="utf-8")
+    uploads = []
+
+    class Api:
+        def whoami(self):
+            return SimpleNamespace(username="owner")
+
+        def repo_exists(self, *args):
+            return True
+
+        def download_file(self, repo, kind, path, **kwargs):
+            assert kwargs["force"] is True
+            return catalog if path == "participants.jsonl" else remote
+
+        def upload_folder(self, repo, kind, root, **kwargs):
+            row = json.loads((root / "metadata.jsonl").read_text(encoding="utf-8"))
+            uploaded_manifest = json.loads((root / row["manifest"]).read_text(encoding="utf-8"))
+            for key in ("participant_gender", "participant_height_cm", "participant_weight_kg"):
+                assert row[key] == uploaded_manifest[key]
+            uploads.append(row)
+            assert "participants.jsonl" not in kwargs["allow_patterns"]
+
+    settings = publisher.ModelScopeSettings("test", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/data")
+    for height in (160, 161):
+        catalog.write_text(json.dumps({"participant": "alice", "gender": "female", "height_cm": height, "weight_kg": 50}), encoding="utf-8")
+        publisher.upload_staged_dataset(publisher.load_staged_dataset(staged.dataset_root), None,
+            api=Api(), settings=settings, upload_date="20260922", progress=None)
+    assert [row["participant_height_cm"] for row in uploads] == [160, 161]
+
+
 def test_upload_retry_reuses_existing_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     staged = stage_fixture(tmp_path)
     upload_calls: list[dict[str, object]] = []

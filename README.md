@@ -4,6 +4,18 @@
 
 ## Fault Dataset Uploads
 
+### Participant Demographics
+
+Every single or batch upload reads the destination's latest `participants.jsonl` and matches
+`mocap_capture.participant` case-insensitively after trimming whitespace. The catalog fields
+`gender`, `height_cm`, and `weight_kg` populate `participant_gender`, `participant_height_cm`,
+and `participant_weight_kg` in both the Session index and manifest. The fault repository falls
+back to the configured normal repository only when its catalog file is absent. Unknown values
+remain null, with warnings for unmatched identities. Existing remote demographics are retained
+only for the same person; changed participants never inherit another person's measurements.
+Malformed catalogs and network failures stop the upload attempt. Catalogs are never overwritten.
+Existing Sessions skipped by integrity checks are not backfilled automatically.
+
 The **Fault Dataset** Web tab provides separate single-Session preparation/upload and batch
 upload to `untuitivist/EgoMotionActions-fault`. Save its repository in
 `MODELSCOPE_ERROR_REPO_ID` in `.env`; token and endpoint are shared with normal uploads.

@@ -952,6 +952,13 @@ followed by one or more digits, and preserve leading zeros. Metadata-only correc
 and matching manifests in one commit without moving Session directories or uploading capture files
 again.
 
+At upload time, `participants.jsonl` is read from the destination dataset and matched against
+`mocap_capture.participant` (case-insensitive). Session index rows and manifests both receive
+`participant_gender`, `participant_height_cm`, and `participant_weight_kg`. Unavailable measurements
+remain JSON `null`. If the fault dataset has no catalog, the normal dataset catalog is used.
+Unmatched identities are reported; known remote values are retained only for the same participant.
+The catalog is read afresh for each upload batch and is never overwritten by Session uploads.
+
 New ModelScope staging never applies lossy video compression. Full-session video files are copied
 byte-for-byte. Aligned-intersection video is encoded losslessly only when frame-accurate cropping
 requires it. Manifests that describe proxy-compressed video are rejected before upload.
@@ -2469,6 +2476,24 @@ def upload_staged_dataset(
             remote_metadata,
             f"remote {METADATA_NAME}",
         )
+        from .participant_metadata import (
+            enrich_staged_participants,
+            load_catalog,
+            participant_id,
+        )
+
+        catalog = {}
+        if exists and any(participant_id(entry) for entry in local_entries):
+            normal_repository = load_modelscope_settings(resolved.env_path).repo_id
+            catalog = load_catalog(
+                api, repository, target_revision,
+                fallback=normal_repository if fault_target else None,
+                progress=progress,
+            )
+        local_entries = enrich_staged_participants(
+            staged.dataset_root, local_entries, remote_entries, catalog, progress,
+        )
+        _write_metadata_entries(staged.dataset_root, local_entries)
         merged_metadata = _metadata_document(
             merge_metadata_entries(remote_entries, local_entries)
         )
