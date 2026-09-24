@@ -5,7 +5,9 @@
 ## 按异常清单查找源数据并重传
 
 BAT 与 Python 入口放在独立目录 `scripts/repair_upload/`。Windows 下双击
-`reupload_corrupt_sessions.bat`，按提示填写异常 CSV、本地搜索目录（默认 `F:\`）和共享
+`reupload_corrupt_sessions.bat`，CSV 路径直接回车使用同目录随附的
+`corrupt_sessions_20260924.csv`，无需从原电脑复制；也可输入其他 CSV 路径。
+然后按提示填写本地搜索目录（默认 `F:\`）和共享
 搜索目录（可留空）。运行模式直接回车只预览，输入 `UPLOAD` 才校验并覆盖上传。
 启动器使用项目的 uv 环境，交互运行结束后保留 CMD 窗口供查看结果。
 也可以传入命令行参数，例如 `scripts\repair_upload\reupload_corrupt_sessions.bat --help`；

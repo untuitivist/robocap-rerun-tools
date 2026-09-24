@@ -13,9 +13,10 @@ if "%INTERACTIVE%"=="0" goto arguments
 echo Repair uploads from a corruption CSV
 echo Paths may be local, mapped drives, or UNC shares.
 echo Enter paths without surrounding quotes. Logs are saved under _artifacts\repair_upload.
-set "REPORT_CSV="
-set /p "REPORT_CSV=Corruption CSV path: "
-if not defined REPORT_CSV goto csv_error
+set "REPORT_CSV=%~dp0corrupt_sessions_20260924.csv"
+echo Default report: corrupt_sessions_20260924.csv bundled with this launcher.
+set /p "REPORT_CSV=Corruption CSV path [Enter uses bundled report]: "
+if not exist "%REPORT_CSV%" goto csv_error
 set "LOCAL_ROOT=F:\"
 set /p "LOCAL_ROOT=Local search root [F:\]: "
 set "SHARED_ROOT="
@@ -40,7 +41,7 @@ set "EXIT_CODE=%ERRORLEVEL%"
 goto finish
 
 :csv_error
-echo A corruption CSV path is required.
+echo Corruption CSV file not found: "%REPORT_CSV%"
 set "EXIT_CODE=1"
 goto finish
 

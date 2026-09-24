@@ -5,7 +5,8 @@
 ## Repair Uploads From A Corruption CSV
 
 The BAT launcher and Python entry point live together in `scripts/repair_upload/`.
-On Windows, double-click `reupload_corrupt_sessions.bat`, enter the CSV, local root (default
+The original `corrupt_sessions_20260924.csv` is bundled in that directory. On Windows,
+double-click `reupload_corrupt_sessions.bat`, press Enter to use that CSV (or enter another path), then enter the local root (default
 `F:\`), and optional shared root. Enter previews only; type `UPLOAD` to validate and upload.
 The launcher uses the project's uv environment and keeps the console open after interactive runs.
 It also forwards CLI arguments, for example `scripts\repair_upload\reupload_corrupt_sessions.bat --help`.
