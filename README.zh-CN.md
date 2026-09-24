@@ -4,20 +4,27 @@
 
 ## 按异常清单查找源数据并重传
 
-`scripts/reupload_corrupt_sessions.py` 读取异常 CSV 的 `session_path`、`session`、
+BAT 与 Python 入口放在独立目录 `scripts/repair_upload/`。Windows 下双击
+`reupload_corrupt_sessions.bat`，按提示填写异常 CSV、本地搜索目录（默认 `F:\`）和共享
+搜索目录（可留空）。运行模式直接回车只预览，输入 `UPLOAD` 才校验并覆盖上传。
+启动器使用项目的 uv 环境，交互运行结束后保留 CMD 窗口供查看结果。
+也可以传入命令行参数，例如 `scripts\repair_upload\reupload_corrupt_sessions.bat --help`；
+带参数运行不会暂停。BAT 中的相对路径以工具仓库根目录为准。
+
+`scripts/repair_upload/reupload_corrupt_sessions.py` 读取异常 CSV 的 `session_path`、`session`、
 `error_type`、`bad_file` 列。`bad_file` 支持分号分隔多个文件。支持本地盘、映射盘和 UNC
 共享目录，`--root` 可重复传入；按完整 Session 名递归搜索，跳过工具暂存区和系统目录。
 
 先在 CMD 中预览位置（不上传，检查文件存在且非空；不会解码视频）：
 
 ```bat
-uv run python scripts/reupload_corrupt_sessions.py --csv "C:\path\corrupt_sessions_20260924.csv" --root "F:\" --root "\\SERVER\F" --output "_artifacts\repair_preview"
+scripts\repair_upload\reupload_corrupt_sessions.bat --csv "C:\path\corrupt_sessions_20260924.csv" --root "F:\." --root "\\SERVER\F" --output "_artifacts\repair_preview"
 ```
 
 将 `\\SERVER\F` 替换为真实共享路径。确认目录后加 `--apply`：
 
 ```bat
-uv run python scripts/reupload_corrupt_sessions.py --csv "C:\path\corrupt_sessions_20260924.csv" --root "F:\" --root "\\SERVER\F" --output "_artifacts\repair_run" --apply
+scripts\repair_upload\reupload_corrupt_sessions.bat --csv "C:\path\corrupt_sessions_20260924.csv" --root "F:\." --root "\\SERVER\F" --output "_artifacts\repair_run" --apply
 ```
 
 - 从 `.env` 读取 Token 和正常库仓库名；可用 `--repo-id owner/name` 显式指定目标。

@@ -4,7 +4,14 @@
 
 ## Repair Uploads From A Corruption CSV
 
-Run `uv run python scripts/reupload_corrupt_sessions.py --csv <report.csv> --root <local-root>
+The BAT launcher and Python entry point live together in `scripts/repair_upload/`.
+On Windows, double-click `reupload_corrupt_sessions.bat`, enter the CSV, local root (default
+`F:\`), and optional shared root. Enter previews only; type `UPLOAD` to validate and upload.
+The launcher uses the project's uv environment and keeps the console open after interactive runs.
+It also forwards CLI arguments, for example `scripts\repair_upload\reupload_corrupt_sessions.bat --help`.
+Relative paths resolve from the repository root when using the BAT launcher.
+
+Run `uv run python scripts/repair_upload/reupload_corrupt_sessions.py --csv <report.csv> --root <local-root>
 --root <network-share> --output <report-directory>` to locate matching Sessions without uploading.
 Roots support local drives, mapped drives, and UNC paths. Add `--apply` to validate and upload only
 the report's `bad_file` entries, preserving `session_path`, dates and other remote files. Credentials
