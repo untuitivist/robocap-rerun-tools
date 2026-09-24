@@ -2,6 +2,23 @@
 
 [中文文档](README.zh-CN.md)
 
+## Repair Uploads From A Corruption CSV
+
+Run `uv run python scripts/reupload_corrupt_sessions.py --csv <report.csv> --root <local-root>
+--root <network-share> --output <report-directory>` to locate matching Sessions without uploading.
+Roots support local drives, mapped drives, and UNC paths. Add `--apply` to validate and upload only
+the report's `bad_file` entries, preserving `session_path`, dates and other remote files. Credentials
+come from `.env`; `--repo-id owner/name` overrides the normal dataset repository.
+
+Videos are fully decoded before upload; TRC structure and NOKOV CSV parsing are checked. Original
+bytes are copied without compression. Invalid/missing sources and differing valid duplicates are
+reported instead of guessed. Manifest and index updates preserve unrelated Sessions and include
+participant metadata. Uploads retry three times after the initial failure, then continue with the
+next Session. Results and logs are written under the output directory with no processing timeout.
+Post-upload checks compare remote file sizes and metadata, not downloaded video hashes. This does
+not guarantee compatibility with an external fit/SLAM parser. Avoid concurrent writers to the same
+dataset metadata index during repairs. See the Chinese guide for Windows command examples.
+
 ## Fault Dataset Uploads
 
 ### Participant Demographics

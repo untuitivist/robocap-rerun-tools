@@ -2,6 +2,40 @@
 
 [English documentation](README.md)
 
+## 按异常清单查找源数据并重传
+
+`scripts/reupload_corrupt_sessions.py` 读取异常 CSV 的 `session_path`、`session`、
+`error_type`、`bad_file` 列。`bad_file` 支持分号分隔多个文件。支持本地盘、映射盘和 UNC
+共享目录，`--root` 可重复传入；按完整 Session 名递归搜索，跳过工具暂存区和系统目录。
+
+先在 CMD 中预览位置（不上传，检查文件存在且非空；不会解码视频）：
+
+```bat
+uv run python scripts/reupload_corrupt_sessions.py --csv "C:\path\corrupt_sessions_20260924.csv" --root "F:\" --root "\\SERVER\F" --output "_artifacts\repair_preview"
+```
+
+将 `\\SERVER\F` 替换为真实共享路径。确认目录后加 `--apply`：
+
+```bat
+uv run python scripts/reupload_corrupt_sessions.py --csv "C:\path\corrupt_sessions_20260924.csv" --root "F:\" --root "\\SERVER\F" --output "_artifacts\repair_run" --apply
+```
+
+- 从 `.env` 读取 Token 和正常库仓库名；可用 `--repo-id owner/name` 显式指定目标。
+- 保留 CSV 中的原日期、动作和 Session 路径。只覆盖 `bad_file` 中的问题文件，同步更新
+  该 Session 的 manifest 和元数据，不重新传整个 Session、不删除其他文件、不改写 README。
+- `mocap/文件名` 可匹配本地 `mocap*` 目录；优先沿用远端 manifest 中的真实路径。
+- 上传前完整解码问题视频，检查 TRC 的坐标列、帧数和数值，使用现有 NOKOV 解析器验证 CSV。
+  不重编码、不修补原文件。未找到、本地仍损坏、路径歧义的 Session 跳过并写明原因。
+- 多个有效源副本内容不一致时不自动选择；指定更精确的根目录后重试。
+- 每个 Session 顺序提交，上传失败额外重试 3 次，再跳过继续。使用禁用缓存的覆盖上传，
+  上传后核对远端文件大小、manifest 和索引；不下载整段远端视频做哈希验证。
+- CMD 持续输出进度，输出目录保存 `run.log`、逐视频解码日志、`results.csv`、
+  `results.json` 和上传暂存文件。没有处理超时。
+
+`uploaded_verified` 表示文件已上传且上述校验通过，不代表其他项目的 fit/SLAM 流程已通过。
+尤其 TRC 的表头行数和列布局可能与下游读取代码不兼容，重新上传不会改变这些格式。
+修复过程中应避免其他进程同时写入同一数据集索引，以免相互覆盖更新。
+
 ## 错误数据集上传
 
 ### 上传时自动补充人员信息
