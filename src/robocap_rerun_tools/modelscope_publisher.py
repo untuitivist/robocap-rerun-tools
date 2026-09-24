@@ -2505,6 +2505,9 @@ def upload_staged_dataset(
             )
         staged.metadata_path.write_text(merged_metadata, encoding="utf-8", newline="\n")
         try:
+            from .upload_verification import prepare_inventory, verify_and_repair
+
+            inventory = prepare_inventory(staged, progress)
             commit_result = api.upload_folder(
                 repository,
                 "dataset",
@@ -2516,6 +2519,11 @@ def upload_staged_dataset(
                 max_workers=max_workers,
                 use_cache=use_cache,
                 disable_tqdm=False,
+            )
+            verify_and_repair(
+                staged, local_entries, inventory, api=api, repository=repository,
+                revision=target_revision, max_workers=max_workers, token=resolved.token,
+                progress=progress,
             )
         finally:
             staged.metadata_path.write_text(local_metadata, encoding="utf-8", newline="\n")

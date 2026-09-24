@@ -27,6 +27,23 @@ Post-upload checks compare remote file sizes and metadata, not downloaded video 
 not guarantee compatibility with an external fit/SLAM parser. Avoid concurrent writers to the same
 dataset metadata index during repairs. See the Chinese guide for Windows command examples.
 
+## Post-Upload Verification
+
+Single, batch and fault uploads verify every staged file's remote presence, size and SHA-256,
+plus the uploaded Session metadata, before reporting success. Files declared in the manifest
+must exist locally with matching sizes before uploading. Hashing streams through bounded buffers.
+When remote SHA-256 is unavailable, a forced download provides the checksum; this uses extra
+bandwidth and download-cache space.
+
+Only missing or mismatched files are reuploaded, with upload caching disabled, up to three repair
+attempts followed by verification. Unresolved batches are failed, and batch processing continues.
+Remote listing failures are reported as unverifiable, without blindly overwriting data. Metadata
+repairs re-read and merge the latest index to retain unrelated Sessions. Progress appears in Web/CMD;
+`upload_verification.json` in each staging root records hashes, issues per attempt and final status.
+This verifies transfer integrity, not video decodability or downstream Mocap parser compatibility.
+It does not add files omitted from the upload selection or fix damaged originals. No video compression
+is performed by verification or repair.
+
 ## Fault Dataset Uploads
 
 ### Participant Demographics

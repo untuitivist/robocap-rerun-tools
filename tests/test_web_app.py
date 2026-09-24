@@ -273,7 +273,8 @@ def test_statistics_can_rebuild_existing_report(tmp_path, monkeypatch) -> None:
     assert "重做检查" in snapshots[-1][0]
 
 
-def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("verification_failure", [False, True])
+def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatch, verification_failure) -> None:
     from robocap_rerun_tools import cli, dataset_statistics, modelscope_publisher
 
     monkeypatch.setattr(web_app, "STREAM_REFRESH_SECONDS", 0.01)
@@ -373,6 +374,10 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
                 assert second_batch_staged.wait(2)
                 threading.Event().wait(0.03)
             if staged.dataset_root.name == "batch_0002":
+                if verification_failure:
+                    from robocap_rerun_tools.upload_verification import UploadVerificationError
+
+                    raise UploadVerificationError("verification failed after repairs")
                 raise modelscope_publisher.ModelScopePublisherError("simulated upload failure")
         finally:
             with upload_lock:
@@ -420,7 +425,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
         for call in staged_calls
     )
     assert [root.name for root, _ in upload_calls].count("batch_0001") == 1
-    assert [root.name for root, _ in upload_calls].count("batch_0002") == 4
+    assert [root.name for root, _ in upload_calls].count("batch_0002") == (1 if verification_failure else 4)
     assert {workers for _, workers in upload_calls} == {12}
     assert maximum_active_uploads == 1
     assert set(validated_roots) == {call[2] for call in staged_calls}
@@ -430,7 +435,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     assert "P01/session-uploaded" in output
     assert "P03/session-clean-one: 远端不完整，将重新上传" in output
     assert "session-problem: unchecked or frame-count difference" in output
-    assert "批次 2 重试 3 次后仍失败，跳过 1 个 Session" in output
+    assert "批次 2 上传或校验未通过，跳过 1 个 Session" in output
     assert "批量处理完成：新增 1；替换 0；失败跳过 1；已上传跳过 1；本地排除 1" in output
 
 

@@ -931,6 +931,59 @@ def test_stage_rejects_selected_rrd_outside_current_segment(tmp_path: Path) -> N
         )
 
 
+@pytest.fixture
+def isolated_upload_verifier(monkeypatch):
+    # These tests isolate staging/metadata; real verification is exercised separately.
+    from robocap_rerun_tools import upload_verification
+
+    calls = []
+    monkeypatch.setattr(upload_verification, "verify_and_repair", lambda *a, **k: calls.append(k))
+    yield
+    assert calls, "Successful uploads must invoke post-upload verification"
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_upload_integrates_verification_and_restores_local_index(tmp_path, persistent):
+    from test_upload_verification import RemoteApi
+
+    from robocap_rerun_tools.upload_verification import UploadVerificationError
+
+    staged = stage_fixture(tmp_path)
+    api = RemoteApi(tmp_path)
+    api.whoami = lambda: SimpleNamespace(username="owner")
+    api.repo_exists = lambda *a: True
+    other = {"primitive_id": "P99", "session_id": "other", "duration_s": 1}
+    api.files["metadata.jsonl"] = (json.dumps(other) + "\n").encode()
+    original_upload = api.upload_folder
+
+    def upload_with_loss(repo, kind, root, **kwargs):
+        original_upload(repo, kind, root, **kwargs)
+        if persistent or len(api.uploads) == 1:
+            api.files.pop("README.md", None)
+
+    api.upload_folder = upload_with_loss
+    settings = publisher.ModelScopeSettings("test", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/data")
+
+    def upload():
+        return publisher.upload_staged_session(staged, None, api=api, settings=settings,
+                                               upload_date="20260925", progress=None)
+
+    if persistent:
+        with pytest.raises(UploadVerificationError, match="after 3 repair attempts"):
+            upload()
+        assert len(api.uploads) == 4
+    else:
+        result = upload()
+        assert result.session_count == 1
+        assert len(api.uploads) == 2
+    local = publisher._read_metadata(staged.metadata_path)
+    assert len(local) == 1
+    assert local[0]["session_id"] == staged.session_id
+    remote = [json.loads(line) for line in api.files["metadata.jsonl"].decode().splitlines()]
+    assert other in remote
+
+
+@pytest.mark.usefixtures("isolated_upload_verifier")
 def test_upload_staged_session_uploads_every_indexed_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1031,6 +1084,7 @@ def test_upload_staged_session_uploads_every_indexed_session(
     )
 
 
+@pytest.mark.usefixtures("isolated_upload_verifier")
 def test_upload_refreshes_participants_in_index_and_manifest(tmp_path: Path) -> None:
     staged = stage_fixture(tmp_path)
     entry = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
@@ -1072,6 +1126,7 @@ def test_upload_refreshes_participants_in_index_and_manifest(tmp_path: Path) -> 
     assert [row["participant_height_cm"] for row in uploads] == [160, 161]
 
 
+@pytest.mark.usefixtures("isolated_upload_verifier")
 def test_upload_retry_reuses_existing_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     staged = stage_fixture(tmp_path)
     upload_calls: list[dict[str, object]] = []
@@ -1118,6 +1173,7 @@ def test_upload_retry_reuses_existing_batch(tmp_path: Path, monkeypatch: pytest.
     assert upload_calls[0]["allow_patterns"] == upload_calls[1]["allow_patterns"]
 
 
+@pytest.mark.usefixtures("isolated_upload_verifier")
 def test_failed_file_transfer_retry_reuses_finalized_batch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

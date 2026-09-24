@@ -3657,6 +3657,10 @@ def bulk_upload_clean_modelscope_sessions(
                 return None
             except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
                 event_queue.put(f"[{scope}] failed: {exc}")
+                from .upload_verification import UploadVerificationError
+
+                if isinstance(exc, UploadVerificationError):
+                    return exc
                 if attempt == attempts:
                     return exc
         return RuntimeError("unreachable upload retry state")
@@ -3715,11 +3719,11 @@ def bulk_upload_clean_modelscope_sessions(
                 if upload_error is not None:
                     failed_items += len(prepared)
                     add(
-                        f"批次 {batch_index} 重试 3 次后仍失败，跳过 {len(prepared)} 个 Session："
+                        f"批次 {batch_index} 上传或校验未通过，跳过 {len(prepared)} 个 Session："
                         f"{upload_error}"
                         if is_chinese
                         else (
-                            f"Batch {batch_index} still failed after 3 retries; skipped "
+                            f"Batch {batch_index} upload or verification failed; skipped "
                             f"{len(prepared)} Session(s): {upload_error}"
                         )
                     )
@@ -3727,10 +3731,10 @@ def bulk_upload_clean_modelscope_sessions(
                     completed_replacements += sum(1 for item in prepared if item.is_replacement)
                     completed_new += sum(1 for item in prepared if not item.is_replacement)
                     add(
-                        f"批次 {batch_index}/{len(batches)} 上传完成：{len(prepared)} 个 Session。"
+                        f"批次 {batch_index}/{len(batches)} 上传并校验通过：{len(prepared)} 个 Session。"
                         if is_chinese
                         else (
-                            f"Batch {batch_index}/{len(batches)} upload complete: "
+                            f"Batch {batch_index}/{len(batches)} uploaded and verified: "
                             f"{len(prepared)} Session(s)."
                         )
                     )
