@@ -819,6 +819,11 @@ HTML_TEMPLATE = r"""<!doctype html>
     h2 { margin:22px 0 9px; font-size:17px; } .file-table { min-width:1200px; } .file-table td:first-child { white-space:normal; overflow-wrap:anywhere; }
     .pager { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; margin:9px 0; }
     .pager-controls { display:flex; align-items:center; gap:5px; } .pager input { width:72px; text-align:center; }
+    .subtitle { overflow-wrap:anywhere; } .pager-controls { flex-wrap:wrap; }
+    .column-sort { background:transparent; color:inherit; border:0; width:100%; text-align:left; }
+    .column-filter { text-align:left; font-weight:normal; } .column-filter summary { cursor:pointer; padding:5px; }
+    .column-filter input,.column-filter select { display:block; width:150px; margin:4px 0; }
+    .column-filter.active summary { color:var(--bad); font-weight:700; }
     .event-table { min-width:2050px; } .event-table th,.event-table td { font-size:10px; } .event-table td.file { width:260px; max-width:260px; text-align:left; white-space:normal; overflow-wrap:anywhere; }
     .event-table td.problem { width:500px; max-width:500px; text-align:left; white-space:normal; line-height:1.45; }
     .timestamp_missing td { background:#fff9ed; } .timestamp_too_long td,.timestamp_duplicate td,.timestamp_reversed td,.frame_index_gap td,.frame_index_duplicate td,.frame_index_reversed td { background:#fff5f4; }
@@ -859,10 +864,45 @@ HTML_TEMPLATE = r"""<!doctype html>
     function renderFiles(){const root=document.getElementById('fileRows');report.files.forEach(file=>{const tr=document.createElement('tr');const range=file.minDiffMs==null?'-':`${fixed(file.minDiffMs,3)} - ${fixed(file.maxDiffMs,3)} ms`;[file.path,file.kind,file.stream,number(file.frames),fixed(file.expectedFps,3),number(file.diffs),number(file.skipped),number(file.abnormal),number(file.missing),number(file.frameIssues),range].forEach((value,index)=>tr.appendChild(el('td',index>=6&&index<=9&&value!=='0'?'alert':'',value)));root.appendChild(tr);});}
     function eventType(event){return eventTypes[event[2]];} function eventFile(event){return report.files[event[1]];}
     function populateFilters(){const kind=document.getElementById('kindFilter');[...new Set(report.files.map(file=>file.kind))].sort().forEach(value=>{const option=el('option','',value);option.value=value;kind.appendChild(option);});const type=document.getElementById('typeFilter');[...new Set(report.events.map(eventType))].sort().forEach(value=>{const option=el('option','',labels[value]);option.value=value;type.appendChild(option);});}
-    function applyFilters(){const kind=document.getElementById('kindFilter').value;const type=document.getElementById('typeFilter').value;const query=document.getElementById('search').value.trim().toLowerCase();filtered=report.events.filter(event=>{const file=eventFile(event);if(kind!=='all'&&file.kind!==kind)return false;if(type!=='all'&&eventType(event)!==type)return false;if(!query)return true;return `${file.path} ${event[3]} ${event[4]} ${event[5]} ${event[6]} ${event[7]} ${event[8]}`.toLowerCase().includes(query);});page=1;renderEvents();}
+    const columns=[
+      {get:e=>e[0]}, {text:true,get:e=>`${eventFile(e).kind} ${eventFile(e).path}`},
+      {text:true,get:e=>`${labels[eventType(e)]} ${eventType(e)}`},
+      ...[3,4,5].map(index=>({fields:['行号','frame_index'],get:(e,field)=>e[index+(field===1?3:0)]})),
+      ...[9,10,11,12].map(index=>({get:e=>e[index],unit:index===12?'ms':'s'})),
+      {fields:['下限 ms','上限 ms'],get:(e,field)=>e[13+field]},
+      {get:e=>e[15]}, {text:true,get:e=>e[16]}
+    ];
+    let sortColumn=-1,sortDirection=1;
+    function setupColumns(){
+      document.querySelectorAll('.event-table thead th').forEach((th,index)=>{
+        const column=columns[index];column.label=th.textContent;column.field=0;column.th=th;
+        const button=el('button','column-sort',column.label+' ↕');button.type='button';
+        button.title='排序：升序 / 降序 / 原始顺序';column.button=button;
+        button.addEventListener('click',()=>{if(sortColumn!==index){sortColumn=index;sortDirection=1;}else if(sortDirection===1){sortDirection=-1;}else{sortColumn=-1;}applyFilters();});
+        const details=el('details','column-filter');details.append(el('summary','','筛选'));column.details=details;
+        if(column.fields){const select=el('select');column.fields.forEach((label,i)=>{const option=el('option','',label);option.value=i;select.append(option);});select.setAttribute('aria-label',column.label+' 数值依据');select.addEventListener('change',()=>{column.field=Number(select.value);applyFilters();});details.append(select);column.select=select;}
+        column.inputs=[];
+        (column.text?['包含文字']:['最小值','最大值']).forEach((label,i)=>{const input=el('input');input.type=column.text?'search':'number';if(!column.text)input.step='any';input.placeholder=label+(column.unit?' ('+column.unit+')':'');input.setAttribute('aria-label',column.label+' '+label);input.addEventListener('input',applyFilters);details.append(input);column.inputs.push(input);});
+        const presence=el('select');[['all','全部值'],['missing','仅缺失值'],['present','仅非缺失值']].forEach(([value,label])=>{const option=el('option','',label);option.value=value;presence.append(option);});presence.setAttribute('aria-label',column.label+' 缺失筛选');presence.addEventListener('change',applyFilters);details.append(presence);column.presence=presence;
+        th.replaceChildren(button,details);
+      });
+      const reset=el('button','','重置筛选与排序');reset.id='resetEventFilters';reset.addEventListener('click',()=>{document.getElementById('kindFilter').value='all';document.getElementById('typeFilter').value='all';document.getElementById('search').value='';sortColumn=-1;columns.forEach(column=>{column.inputs.forEach(input=>input.value='');column.presence.value='all';column.field=0;if(column.select)column.select.value='0';});applyFilters();});document.querySelector('.toolbar').append(reset);
+    }
+    function applyFilters(){
+      const kind=document.getElementById('kindFilter').value,type=document.getElementById('typeFilter').value,query=document.getElementById('search').value.trim().toLowerCase();
+      const criteria=columns.map(column=>({column,values:column.inputs.map(input=>input.value.trim()),presence:column.presence.value}));
+      filtered=report.events.filter(event=>{
+        const file=eventFile(event);if(kind!=='all'&&file.kind!==kind)return false;if(type!=='all'&&eventType(event)!==type)return false;
+        if(query&&!`${file.path} ${event.slice(3,9).join(' ')} ${event[16]}`.toLowerCase().includes(query))return false;
+        return criteria.every(({column,values,presence})=>{const value=column.get(event,column.field),missing=value==null||value==='';if(presence==='missing'&&!missing||presence==='present'&&missing)return false;if(column.text)return !values[0]||(!missing&&String(value).toLowerCase().includes(values[0].toLowerCase()));if(!values.some(Boolean))return true;if(missing)return false;return (!values[0]||value>=Number(values[0]))&&(!values[1]||value<=Number(values[1]));});
+      });
+      if(sortColumn>=0){const column=columns[sortColumn];filtered.sort((a,b)=>{const x=column.get(a,column.field),y=column.get(b,column.field);if(x==null||y==null)return x==null?(y==null?0:1):-1;return sortDirection*(column.text?String(x).localeCompare(String(y),'zh-CN',{numeric:true}):x-y);});}
+      criteria.forEach(({column,values,presence},index)=>{column.th.setAttribute('aria-sort',sortColumn===index?(sortDirection===1?'ascending':'descending'):'none');column.button.textContent=column.label+(sortColumn===index?(sortDirection===1?' ↑':' ↓'):' ↕');column.details.classList.toggle('active',values.some(Boolean)||presence!=='all');});
+      page=1;renderEvents();
+    }
     function renderEvents(){const size=Number(document.getElementById('pageSize').value);const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.max(1,Math.min(page,pages));const start=(page-1)*size,end=Math.min(start+size,filtered.length);const root=document.getElementById('eventRows');root.replaceChildren();filtered.slice(start,end).forEach(event=>{const file=eventFile(event),type=eventType(event),tr=document.createElement('tr');tr.className=type;tr.appendChild(el('td','',number(event[0])));const fileCell=el('td','file');fileCell.append(el('strong','',file.kind),document.createElement('br'),document.createTextNode(file.path));tr.appendChild(fileCell);[labels[type],position(event[3],event[6]),position(event[4],event[7]),position(event[5],event[8]),timestamp(event[9]),timestamp(event[10]),timestamp(event[11]),event[12]==null?'-':`${fixed(event[12])} ms`,event[13]==null?'-':`${fixed(event[13],3)}-${fixed(event[14],3)} ms`,number(event[15])].forEach(value=>tr.appendChild(el('td','',value)));tr.appendChild(el('td','problem',event[16]));root.appendChild(tr);});document.getElementById('pageMeta').textContent=filtered.length?`显示 ${number(start+1)}-${number(end)} / ${number(filtered.length)} 个异常点`:'没有符合条件的异常点';document.getElementById('page').value=String(page);document.getElementById('page').max=String(pages);document.getElementById('pageCount').textContent=`/ ${number(pages)}`;}
     ['kindFilter','typeFilter','pageSize'].forEach(id=>document.getElementById(id).addEventListener('change',applyFilters));document.getElementById('search').addEventListener('input',applyFilters);document.getElementById('first').addEventListener('click',()=>{page=1;renderEvents();});document.getElementById('prev').addEventListener('click',()=>{page-=1;renderEvents();});document.getElementById('next').addEventListener('click',()=>{page+=1;renderEvents();});document.getElementById('last').addEventListener('click',()=>{page=Number(document.getElementById('page').max);renderEvents();});document.getElementById('page').addEventListener('change',event=>{page=Number(event.target.value)||1;renderEvents();});
-    renderHeader();renderSummary();renderThirdDrops();renderFiles();populateFilters();applyFilters();
+    renderHeader();renderSummary();renderThirdDrops();renderFiles();populateFilters();setupColumns();applyFilters();
   </script>
 </body>
 </html>
