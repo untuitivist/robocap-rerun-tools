@@ -48,6 +48,106 @@ def embedded_report(document: str) -> dict[str, object]:
     return json.loads(document[start:end])
 
 
+@pytest.mark.parametrize("ratio", [4, 8])
+def test_third_person_drop_summary_and_independent_videos(tmp_path, monkeypatch, ratio):
+    session = tmp_path / "session"
+    cap = session / "robocap_segment1_video_left.mp4"
+    first = session / "mocap/first.mp4"
+    second = session / "mocap/second.mp4"
+    timestamps = {
+        cap: [i / 30 for i in range(7)],
+        first: [0, 0.033, 0.067, 0.134, 0.234],
+        second: [0, 0.033, 0.067, 0.1, 0.133, 0.167, 0.2, 0.233],
+    }
+    monkeypatch.setattr(
+        "robocap_rerun_tools.timestamp_anomaly.video_samples",
+        lambda path: [TimestampSample(None, i, str(t), t) for i, t in enumerate(timestamps[path])],
+    )
+    summaries = [
+        make_summary(cap, "video", 7, 30, stream="robocap_video"),
+        make_summary(first, "video", 5, 29.99, stream="third_person_video"),
+        make_summary(second, "video", 8, 30, stream="third_person_video"),
+    ]
+    output = write_timestamp_anomaly_report(
+        session, "segment1", summaries, tmp_path / "out", None, ratio
+    )
+    document = output.read_text(encoding="utf-8")
+    report = embedded_report(document)
+    assert report["estimatedThirdDropped"] == 3
+    assert report["expectedThirdDropped"] == 3
+    assert report["thirdDroppedMatch"] is True
+    assert report["timingSource"] is None
+    assert report["estimatedDropped"] is None
+    assert [
+        (r["estimatedDropped"], r["expectedDropped"], r["droppedMatch"])
+        for r in report["thirdDropReports"]
+    ] == [(3, 3, True), (0, 0, True)]
+    assert "第三人称推算丢帧" in document
+    assert "renderThirdDrops();" in document
+    assert "<script src=" not in document
+    assert {e[15] for e in report["events"]} == {1, 2}
+
+
+@pytest.mark.parametrize(
+    "times,expected,match",
+    [
+        ([0, 0.033, 0.067, 0.1], 0, False),
+        ([0, None, 0.1, 0.133], 0, False),
+        ([], None, None),
+        ([None, None], None, None),
+    ],
+)
+def test_third_person_inference_does_not_bridge_missing_timestamps(
+    tmp_path, monkeypatch, times, expected, match
+):
+    session = tmp_path / "session"
+    cap = session / "robocap_segment1_video_left.mp4"
+    third = session / "third.mp4"
+
+    def samples(path):
+        values = [i / 30 for i in range(4)] if path == cap else times
+        return [TimestampSample(None, i, str(t), t) for i, t in enumerate(values)]
+
+    monkeypatch.setattr("robocap_rerun_tools.timestamp_anomaly.video_samples", samples)
+    output = write_timestamp_anomaly_report(
+        session,
+        "segment1",
+        [
+            make_summary(cap, "video", 4, 30),
+            make_summary(third, "video", 4, 30, stream="third_person_video"),
+        ],
+        tmp_path / "out",
+        None,
+    )
+    report = embedded_report(output.read_text(encoding="utf-8"))
+    assert report["estimatedThirdDropped"] == expected
+    assert report["expectedThirdDropped"] == 1
+    assert report["thirdDroppedMatch"] is match
+
+
+def test_third_person_timestamp_read_failure_is_not_zero_drops(tmp_path, monkeypatch):
+    session = tmp_path / "session"
+
+    def fail(_path):
+        raise ValueError("bad video")
+
+    monkeypatch.setattr("robocap_rerun_tools.timestamp_anomaly.video_samples", fail)
+    output = write_timestamp_anomaly_report(
+        session,
+        "segment1",
+        [
+            make_summary(session / "robocap_segment1_video_left.mp4", "video", 4, 30),
+            make_summary(session / "third.mp4", "video", 5, 30, stream="third_person_video"),
+        ],
+        tmp_path / "out",
+        None,
+    )
+    report = embedded_report(output.read_text(encoding="utf-8"))
+    assert len(report["thirdDropReports"]) == 1
+    assert report["estimatedThirdDropped"] is None
+    assert report["thirdDroppedMatch"] is None
+
+
 def test_diff_only_uses_adjacent_valid_rows_and_estimates_dropped_frames() -> None:
     samples = [
         TimestampSample(10, 1, "1.000", 1.000),

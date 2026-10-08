@@ -2,6 +2,12 @@
 
 [English documentation](README.md)
 
+检查 HTML 同时显示动捕与第三人称的推算丢帧。第三人称固定按 30 FPS，
+相邻有效时间戳约 66.667 ms 推算丢 1 帧、100 ms 推算丢 2 帧，
+并与 `max(n+1-实际帧数, 0)` 对比。多个第三人称视频分别统计。
+缺失时间戳不跨行计算；没有有效 diff 时显示 `-`。视频 PTS 连续并不能排除采集丢帧，
+固定帧率重编码、首尾缺帧等情况可能无法靠 diff 推算。旧 HTML 需要重新检查生成。
+
 ## 按异常清单查找源数据并重传
 
 BAT 与 Python 入口放在独立目录 `scripts/repair_upload/`。Windows 下双击

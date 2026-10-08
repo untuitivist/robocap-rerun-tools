@@ -109,7 +109,12 @@ def normalize_optional_times(values: list[float | None], column_name: str) -> li
         divisor = 1e9
     elif median_diff >= 1_000:
         divisor = 1e6
-    elif "timestamp" in lowered.replace(" ", "") and median_diff >= 1.0 or max_abs > 1e9 and median_diff >= 0.5:
+    elif (
+        "timestamp" in lowered.replace(" ", "")
+        and median_diff >= 1.0
+        or max_abs > 1e9
+        and median_diff >= 0.5
+    ):
         divisor = 1e3
     else:
         divisor = 1.0
@@ -541,9 +546,7 @@ def target_summary(summary: StreamSummary) -> bool:
     return summary.kind == "video" or summary.kind.lower() in MOCAP_KINDS | SENSOR_KINDS
 
 
-def expected_fps_for_summary(
-    summary: StreamSummary, mocap_ratio: int = FRAME_COUNT_RATIO
-) -> float:
+def expected_fps_for_summary(summary: StreamSummary, mocap_ratio: int = FRAME_COUNT_RATIO) -> float:
     if summary.kind == "video":
         return VIDEO_EXPECTED_FPS
     if summary.kind.lower() in MOCAP_KINDS:
@@ -619,7 +622,7 @@ def reference_robocap_frames(summaries: Iterable[StreamSummary]) -> int | None:
 def primary_mocap_result(
     results: list[TimestampSourceResult], frame_count: int | None
 ) -> TimestampSourceResult | None:
-    candidates = [result for result in results if result.kind != "third_person_video"]
+    candidates = [result for result in results if result.kind in MOCAP_KINDS]
     if not candidates:
         return None
     kind_priority = {"csv": 0, "xrs": 1, "tsv": 2, "trc": 3, "bvh": 4}
@@ -636,7 +639,7 @@ def primary_mocap_result(
 
 
 def estimated_dropped_frames(result: TimestampSourceResult | None) -> int | None:
-    if result is None:
+    if result is None or result.diff_count == 0:
         return None
     return sum(
         event.estimated_dropped_frames or 0
@@ -647,6 +650,29 @@ def estimated_dropped_frames(result: TimestampSourceResult | None) -> int | None
 
 def sample_value(sample: TimestampSample | None, attribute: str) -> object | None:
     return getattr(sample, attribute) if sample is not None else None
+
+
+def drop_comparison(result: TimestampSourceResult, expected: int | None) -> dict[str, object]:
+    delta = (
+        result.frame_count - expected
+        if result.frame_count is not None and expected is not None
+        else None
+    )
+    estimated = estimated_dropped_frames(result)
+    missing = max(-delta, 0) if delta is not None else None
+    return {
+        "path": result.relative_path,
+        "frames": result.frame_count,
+        "expected": expected,
+        "delta": delta,
+        "estimatedDropped": estimated,
+        "expectedDropped": missing,
+        "droppedMatch": (
+            delta <= 0 and estimated == missing
+            if estimated is not None and delta is not None
+            else None
+        ),
+    }
 
 
 def compact_event(event: TimestampEvent, file_index: int) -> list[object]:
@@ -699,6 +725,12 @@ def report_payload(
         if third_frames is not None and expected_third is not None
         else None
     )
+    third_results = sorted(
+        (result for result in results if result.path in {item.path for item in third_summaries}),
+        key=lambda result: (result.frame_count != third_frames, result.relative_path.lower()),
+    )
+    third_drops = [drop_comparison(result, expected_third) for result in third_results]
+    third_primary = third_drops[0] if third_drops else {}
     primary = primary_mocap_result(results, mocap_frames)
     expected_mocap_fps = mocap_expected_fps(ratio)
     estimated_dropped = estimated_dropped_frames(primary)
@@ -750,6 +782,11 @@ def report_payload(
         "thirdFrames": third_frames,
         "expectedThird": expected_third,
         "thirdDelta": third_delta,
+        "thirdTimingSource": third_primary.get("path"),
+        "estimatedThirdDropped": third_primary.get("estimatedDropped"),
+        "expectedThirdDropped": third_primary.get("expectedDropped"),
+        "thirdDroppedMatch": third_primary.get("droppedMatch"),
+        "thirdDropReports": third_drops,
         "abnormalDiffs": sum(result.abnormal_diff_count for result in results),
         "skippedDiffs": sum(result.skipped_diff_count for result in results),
         "missingTimestamps": sum(result.missing_timestamp_count for result in results),
@@ -796,7 +833,10 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="stats" id="stats"></div>
   </header>
   <main>
-    <div class="summary table-wrap"><table><thead><tr><th>Session</th><th>Robocap n</th><th>动捕实际</th><th id="expectedMocapHeader">ratio*(n+1)</th><th>动捕差异</th><th>异常 diff 推算丢帧</th><th>动捕缺少帧数</th><th>是否对上</th><th>第三人称实际</th><th>n+1</th><th>第三人称差异</th></tr></thead><tbody id="summaryRow"></tbody></table></div>
+    <div class="summary table-wrap"><table><thead><tr><th>Session</th><th>Robocap n</th><th>动捕实际</th><th id="expectedMocapHeader">ratio*(n+1)</th><th>动捕差异</th><th>动捕推算丢帧</th><th>动捕缺少帧数</th><th>动捕是否对上</th><th>第三人称实际</th><th>n+1</th><th>第三人称差异</th><th>第三人称推算丢帧</th><th>第三人称缺少帧数</th><th>第三人称是否对上</th></tr></thead><tbody id="summaryRow"></tbody></table></div>
+    <section id="thirdDropSection" hidden><h2>第三人称推算丢帧 / Third-person inferred drops</h2>
+    <p>按视频相邻有效时间戳计算：max(round(diff / (1000/30) ms) - 1, 0)。正常整数毫秒间隔为 33/34 ms；约 66.667 ms 推算丢 1 帧，100 ms 推算丢 2 帧。无有效 diff 显示“-”。时间戳连续或固定帧率重编码时，不能靠 diff 发现所有采集丢帧；首尾缺帧也未必可见。缺失 Timestamp 前后不跨行相减。</p>
+    <div class="table-wrap"><table><thead><tr><th>视频</th><th>实际帧数</th><th>期望 n+1</th><th>差异</th><th>异常 diff 推算丢帧</th><th>缺少帧数</th><th>是否对上</th></tr></thead><tbody id="thirdDropRows"></tbody></table></div></section>
     <h2>数据流 / Streams</h2>
     <div class="table-wrap"><table class="file-table"><thead><tr><th>文件</th><th>格式</th><th>流</th><th>帧/行</th><th>期望 FPS</th><th>有效 diff</th><th>跳过 diff</th><th>异常 diff</th><th>缺失 Timestamp</th><th>frame_index 问题</th><th>diff 范围</th></tr></thead><tbody id="fileRows"></tbody></table></div>
     <h2>逐点异常 / Point-level anomalies</h2>
@@ -812,14 +852,17 @@ HTML_TEMPLATE = r"""<!doctype html>
     const number=value=>value==null?'-':nf.format(value); const fixed=(value,digits=6)=>value==null?'-':Number(value).toFixed(digits); const delta=value=>value==null?'-':`${value>0?'+':''}${number(value)}`;
     const position=(row,frame)=>`${row==null?'row -':`row ${row}`} / ${frame==null?'frame -':`frame ${frame}`}`; const timestamp=value=>value==null?'-':`${Number(value).toFixed(9)} s`;
     function renderHeader(){document.getElementById('subtitle').textContent=`${report.sessionPath} / ${report.segment}。检查基线：动捕 ${number(report.mocapExpectedFps)} FPS、视频 30 FPS、帧数关系 ${report.ratio}*(n+1)。diff 只计算相邻且 Timestamp 均有效的数据行；缺失行前后不会跨行相减。动捕推算丢帧 = max(round(diff / ${(1000/report.mocapExpectedFps).toFixed(6)} ms) - 1, 0)，仅累计主 Body 时间戳流 ${report.timingSource||'-'}。`;document.getElementById('expectedMocapHeader').textContent=`${report.ratio}*(n+1)`; const stats=[['异常 diff',report.abnormalDiffs],['跳过 diff',report.skippedDiffs],['缺失 Timestamp',report.missingTimestamps],['frame_index 问题',report.frameIssues],['逐点事件',report.events.length]]; const root=document.getElementById('stats');stats.forEach(([label,value])=>{const span=el('span');span.append(document.createTextNode(`${label}: `),el('strong','',number(value)));root.appendChild(span);});}
-    function renderSummary(){const tr=document.createElement('tr');const match=report.droppedMatch==null?'-':report.droppedMatch?'是':'否';const cells=[[report.session,''],[number(report.referenceFrames),''],[number(report.mocapFrames),''],[number(report.expectedMocap),''],[delta(report.mocapDelta),report.mocapDelta?'alert':''],[number(report.estimatedDropped),''],[number(report.expectedDropped),''],[match,report.droppedMatch==null?'':report.droppedMatch?'match':'mismatch'],[number(report.thirdFrames),''],[number(report.expectedThird),''],[delta(report.thirdDelta),report.thirdDelta?'alert':'']];cells.forEach(([value,cls])=>tr.appendChild(el('td',cls,value)));document.getElementById('summaryRow').appendChild(tr);}
+    const matchText=value=>value==null?'-':value?'是':'否';
+    const matchClass=value=>value==null?'':value?'match':'mismatch';
+    function renderSummary(){const tr=document.createElement('tr');const cells=[[report.session,''],[number(report.referenceFrames),''],[number(report.mocapFrames),''],[number(report.expectedMocap),''],[delta(report.mocapDelta),report.mocapDelta?'alert':''],[number(report.estimatedDropped),''],[number(report.expectedDropped),''],[matchText(report.droppedMatch),matchClass(report.droppedMatch)],[number(report.thirdFrames),''],[number(report.expectedThird),''],[delta(report.thirdDelta),report.thirdDelta?'alert':''],[number(report.estimatedThirdDropped),''],[number(report.expectedThirdDropped),''],[matchText(report.thirdDroppedMatch),matchClass(report.thirdDroppedMatch)]];cells.forEach(([value,cls])=>tr.appendChild(el('td',cls,value)));tr.title=`第三人称汇总来源：${report.thirdTimingSource||'-'}；多个视频逐项见下表`;document.getElementById('summaryRow').appendChild(tr);}
+    function renderThirdDrops(){const rows=report.thirdDropReports||[];document.getElementById('thirdDropSection').hidden=!rows.length;const root=document.getElementById('thirdDropRows');rows.forEach(row=>{const tr=el('tr');[[row.path,''],[number(row.frames),''],[number(row.expected),''],[delta(row.delta),row.delta?'alert':''],[number(row.estimatedDropped),''],[number(row.expectedDropped),''],[matchText(row.droppedMatch),matchClass(row.droppedMatch)]].forEach(([value,cls])=>tr.appendChild(el('td',cls,value)));root.appendChild(tr);});}
     function renderFiles(){const root=document.getElementById('fileRows');report.files.forEach(file=>{const tr=document.createElement('tr');const range=file.minDiffMs==null?'-':`${fixed(file.minDiffMs,3)} - ${fixed(file.maxDiffMs,3)} ms`;[file.path,file.kind,file.stream,number(file.frames),fixed(file.expectedFps,3),number(file.diffs),number(file.skipped),number(file.abnormal),number(file.missing),number(file.frameIssues),range].forEach((value,index)=>tr.appendChild(el('td',index>=6&&index<=9&&value!=='0'?'alert':'',value)));root.appendChild(tr);});}
     function eventType(event){return eventTypes[event[2]];} function eventFile(event){return report.files[event[1]];}
     function populateFilters(){const kind=document.getElementById('kindFilter');[...new Set(report.files.map(file=>file.kind))].sort().forEach(value=>{const option=el('option','',value);option.value=value;kind.appendChild(option);});const type=document.getElementById('typeFilter');[...new Set(report.events.map(eventType))].sort().forEach(value=>{const option=el('option','',labels[value]);option.value=value;type.appendChild(option);});}
     function applyFilters(){const kind=document.getElementById('kindFilter').value;const type=document.getElementById('typeFilter').value;const query=document.getElementById('search').value.trim().toLowerCase();filtered=report.events.filter(event=>{const file=eventFile(event);if(kind!=='all'&&file.kind!==kind)return false;if(type!=='all'&&eventType(event)!==type)return false;if(!query)return true;return `${file.path} ${event[3]} ${event[4]} ${event[5]} ${event[6]} ${event[7]} ${event[8]}`.toLowerCase().includes(query);});page=1;renderEvents();}
     function renderEvents(){const size=Number(document.getElementById('pageSize').value);const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.max(1,Math.min(page,pages));const start=(page-1)*size,end=Math.min(start+size,filtered.length);const root=document.getElementById('eventRows');root.replaceChildren();filtered.slice(start,end).forEach(event=>{const file=eventFile(event),type=eventType(event),tr=document.createElement('tr');tr.className=type;tr.appendChild(el('td','',number(event[0])));const fileCell=el('td','file');fileCell.append(el('strong','',file.kind),document.createElement('br'),document.createTextNode(file.path));tr.appendChild(fileCell);[labels[type],position(event[3],event[6]),position(event[4],event[7]),position(event[5],event[8]),timestamp(event[9]),timestamp(event[10]),timestamp(event[11]),event[12]==null?'-':`${fixed(event[12])} ms`,event[13]==null?'-':`${fixed(event[13],3)}-${fixed(event[14],3)} ms`,number(event[15])].forEach(value=>tr.appendChild(el('td','',value)));tr.appendChild(el('td','problem',event[16]));root.appendChild(tr);});document.getElementById('pageMeta').textContent=filtered.length?`显示 ${number(start+1)}-${number(end)} / ${number(filtered.length)} 个异常点`:'没有符合条件的异常点';document.getElementById('page').value=String(page);document.getElementById('page').max=String(pages);document.getElementById('pageCount').textContent=`/ ${number(pages)}`;}
     ['kindFilter','typeFilter','pageSize'].forEach(id=>document.getElementById(id).addEventListener('change',applyFilters));document.getElementById('search').addEventListener('input',applyFilters);document.getElementById('first').addEventListener('click',()=>{page=1;renderEvents();});document.getElementById('prev').addEventListener('click',()=>{page-=1;renderEvents();});document.getElementById('next').addEventListener('click',()=>{page+=1;renderEvents();});document.getElementById('last').addEventListener('click',()=>{page=Number(document.getElementById('page').max);renderEvents();});document.getElementById('page').addEventListener('change',event=>{page=Number(event.target.value)||1;renderEvents();});
-    renderHeader();renderSummary();renderFiles();populateFilters();applyFilters();
+    renderHeader();renderSummary();renderThirdDrops();renderFiles();populateFilters();applyFilters();
   </script>
 </body>
 </html>
