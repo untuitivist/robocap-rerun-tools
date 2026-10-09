@@ -2,6 +2,14 @@
 
 [中文文档](README.zh-CN.md)
 
+## Special-Purpose BAT Tools
+
+See the short [Chinese handoff guide](scripts/README.md) for all three double-click tools.
+The new `scripts/imu_repair_upload/inspect_right_imu.bat` checks right-wrist ACC/GYRO
+databases and reports empty, missing, partial and invalid data by device, date and participant.
+It uses `F:\` by default, accepts a shared root, opens an HTML report and never changes or
+uploads source data. Nonempty tables are not a full quality check.
+
 ## Object Mocap File Inventory
 
 Run `scripts/obj_repair_upload/inspect_object_mocap.bat` to inspect named object exports.

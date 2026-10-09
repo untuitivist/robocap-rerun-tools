@@ -2,6 +2,13 @@
 
 [English documentation](README.md)
 
+## 三个专用 BAT 工具
+
+交给其他人使用时，请先看 [简短中文操作说明](scripts/README.md)。新增的
+`scripts/imu_repair_upload/inspect_right_imu.bat` 可直接双击，默认检查 `F:\`，共享目录可选。
+它统计右手 IMU 的空库、缺文件、缺一路及损坏情况，按设备、日期、人员汇总，结束后自动打开
+统计表。只检查，不修改或上传源数据；两路有记录不等于数据质量已验收。
+
 ## 物品动捕文件统计
 
 双击 `scripts/obj_repair_upload/inspect_object_mocap.bat`，沿用之前修复脚本的默认本地根目录

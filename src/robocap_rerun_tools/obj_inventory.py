@@ -14,6 +14,8 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .inventory_report import render_table as _table
+from .inventory_report import write_csv
 from .mocap_metadata import parse_mocap_capture_directory
 from .session_layout import is_mocap_directory_name
 
@@ -460,31 +462,6 @@ def summarize(rows: list[dict]) -> tuple[list[dict], list[dict]]:
             }
         )
     return objects, sessions
-
-
-def _cell(value):
-    if isinstance(value, list):
-        return "; ".join(str(item) for item in value)
-    return "" if value is None else str(value)
-
-
-def write_csv(path: Path, rows: list[dict], fields: list[str]):
-    with path.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: _cell(row.get(key)) for key in fields})
-
-
-def _table(rows: list[dict], columns: dict[str, str]) -> str:
-    head = "".join(f"<th>{html.escape(label)}</th>" for label in columns.values())
-    body = "".join(
-        "<tr>"
-        + "".join(f"<td>{html.escape(_cell(row.get(key)))}</td>" for key in columns)
-        + "</tr>"
-        for row in rows
-    )
-    return f"<div class='scroll'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
 
 
 def write_reports(output: Path, roots: list[Path], rows: list[dict], errors: list[dict]):
