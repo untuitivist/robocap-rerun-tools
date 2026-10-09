@@ -2,6 +2,14 @@
 
 [English documentation](README.md)
 
+## 物品动捕文件统计
+
+双击 `scripts/obj_repair_upload/inspect_object_mocap.bat`，沿用之前修复脚本的默认本地根目录
+`F:\`，共享目录可选。输出按物品、录制和文件汇总的 CSV，以及可筛选的中文 HTML 表格和日志。
+Body、Tracker、Unnamed 单独统计；其他后缀作为候选物品，通过表头识别人形骨架、空文件和
+Git LFS 占位文件。同一物品的多个导出格式不会重复增加录制数。本工具只统计，不上传或改写原文件。
+详见 [操作说明与统计口径](scripts/obj_repair_upload/README.md)。
+
 检查 HTML 同时显示动捕与第三人称的推算丢帧。第三人称固定按 30 FPS，
 相邻有效时间戳约 66.667 ms 推算丢 1 帧、100 ms 推算丢 2 帧，
 并与 `max(n+1-实际帧数, 0)` 对比。多个第三人称视频分别统计。

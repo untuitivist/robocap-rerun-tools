@@ -2,6 +2,16 @@
 
 [中文文档](README.zh-CN.md)
 
+## Object Mocap File Inventory
+
+Run `scripts/obj_repair_upload/inspect_object_mocap.bat` to inspect named object exports.
+Like the repair launcher, it defaults to `F:\` and accepts an optional shared root. It writes
+an offline HTML table, per-object/per-recording CSV summaries, file details and a log under
+`_artifacts/obj_repair_upload/`. Body, Tracker and Unnamed are counted separately; other suffixes
+are candidates, with header inspection to distinguish human skeletons, empty files and LFS pointers.
+Multiple export formats do not inflate recording counts. No source changes or uploads occur.
+See [usage and counting rules](scripts/obj_repair_upload/README.md).
+
 ## Repair Uploads From A Corruption CSV
 
 The BAT launcher and Python entry point live together in `scripts/repair_upload/`.
