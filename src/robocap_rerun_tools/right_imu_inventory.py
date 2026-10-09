@@ -10,10 +10,10 @@ import sqlite3
 import stat
 import webbrowser
 from collections import Counter, defaultdict
-from contextlib import closing
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
+from .file_integrity import readonly_database
 from .inventory_report import render_table, write_csv
 from .mocap_metadata import parse_mocap_capture_directory
 
@@ -101,11 +101,7 @@ def _pending_log(path: Path) -> str:
 
 
 def _database_contents(path: Path) -> dict:
-    # SQLite's URI parser needs an empty authority for UNC paths on Windows.
-    uri = path.resolve().as_uri()
-    if uri.startswith("file://") and not uri.startswith("file:///"):
-        uri = "file:////" + uri[len("file://") :]
-    with closing(sqlite3.connect(uri + "?mode=ro&immutable=1", uri=True)) as connection:
+    with readonly_database(path) as connection:
         check = connection.execute("PRAGMA quick_check").fetchall()
         if check != [("ok",)]:
             return {"state": "sqlite_error", "detail": "; ".join(str(r[0]) for r in check)}

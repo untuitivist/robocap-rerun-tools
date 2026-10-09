@@ -85,6 +85,10 @@ The Environment tab shows Git branch, commit, origin, upstream, dirty state, and
 sync Web dependencies, print logs, and restart through `start_web.bat`.
 Inspection always discovers third-person videos and checks each timestamped ACC, gyro, and MAG SQLite
 table as a separate stream. Video average FPS comes from ffprobe; interval statistics use real frame timestamps.
+Inspection also checks the expected per-Segment file structure, fully decodes videos, and validates
+SQLite tables/data and actual motion rows/columns. This takes longer than header checks. File integrity
+and timestamp/frame-count results are separate; unknown formats are explicitly unverified. Raw recordings
+do not need generated manifests. Regenerate old reports to include the new checks.
 Inspection writes one standalone `timestamp_anomaly_detail_table.html`. Its data, styles, and
 JavaScript are embedded, so the file can be shared and opened offline. The report only computes
 diffs between adjacent valid rows and lists every timestamp/frame-index anomaly with neighboring rows.
@@ -240,6 +244,9 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 窗口中运行，通过预检后才关闭 Web，同步网页依赖、打印日志，再调用 `start_web.bat` 重启。
 检查会始终发现第三人称视频，并把 SQLite 中带时间戳的 ACC、GYRO、MAG 表作为独立数据流检查。
 视频平均 FPS 来自 ffprobe，帧间隔统计使用真实逐帧时间戳。
+检查还会逐 Segment 核对必需文件，完整解码视频，验证数据库的表和实际记录，以及动捕实际数据行、
+列数。完整读取会比只看表头更久。文件完整性和帧数/时间戳结果分别显示；未知格式不会算作通过。
+原始录制不要求提前有发布清单，旧报告需要重新生成才能包含这些检查。
 检查只生成一个独立的 `timestamp_anomaly_detail_table.html`。数据、样式和 JavaScript 都内嵌在
 文件中，可以离线打开并直接分享。报告只计算时间戳均有效的相邻数据行，并逐点列出时间戳与
 frame_index 异常及其上下行。

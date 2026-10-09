@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import json
 import math
-import sqlite3
 import statistics
 from collections import Counter
 from collections.abc import Iterable
@@ -13,6 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import rerun as rr
+
+from .file_integrity import readonly_database
 
 if TYPE_CHECKING:
     from .cli import FrameRatioEstimate, StreamSummary
@@ -485,7 +486,7 @@ def quote_sqlite_identifier(value: str) -> str:
 
 
 def sqlite_samples(path: Path, table: str) -> list[TimestampSample]:
-    with sqlite3.connect(path) as connection:
+    with readonly_database(path) as connection:
         quoted_table = quote_sqlite_identifier(table)
         column_rows = list(connection.execute(f"PRAGMA table_info({quoted_table})"))
         columns = [str(row[1]) for row in column_rows]
@@ -801,7 +802,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Timestamp anomaly inspection</title>
+  <title>Session 文件与时间戳检查</title>
   <style>
     :root { --bg:#f3f5f7; --surface:#fff; --text:#17202a; --muted:#66717d; --border:#d5dce2; --strong:#aeb8c2; --header:#253445; --ok:#087f5b; --warn:#a35d00; --bad:#b42318; font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif; }
     * { box-sizing:border-box; } body { margin:0; color:var(--text); background:var(--bg); font-size:13px; letter-spacing:0; }
@@ -828,16 +829,28 @@ HTML_TEMPLATE = r"""<!doctype html>
     .event-table td.problem { width:500px; max-width:500px; text-align:left; white-space:normal; line-height:1.45; }
     .timestamp_missing td { background:#fff9ed; } .timestamp_too_long td,.timestamp_duplicate td,.timestamp_reversed td,.frame_index_gap td,.frame_index_duplicate td,.frame_index_reversed td { background:#fff5f4; }
     .timestamp_too_short td { background:#f4f8fc; } .muted { color:var(--muted); }
+    .integrity-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:12px 0; }
+    .integrity-toolbar label { display:inline-flex; gap:6px; align-items:center; white-space:nowrap; }
+    .integrity-toolbar input[type="checkbox"] { min-height:0; width:16px; height:16px; padding:0; }
+    .integrity-table { min-width:900px; } .integrity-table td { text-align:left; white-space:normal; overflow-wrap:anywhere; }
+    .integrity-table td:nth-child(2) { min-width:240px; } .integrity-table td:last-child { min-width:260px; }
+    .integrity-table td:nth-child(4),.integrity-table td:nth-child(5) { white-space:nowrap; min-width:80px; }
+    .integrity-error { background:#fff1ef; } .integrity-warning { background:#fff9ed; }
     @media (max-width:700px) { header,main { padding-left:12px; padding-right:12px; } input[type="search"] { width:100%; } .toolbar>* { flex:1 1 auto; } }
   </style>
 </head>
 <body>
   <header>
-    <h1>时间戳异常检查 / Timestamp anomaly inspection</h1>
+    <h1>Session 文件与时间戳检查</h1>
     <div class="subtitle" id="subtitle"></div>
     <div class="stats" id="stats"></div>
   </header>
   <main>
+    <section><h2>文件结构与内容检查</h2>
+    <p id="integrityVerdict"></p>
+    <p>逐 Segment 核对六路头戴视频、头戴 IMU/MAG、双腕视频与 IMU/MAG；动捕目录至少有一种数据格式和第三人称视频。视频完整解码，数据库检查表结构及实际记录，动捕核对实际数据行。通过这里只表示文件结构和内容检查通过，帧数、时间戳和动作质量还需分别验收。</p>
+    <div class="integrity-toolbar"><label><input id="integrityProblems" type="checkbox" checked>只显示问题</label><input id="integrityQuery" type="search" placeholder="搜索路径或问题"></div>
+    <div class="table-wrap"><table class="integrity-table"><thead><tr><th>检查项</th><th>文件 / 要求</th><th>结果</th><th>字节</th><th>实际帧 / 行</th><th>说明</th></tr></thead><tbody id="integrityRows"></tbody></table></div></section>
     <div class="summary table-wrap"><table><thead><tr><th>Session</th><th>Robocap n</th><th>动捕实际</th><th id="expectedMocapHeader">ratio*(n+1)</th><th>动捕差异</th><th>动捕推算丢帧</th><th>动捕缺少帧数</th><th>动捕是否对上</th><th>第三人称实际</th><th>n+1</th><th>第三人称差异</th><th>第三人称推算丢帧</th><th>第三人称缺少帧数</th><th>第三人称是否对上</th></tr></thead><tbody id="summaryRow"></tbody></table></div>
     <section id="thirdDropSection" hidden><h2>第三人称推算丢帧 / Third-person inferred drops</h2>
     <p>按视频相邻有效时间戳计算：max(round(diff / (1000/30) ms) - 1, 0)。正常整数毫秒间隔为 33/34 ms；约 66.667 ms 推算丢 1 帧，100 ms 推算丢 2 帧。无有效 diff 显示“-”。时间戳连续或固定帧率重编码时，不能靠 diff 发现所有采集丢帧；首尾缺帧也未必可见。缺失 Timestamp 前后不跨行相减。</p>
@@ -859,6 +872,21 @@ HTML_TEMPLATE = r"""<!doctype html>
     function renderHeader(){document.getElementById('subtitle').textContent=`${report.sessionPath} / ${report.segment}。检查基线：动捕 ${number(report.mocapExpectedFps)} FPS、视频 30 FPS、帧数关系 ${report.ratio}*(n+1)。diff 只计算相邻且 Timestamp 均有效的数据行；缺失行前后不会跨行相减。动捕推算丢帧 = max(round(diff / ${(1000/report.mocapExpectedFps).toFixed(6)} ms) - 1, 0)，仅累计主 Body 时间戳流 ${report.timingSource||'-'}。`;document.getElementById('expectedMocapHeader').textContent=`${report.ratio}*(n+1)`; const stats=[['异常 diff',report.abnormalDiffs],['跳过 diff',report.skippedDiffs],['缺失 Timestamp',report.missingTimestamps],['frame_index 问题',report.frameIssues],['逐点事件',report.events.length]]; const root=document.getElementById('stats');stats.forEach(([label,value])=>{const span=el('span');span.append(document.createTextNode(`${label}: `),el('strong','',number(value)));root.appendChild(span);});}
     const matchText=value=>value==null?'-':value?'是':'否';
     const matchClass=value=>value==null?'':value?'match':'mismatch';
+    function renderIntegrity(){
+      const info=report.integrity,verdict=document.getElementById('integrityVerdict');
+      if(!info){verdict.textContent='此报告未执行文件结构与内容检查，请重新运行检查。';return;}
+      const names={passed:'文件检查通过',failed:'文件检查未通过',incomplete:'仍有项目需要确认'};
+      verdict.textContent=`${names[info.status]||info.status}；文件 ${number(info.fileCount)}，错误 ${number(info.errors)}，待确认 ${number(info.warnings)}。`;
+      verdict.className=info.status==='passed'?'match':'mismatch';
+      const root=document.getElementById('integrityRows');root.replaceChildren();
+      const query=document.getElementById('integrityQuery').value.toLowerCase(),problems=document.getElementById('integrityProblems').checked;
+      info.checks.filter(row=>(!problems||row.severity!=='pass')&&`${row.path} ${row.requirement||''} ${row.status} ${row.detail}`.toLowerCase().includes(query)).forEach(row=>{
+        const tr=el('tr',`integrity-${row.severity}`);
+        const label=row.requirement||({structure:'结构',content:'文件内容',manifest:'发布清单'}[row.category]||row.category);
+        [label,row.path,row.status,number(row.size_bytes),number(row.frames??row.rows),row.detail].forEach(value=>tr.appendChild(el('td','',value)));
+        root.appendChild(tr);
+      });
+    }
     function renderSummary(){const tr=document.createElement('tr');const cells=[[report.session,''],[number(report.referenceFrames),''],[number(report.mocapFrames),''],[number(report.expectedMocap),''],[delta(report.mocapDelta),report.mocapDelta?'alert':''],[number(report.estimatedDropped),''],[number(report.expectedDropped),''],[matchText(report.droppedMatch),matchClass(report.droppedMatch)],[number(report.thirdFrames),''],[number(report.expectedThird),''],[delta(report.thirdDelta),report.thirdDelta?'alert':''],[number(report.estimatedThirdDropped),''],[number(report.expectedThirdDropped),''],[matchText(report.thirdDroppedMatch),matchClass(report.thirdDroppedMatch)]];cells.forEach(([value,cls])=>tr.appendChild(el('td',cls,value)));tr.title=`第三人称汇总来源：${report.thirdTimingSource||'-'}；多个视频逐项见下表`;document.getElementById('summaryRow').appendChild(tr);}
     function renderThirdDrops(){const rows=report.thirdDropReports||[];document.getElementById('thirdDropSection').hidden=!rows.length;const root=document.getElementById('thirdDropRows');rows.forEach(row=>{const tr=el('tr');[[row.path,''],[number(row.frames),''],[number(row.expected),''],[delta(row.delta),row.delta?'alert':''],[number(row.estimatedDropped),''],[number(row.expectedDropped),''],[matchText(row.droppedMatch),matchClass(row.droppedMatch)]].forEach(([value,cls])=>tr.appendChild(el('td',cls,value)));root.appendChild(tr);});}
     function renderFiles(){const root=document.getElementById('fileRows');report.files.forEach(file=>{const tr=document.createElement('tr');const range=file.minDiffMs==null?'-':`${fixed(file.minDiffMs,3)} - ${fixed(file.maxDiffMs,3)} ms`;[file.path,file.kind,file.stream,number(file.frames),fixed(file.expectedFps,3),number(file.diffs),number(file.skipped),number(file.abnormal),number(file.missing),number(file.frameIssues),range].forEach((value,index)=>tr.appendChild(el('td',index>=6&&index<=9&&value!=='0'?'alert':'',value)));root.appendChild(tr);});}
@@ -902,7 +930,9 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
     function renderEvents(){const size=Number(document.getElementById('pageSize').value);const pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.max(1,Math.min(page,pages));const start=(page-1)*size,end=Math.min(start+size,filtered.length);const root=document.getElementById('eventRows');root.replaceChildren();filtered.slice(start,end).forEach(event=>{const file=eventFile(event),type=eventType(event),tr=document.createElement('tr');tr.className=type;tr.appendChild(el('td','',number(event[0])));const fileCell=el('td','file');fileCell.append(el('strong','',file.kind),document.createElement('br'),document.createTextNode(file.path));tr.appendChild(fileCell);[labels[type],position(event[3],event[6]),position(event[4],event[7]),position(event[5],event[8]),timestamp(event[9]),timestamp(event[10]),timestamp(event[11]),event[12]==null?'-':`${fixed(event[12])} ms`,event[13]==null?'-':`${fixed(event[13],3)}-${fixed(event[14],3)} ms`,number(event[15])].forEach(value=>tr.appendChild(el('td','',value)));tr.appendChild(el('td','problem',event[16]));root.appendChild(tr);});document.getElementById('pageMeta').textContent=filtered.length?`显示 ${number(start+1)}-${number(end)} / ${number(filtered.length)} 个异常点`:'没有符合条件的异常点';document.getElementById('page').value=String(page);document.getElementById('page').max=String(pages);document.getElementById('pageCount').textContent=`/ ${number(pages)}`;}
     ['kindFilter','typeFilter','pageSize'].forEach(id=>document.getElementById(id).addEventListener('change',applyFilters));document.getElementById('search').addEventListener('input',applyFilters);document.getElementById('first').addEventListener('click',()=>{page=1;renderEvents();});document.getElementById('prev').addEventListener('click',()=>{page-=1;renderEvents();});document.getElementById('next').addEventListener('click',()=>{page+=1;renderEvents();});document.getElementById('last').addEventListener('click',()=>{page=Number(document.getElementById('page').max);renderEvents();});document.getElementById('page').addEventListener('change',event=>{page=Number(event.target.value)||1;renderEvents();});
-    renderHeader();renderSummary();renderThirdDrops();renderFiles();populateFilters();setupColumns();applyFilters();
+    document.getElementById('integrityProblems').addEventListener('change',renderIntegrity);
+    document.getElementById('integrityQuery').addEventListener('input',renderIntegrity);
+    renderIntegrity();renderHeader();renderSummary();renderThirdDrops();renderFiles();populateFilters();setupColumns();applyFilters();
   </script>
 </body>
 </html>
@@ -916,6 +946,8 @@ def write_timestamp_anomaly_report(
     out_dir: Path,
     ratio_estimate: FrameRatioEstimate | None,
     mocap_ratio: int = FRAME_COUNT_RATIO,
+    *,
+    integrity: dict | None = None,
 ) -> Path:
     session_dir = session_dir.resolve()
     ratio = validate_mocap_ratio(mocap_ratio)
@@ -947,6 +979,7 @@ def write_timestamp_anomaly_report(
             results[-1].stream = f"{results[-1].stream} (parse error: {exc})"
     results.sort(key=lambda result: (result.kind, result.relative_path.lower()))
     payload = report_payload(session_dir, segment, summaries, results, ratio_estimate, ratio)
+    payload["integrity"] = integrity
     document = HTML_TEMPLATE.replace(
         "__REPORT__",
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/"),

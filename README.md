@@ -4,8 +4,17 @@
 
 ## Special-Purpose BAT Tools
 
-See the short [Chinese handoff guide](scripts/README.md) for all three double-click tools.
-The new `scripts/imu_repair_upload/inspect_right_imu.bat` checks right-wrist ACC/GYRO
+Start with `scripts/session_inspection/inspect_sessions.bat` for full Session checks. It checks
+the expected per-Segment streams, fully decodes video without resampling, validates sensor
+schemas and data rows, checks actual motion rows/columns, and retains the timestamp report.
+The existing `inspect` CLI and Web inspection use the same validators. Regenerate old reports
+to include these checks. Read-only batch reports/logs go to `_artifacts/session_inspection/`.
+Use `--layout published` for local published copies that also require manifest/report files;
+raw recording directories do not need these generated artifacts. Proprietary binary formats
+are explicitly unverified, not passed. Full video decoding takes longer than header inspection.
+
+See the short [Chinese handoff guide](scripts/README.md) for all double-click tools.
+`scripts/imu_repair_upload/inspect_right_imu.bat` checks right-wrist ACC/GYRO
 databases and reports empty, missing, partial and invalid data by device, date and participant.
 It uses `F:\` by default, accepts a shared root, opens an HTML report and never changes or
 uploads source data. Nonempty tables are not a full quality check.

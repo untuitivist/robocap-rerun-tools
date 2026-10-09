@@ -15,6 +15,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from .alignment import FrameAlignment, round_positive_ratio
+from .file_integrity import open_readonly_connection
 from .session_layout import discover_mocap_directories, is_mocap_directory_name
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
@@ -971,7 +972,7 @@ def sensor_stream_kind(table_name: str) -> str:
 
 def sqlite_sensor_summaries(path: Path) -> list[StreamSummary]:
     try:
-        connection = sqlite3.connect(path)
+        connection = open_readonly_connection(path)
     except sqlite3.Error as exc:
         return [
             StreamSummary(
@@ -1105,10 +1106,12 @@ def sqlite_sensor_summaries(path: Path) -> list[StreamSummary]:
 
 
 def discover_files(session_dir: Path) -> list[Path]:
+    from .session_integrity import source_files
+
     ignored_names = {"manifest.json", "manifest.tsv"}
     return sorted(
         p
-        for p in session_dir.rglob("*")
+        for p in source_files(session_dir)[0]
         if p.is_file()
         and p.name.lower() not in ignored_names
         and "_artifacts" not in p.relative_to(session_dir).parts
@@ -1237,12 +1240,14 @@ def inspection_output_dir(session_dir: Path, segment: str | None) -> Path:
 
 
 def inspection_file_matches_segment(path: Path, segment: str | None) -> bool:
+    from .session_integrity import matches_segment
+
     if not segment or path.suffix.lower() not in VIDEO_SUFFIXES | DATABASE_SUFFIXES:
         return True
     name = path.name.lower()
     if not name.startswith(("robocap_", "robowrist_")):
         return True
-    return segment.lower() in name
+    return matches_segment(path, segment)
 
 
 def inspection_files(session_dir: Path, segment: str | None) -> list[Path]:
@@ -1770,38 +1775,79 @@ def command_export(args: argparse.Namespace) -> int:
 
 
 def command_inspect(args: argparse.Namespace) -> int:
-    files = inspection_files(args.session_dir, args.segment)
-    ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
+    out_dir = args.output or inspection_output_dir(args.session_dir, args.segment)
+    anomaly_report, _ = inspect_session_report(
+        args.session_dir, args.segment, out_dir, args.ffprobe, args.ffmpeg,
+        args.mocap_ratio, layout=getattr(args, "layout", "raw"),
+    )
+    print(f"Wrote Session inspection to {anomaly_report}")
+    return 0  # A report with failures is still successfully generated; read its verdict.
+
+
+def inspect_session_report(session_dir, segment, out_dir, ffprobe="ffprobe", ffmpeg="ffmpeg",
+                           mocap_ratio=8, *, layout="raw", progress=print, video_log=None):
+    from .media_tools import activate_media_tools
+    from .session_integrity import audit_session
+    from .timestamp_anomaly import write_timestamp_anomaly_report
+
+    session_dir = session_dir.resolve()
+    tools = activate_media_tools()
+    ffmpeg = tools.ffmpeg if ffmpeg in {None, "ffmpeg"} else ffmpeg
+    ffprobe = tools.ffprobe if ffprobe in {None, "ffprobe"} else ffprobe
+    ffprobe = resolve_ffprobe(ffprobe or "ffprobe", ffmpeg)
+    progress("Check expected structure and full file contents (videos are fully decoded).")
+    integrity = audit_session(
+        session_dir, segment=segment, layout=layout, ffmpeg=ffmpeg, ffprobe=ffprobe,
+        progress=progress, video_log=video_log,
+    )
+    by_path = {row["path"]: row for row in integrity["checks"] if row["category"] == "content"}
+    files = inspection_files(session_dir, segment)
     total_steps = len(files) + 1
-    print(f"Inspection discovered {len(files)} source files.")
+    progress(f"Timestamp inspection discovered {len(files)} source files.")
     summaries = []
     for index, path in enumerate(files, start=1):
+        label = path.relative_to(session_dir).as_posix()
+        progress(f"[{index}/{total_steps}] timestamps: {label}")
+        checked = by_path.get(label, {})
         try:
-            label = path.relative_to(args.session_dir)
-        except ValueError:
-            label = path
-        print(f"[{index}/{total_steps}] inspect {label}")
-        summaries.extend(summarize_path(path, ffprobe))
-    out_dir = args.output or inspection_output_dir(args.session_dir, args.segment)
+            if checked.get("state") in {
+                "zero_byte", "lfs_pointer", "invalid_format", "read_error", "changed",
+                "active_database", "tool_unavailable", "schema_error",
+            }:
+                raise ValueError(f"{checked['status']}: {checked.get('detail', '')}")
+            file_summaries = summarize_path(path, ffprobe)
+            actual = checked.get("rows")
+            if path.suffix.lower() in MOCAP_SUFFIXES and isinstance(actual, int):
+                file_summaries = [replace(item, frame_count=actual) for item in file_summaries]
+            decoded_frames = checked.get("frames")
+            if path.suffix.lower() in VIDEO_SUFFIXES and isinstance(decoded_frames, int):
+                file_summaries = [replace(item, frame_count=decoded_frames) for item in file_summaries]
+            summaries.extend(file_summaries)
+        except Exception as exc:  # noqa: BLE001 - report unreadable streams, continue other files
+            summaries.append(StreamSummary(
+                path, "video" if path.suffix.lower() in VIDEO_SUFFIXES else path.suffix.lstrip("."),
+                None, None, None, None, None, None, None, 1, str(exc),
+                stream=video_stream_name(path) if path.suffix.lower() in VIDEO_SUFFIXES else "",
+            ))
     fps_records = [
         record
         for item in summaries
-        if (record := fps_record_from_summary(item, args.session_dir)) is not None
+        if (record := fps_record_from_summary(item, session_dir)) is not None
     ]
     ratio_estimate = estimate_frame_ratio(fps_records, "timestamp anomaly inspection")
-    from .timestamp_anomaly import write_timestamp_anomaly_report
-
-    print(f"[{total_steps}/{total_steps}] write timestamp anomaly report")
+    progress(f"[{total_steps}/{total_steps}] write Session inspection report")
     anomaly_report = write_timestamp_anomaly_report(
-        args.session_dir,
-        args.segment,
+        session_dir,
+        segment,
         summaries,
         out_dir,
         ratio_estimate,
-        args.mocap_ratio,
+        mocap_ratio,
+        integrity=integrity,
     )
-    print(f"Wrote timestamp anomaly inspection to {anomaly_report}")
-    return 0
+    progress(f"Content verdict: {integrity['status']}; {integrity['errors']} errors; "
+             f"{integrity['warnings']} warnings")
+    return anomaly_report, integrity
 
 
 def command_inspect_offset(args: argparse.Namespace) -> int:
@@ -2014,13 +2060,15 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.set_defaults(func=command_export)
 
     inspect_parser = sub.add_parser(
-        "inspect", help="Write one standalone timestamp anomaly HTML report."
+        "inspect", help="Check Session structure, contents and timestamps in one HTML report."
     )
     inspect_parser.add_argument("session_dir", type=Path)
     inspect_parser.add_argument("--segment", default=None)
     inspect_parser.add_argument("--output", type=Path, default=None)
     inspect_parser.add_argument("--ffprobe", default="ffprobe")
     inspect_parser.add_argument("--ffmpeg", default="ffmpeg")
+    inspect_parser.add_argument("--layout", choices=("raw", "published"), default="raw",
+                                help="Published copies also require manifest and inspection HTML")
     inspect_parser.add_argument(
         "--mocap-ratio",
         type=int,

@@ -2,12 +2,23 @@
 
 [English documentation](README.md)
 
-## 三个专用 BAT 工具
+## 完整检查与专用 BAT 工具
 
-交给其他人使用时，请先看 [简短中文操作说明](scripts/README.md)。新增的
+录制后可双击 `scripts/session_inspection/inspect_sessions.bat` 做完整检查，默认目录 `F:\`，
+共享目录可选，240 FPS 选 `8`、120 FPS 选 `4`。它逐 Segment 核对必需文件，完整解码视频，
+检查数据库表与实际记录、动捕实际数据行及列数，再生成原有帧数和时间戳报告。
+主程序 `inspect` 和 Web 的检查入口也使用同一套检查。旧报告需要重新生成。
+输出位于 `_artifacts/session_inspection/<运行时间>/`，结束后自动打开汇总报告；
+完整读取比原先只看表头耗时更长。详见 [完整检查说明](scripts/session_inspection/README.md)。
+
+交给其他人使用时，请先看 [简短中文操作说明](scripts/README.md)。
 `scripts/imu_repair_upload/inspect_right_imu.bat` 可直接双击，默认检查 `F:\`，共享目录可选。
 它统计右手 IMU 的空库、缺文件、缺一路及损坏情况，按设备、日期、人员汇总，结束后自动打开
 统计表。只检查，不修改或上传源数据；两路有记录不等于数据质量已验收。
+
+原始录制不强制要求发布清单；检查本地的已发布副本可使用 `--layout published`。
+文件检查通过与帧数/时间戳检查分别展示，不会更改既有统计或自动修补、上传。
+专有二进制格式（如 TRB/XRB/VC）会验证字节可读性，但明确显示“格式尚未验证”。
 
 ## 物品动捕文件统计
 
