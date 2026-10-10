@@ -765,6 +765,7 @@ def _portable_inspection_document(document: str, session_id: str) -> str:
         raise ModelScopePublisherError(f"Inspection HTML report payload is invalid: {exc}") from exc
     if not isinstance(payload, dict):
         raise ModelScopePublisherError("Inspection HTML report payload must be a JSON object.")
+    payload["session"] = session_id
     payload["sessionPath"] = session_id
     portable_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace(
         "</", "<\\/"
@@ -957,7 +958,12 @@ The dataset index and Session manifest also contain `mocap_rigid_names`: the act
 entity labels (for example `Body0`, `Tracker0`, `BigBox0`), deduplicated across formats. No objects
 or extra HH bodies are inferred. Backfills retain existing Session paths and remote-only files,
 merge manifests, and verify uploaded bytes. Local structural/content failures are recorded before
-normal batch uploads; frame-count statistics are a separate quality dimension.
+normal batch uploads; confirmed structural/content/frame errors are routed to the fault dataset.
+Every Segment requires `audio_segmentN.wav` with readable, nonempty PCM/float sample data.
+Both metadata and manifests record `quality_status` (`passed` or `error`), `error_types`,
+`quality_details` for per-Segment frame counts, `local_integrity` for file checks, and
+`inspection_issues` for checks that could not be completed. Fault recordings with unmeasurable
+duration use `duration_s=null`, `duration_status=unavailable` and an explanatory `duration_error`.
 
 At upload time, `participants.jsonl` is read from the destination dataset and matched against
 `mocap_capture.participant` (case-insensitive). Session index rows and manifests both receive
@@ -982,7 +988,7 @@ inspection report. Paths inside manifests and reports are dataset-relative.
         + """## Session contents
 
 - Required capture streams: six `robocap_<segment>_video_*.mp4` first-person cameras, Robocap
-  IMU/MAG databases, third-person videos, and Robowrist left/right video and sensor streams.
+  IMU/MAG databases, WAV audio per Segment, third-person videos, and Robowrist left/right video and sensor streams.
 - Standard motion-capture exports under `mocap/`: Body0 in TRC/BVH/CSV, Tracker0 (hat) in
   TRC/CSV, all three formats for each detected extra Body, and TRC/CSV for each named object.
   HH imposes no fixed extra-body count. Action-specific requirements can add exact object names.
@@ -1022,6 +1028,7 @@ Body0/Tracker0/object exports, capture streams and generated records are require
           robocap_<segment>_video_*.mp4          # required six first-person videos
           robocap_<segment>_imu_*.db             # required Robocap IMU
           robocap_<segment>_mag_*.db             # required Robocap MAG
+          audio_<segment>.wav                   # required WAV audio with actual samples
           mocap/
             *.mp4                                # required third-person video
             *Body0.{trc,bvh,csv}                 # required main body, all three formats
@@ -1131,6 +1138,9 @@ def _metadata_duration_s(
 ) -> float | None:
     value = entry.get("duration_s")
     if value is None:
+        if (entry.get("quality_status") == "error" and entry.get("duration_status") == "unavailable"
+                and isinstance(entry.get("duration_error"), str) and entry["duration_error"]):
+            return None
         if required:
             raise ModelScopePublisherError(
                 f"Pending {METADATA_NAME} row for "
@@ -1247,6 +1257,8 @@ def stage_session(
     dry_run: bool = False,
     progress: Callable[[str], None] | None = print,
     quality_target: str = "normal",
+    integrity_report: dict | None = None,
+    inspection_mocap_ratio: int | None = None,
 ) -> StageResult:
     from .fault_publishing import (
         bind_staging_target,
@@ -1266,8 +1278,31 @@ def stage_session(
     resolved_session_id = validate_session_id(session_id or source.name)
     if quality_target not in {"normal", "fault"}:
         raise ValueError("Unknown publishing target")
-    quality = collect_fault_quality(source, segment) if quality_target == "fault" else None
-    if quality is not None and aligned_intersection:
+    from .batch_completeness import fault_relative_path, fault_source_files
+    from .session_integrity import audit_session, saved_integrity, source_signature
+    from .session_quality import assess_quality, fault_report_document
+
+    is_fault = quality_target == "fault"
+    if is_fault and integrity_report is None:
+        integrity_report = saved_integrity(source, segment)
+        if integrity_report is None or integrity_report.get("status") == "stale":
+            integrity_report = audit_session(
+                source, segment=segment, ffmpeg=ffmpeg, ffprobe=ffprobe,
+                progress=progress or (lambda _: None),
+            )
+    quality = None
+    if integrity_report is not None:
+        if integrity_report.get("source_signature") != source_signature(source, segment=segment):
+            raise ValueError("Source changed since integrity check; recheck before staging.")
+        quality = (
+            collect_fault_quality(source, segment, integrity_report=integrity_report,
+                                  ratio=inspection_mocap_ratio)
+            if is_fault else assess_quality(source, integrity_report, segment=segment,
+                                           ratio=inspection_mocap_ratio)
+        )
+        if not is_fault and quality["quality_status"] != "passed":
+            raise ValueError("Session did not pass source and frame checks for the normal dataset.")
+    if is_fault and aligned_intersection:
         raise ValueError("Fault data must preserve full original recordings; cropping is disabled.")
     default_root = default_dataset_root(source)
     if quality_target == "fault":
@@ -1276,21 +1311,27 @@ def stage_session(
     relative_session = prepared_session_path(primitive, resolved_session_id)
     target = root / Path(relative_session)
     _validate_stage_locations(source, root, target)
-    mocap_capture = parse_mocap_capture_directory(require_mocap_directory(source).name)
+    if is_fault:
+        mocap_directories = discover_mocap_directories(source)
+        mocap_capture = (parse_mocap_capture_directory(mocap_directories[0].name)
+                         if len(mocap_directories) == 1 else None)
+    else:
+        mocap_capture = parse_mocap_capture_directory(require_mocap_directory(source).name)
     device_ids = discover_device_ids(source, ffprobe)
 
     report_source = inspection_report or find_inspection_report(source, segment)
-    if report_source is None or not report_source.is_file():
+    if not is_fault and (report_source is None or not report_source.is_file()):
         raise FileNotFoundError(
             f"Required inspection report not found: run inspect for {source} before staging."
         )
-    discovered_files = discover_package_files(
+    discovered_files = fault_source_files(source, segment) if is_fault else discover_package_files(
         source,
         segment,
         include_artifacts=False,
         include_rrd=False,
     )
-    resolved_mocap_files = resolve_mocap_files(source, mocap_files)
+    resolved_mocap_files = ([p for p in discovered_files if is_path_under_mocap(p, source)]
+                            if is_fault else resolve_mocap_files(source, mocap_files))
     files = sorted(
         [path for path in discovered_files if not is_path_under_mocap(path, source)]
         + resolved_mocap_files,
@@ -1322,10 +1363,35 @@ def stage_session(
         except DatasetIntersectionError as exc:
             raise ModelScopePublisherError(str(exc)) from exc
 
-    duration_s = measure_session_duration_s(source, segment, ffprobe, intersection_plan)
+    duration_error = None
+    try:
+        if is_fault:
+            measured_segments = {ref.segment.lower() for ref in discover_segment_references(source)}
+            expected_segments = {segment.lower()} if segment else set(integrity_report.get("segments", []))
+            if expected_segments - measured_segments:
+                raise ModelScopePublisherError("Some Segments lack a reference video; whole-Session duration is unknown")
+        duration_s = measure_session_duration_s(source, segment, ffprobe, intersection_plan)
+    except (OSError, ValueError, ModelScopePublisherError) as exc:
+        if not is_fault:
+            raise
+        duration_s = None
+        duration_error = str(exc).replace(str(source), ".").replace(source.as_posix(), ".")
     if progress is not None:
         duration_scope = "aligned intersection" if intersection_plan is not None else "Session"
-        progress(f"{duration_scope} duration: {duration_s:.6f} s")
+        progress(f"{duration_scope} duration: {duration_s} s" if duration_s is not None
+                 else f"Session duration unavailable: {duration_error}")
+
+    fault_reports = []
+    if is_fault:
+        fault_reports = [ref for ref in discover_segment_references(source)
+                         if ref.segment in quality["quality_details"]]
+        fault_document = (
+            _portable_inspection_document(fault_reports[0].report_path.read_text(encoding="utf-8"), resolved_session_id)
+            if fault_reports else fault_report_document(resolved_session_id, quality)
+        )
+    else:
+        fault_document = None
+    report_size = (len(fault_document.encode("utf-8")) if is_fault else report_source.stat().st_size)
 
     manifest_path = target / "manifest.json"
     metadata_path = root / METADATA_NAME
@@ -1341,10 +1407,10 @@ def stage_session(
             metadata_path=metadata_path,
             readme_path=readme_path,
             inspection_html=inspection_target,
-            file_count=len(files) + len(rerun_files) + 1,
+            file_count=len(files) + len(rerun_files) + 1 + len(fault_reports),
             total_bytes=sum(path.stat().st_size for path in files)
             + sum(path.stat().st_size for path in rerun_files)
-            + report_source.stat().st_size,
+            + report_size + sum(ref.report_path.stat().st_size for ref in fault_reports),
             duration_s=duration_s,
             dry_run=True,
             main_device_id=device_ids["main"],
@@ -1362,7 +1428,8 @@ def stage_session(
     aligned_records: dict[str, dict[str, object]] = {}
     total_source_files = len(files) + len(rerun_files)
     for index, path in enumerate(files, start=1):
-        package_relative = canonical_mocap_relative_path(path, source)
+        package_relative = (fault_relative_path(path, source) if is_fault
+                            else canonical_mocap_relative_path(path, source))
         if progress is not None:
             if intersection_plan is not None:
                 operation = "crop losslessly"
@@ -1410,12 +1477,15 @@ def stage_session(
             progress(f"[{index}/{total_source_files}] copy {path.relative_to(source)}")
         packaged.append(copy_rerun_file(path, source, target))
 
-    copy_portable_inspection_report(report_source, inspection_target, resolved_session_id)
+    if is_fault:
+        inspection_target.write_text(fault_document, encoding="utf-8")
+    else:
+        copy_portable_inspection_report(report_source, inspection_target, resolved_session_id)
     report_record = {
-        "source": report_source.relative_to(source).as_posix(),
+        "source": "generated_quality_report" if is_fault else report_source.relative_to(source).as_posix(),
         "packaged_as": REPORT_NAME,
         "kind": "inspection_html",
-        "original_bytes": report_source.stat().st_size,
+        "original_bytes": report_size,
         "packaged_bytes": inspection_target.stat().st_size,
         "compressed_video": False,
     }
@@ -1426,6 +1496,17 @@ def stage_session(
             record["aligned_selection"] = aligned_records[item.source]
         file_records.append(record)
     file_records.append(report_record)
+    for reference in fault_reports:
+        relative = Path("inspections") / reference.segment / REPORT_NAME
+        report_target = target / relative
+        report_target.parent.mkdir(parents=True, exist_ok=True)
+        copy_portable_inspection_report(reference.report_path, report_target, resolved_session_id)
+        file_records.append({
+            "source": reference.report_path.relative_to(source).as_posix(),
+            "packaged_as": relative.as_posix(), "kind": "inspection_html",
+            "original_bytes": reference.report_path.stat().st_size,
+            "packaged_bytes": report_target.stat().st_size, "compressed_video": False,
+        })
     from .upload_verification import file_digest
 
     for record in file_records:
@@ -1462,6 +1543,8 @@ def stage_session(
         manifest["mocap_capture"] = mocap_capture.as_record()
     if quality is not None:
         manifest.update(quality)
+        manifest.update(duration_status="unavailable" if duration_error else "measured",
+                        duration_error=duration_error)
     if intersection_plan is not None:
         manifest["alignment"] = intersection_plan.as_manifest()
     manifest_path.write_text(
@@ -1487,11 +1570,13 @@ def stage_session(
         metadata_record["mocap_capture"] = mocap_capture.as_record()
     if quality is not None:
         metadata_record.update(quality)
+        metadata_record.update(duration_status="unavailable" if duration_error else "measured",
+                               duration_error=duration_error)
     if intersection_plan is not None:
         metadata_record["alignment"] = intersection_plan.as_metadata()
     metadata_path = _update_metadata(root, metadata_record)
     readme_path = _write_dataset_readme(root)
-    if quality is not None:
+    if is_fault:
         readme_path.write_text(
             fault_readme(_dataset_readme(), fault_settings().repo_id), encoding="utf-8"
         )
@@ -2080,7 +2165,9 @@ def _audit_remote_session_entry(
         issues.append(f"manifest dataset_path must be {session_path}")
     if manifest.get("upload_batch_id") != batch_id:
         issues.append(f"manifest upload_batch_id must match metadata ({batch_id!r})")
-    for key in ("quality_status", "error_types", "quality_details"):
+    from .session_quality import QUALITY_FIELDS
+
+    for key in (*QUALITY_FIELDS, "duration_status", "duration_error"):
         if entry.get(key) != manifest.get(key):
             issues.append(f"manifest {key} does not match metadata")
     try:

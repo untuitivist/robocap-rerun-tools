@@ -26,5 +26,6 @@ def manifest_mocap_names(records) -> list[str]:
     return mocap_names(
         Path(record.get("source") or record["packaged_as"])
         for record in records
-        if record["packaged_as"].startswith("mocap/")
+        if "/" in record["packaged_as"]
+        and record["packaged_as"].partition("/")[0].casefold().startswith("mocap")
     )

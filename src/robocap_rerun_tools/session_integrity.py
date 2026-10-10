@@ -39,8 +39,9 @@ SKIP_DIRS = {
 }
 SESSION_NAME = re.compile(r"^\d{8}_\d{6}_session\d+$", re.IGNORECASE)
 SEGMENT_NAME = re.compile(r"^segment\d+$", re.IGNORECASE)
-STREAM_SEGMENT = re.compile(r"^(?:robocap|robowrist)_(segment\d+)_", re.IGNORECASE)
+STREAM_SEGMENT = re.compile(r"^(?:robocap_|robowrist_|audio_)(segment\d+)(?:_|\.wav$)", re.IGNORECASE)
 WRIST_DIRECTORY = re.compile(r"^robowrist_(.+)_(left|right)$", re.IGNORECASE)
+INTEGRITY_VERSION = 3
 
 
 def is_link(path: Path):
@@ -190,6 +191,7 @@ def audit_session(
         required = [(f"robocap_{name}_video_{camera}.mp4", "头戴视频") for camera in CAMERAS]
         required += [(f"robocap_{name}_imu_{side}.db", "头戴 IMU") for side in ("left", "right")]
         required += [(f"robocap_{name}_mag_middle.db", "头戴 MAG")]
+        required += [(f"audio_{name}.wav", "WAV 音频")]
         for filename, role in required:
             matches = [p for rel, p in relative.items() if rel.lower() == filename]
             add(filename, "structure", result("ok" if matches else "missing"), role)
@@ -293,7 +295,7 @@ def audit_session(
     counts = Counter(row["severity"] for row in rows)
     status = "failed" if counts["error"] else "incomplete" if counts["warning"] else "passed"
     return {
-        "version": 2,
+        "version": INTEGRITY_VERSION,
         "layout": layout,
         "status": status,
         "fileCount": len(paths),
@@ -345,7 +347,7 @@ def saved_integrity(session: Path, segment=None, *, requirements_path=None):
     path = session / "_artifacts" / f"integrity-{segment or 'all'}.json"
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
-        if (not isinstance(report, dict) or report.get("version") != 2
+        if (not isinstance(report, dict) or report.get("version") != INTEGRITY_VERSION
                 or not isinstance(report.get("checks"), list)
                 or report.get("status") not in {"passed", "failed", "incomplete"}
                 or any(not isinstance(row, dict) or not {"path", "state", "severity"} <= row.keys()

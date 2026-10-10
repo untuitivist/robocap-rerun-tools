@@ -4,6 +4,7 @@ The tools are designed around this loose layout:
 
 ```text
 session/
+  audio_segment1.wav                 # required for each Segment during upload checks
   robocap_segment1_video_left.mp4
   robocap_segment1_video_right.mp4
   robocap_segment1_video_left_eye.mp4

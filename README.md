@@ -99,12 +99,19 @@ uses the selected root, with optional missing/all inspection, batch size (defaul
 and integrity-aware skipping. Dates can be entered as `YYYYMMDD` or derived from the Session
 timestamp in UTC+08:00. Layout remains `EgoMotionActions/YYYYMMDD/action_id/session_id/`.
 
-Admission requires valid frame-count reports for the selected Segments and at least one mismatch
-against `n:ratio*(n+1):n+1` (Robocap:Mocap:third-person, ratio 4 or 8). Clean Sessions and invalid
-or unchecked reports are excluded. Small timestamp anomalies alone do not qualify. Videos stay
+The Statistics batch button automatically routes checked Sessions: passed structure/content and frame
+counts go to the normal repository; confirmed missing/empty/broken files, partial trajectories and
+frame-count mismatches go to the fault repository. Each Segment requires `audio_segmentN.wav`;
+the checker reads actual PCM/float samples and detects empty/truncated audio without rejecting silence.
+Frame counts use `n:ratio*(n+1):n+1` (Robocap:Mocap:third-person, ratio 4 or 8). Inconclusive checks
+without a confirmed defect pause upload, as do changing files and active databases. Videos stay
 original and complete: no compression, cropping, or interpolation. Each Session is stored once,
 with `quality_status`, all `error_types`, and per-Segment counts/differences in `quality_details`
-in both `metadata.jsonl` and `manifest.json`. Fault staging is isolated from normal uploads.
+in both `metadata.jsonl` and `manifest.json`. File errors use `local_<state>` codes with paths and
+reasons in `local_integrity`; `inspection_issues` explicitly records unavailable frame analysis.
+Normal records use `quality_status=passed` and `error_types=[]`. Fault recordings keep all existing
+source files even without Mocap; unmeasurable duration is null with `duration_error`. Batches never
+mix repositories or dates, and writes remain serial. Existing remote Sessions are not deleted.
 
 CLI: add `--quality-target fault` to `robocap-rerun modelscope-stage`; upload the resulting
 staging directory using `modelscope-upload`. The target marker prevents uploading fault staging
@@ -347,7 +354,7 @@ metadata` updates the matching remote `metadata.jsonl` row and Session `manifest
 one ModelScope commit. Session and Mocap-directory cells are stable local identifiers; the operation
 does not rename directories, move remote data, or upload videos.
 
-The same tab uploads clean Sessions in configurable batches. Its `YYYYMMDD` field starts with the
+The same tab automatically routes Sessions to normal/fault datasets in configurable batches. Its `YYYYMMDD` field starts with the
 current UTC+08:00 date and can be edited. Auto-match is enabled by default: a timestamped Session name
 is parsed as UTC and converted to its UTC+08:00 calendar date; the field is used as fallback when a
 timestamp is absent. Candidates are grouped by date before applying the configured batch size.
@@ -359,9 +366,9 @@ original remote path/date, remote-only files and unknown metadata. `mocap_rigid_
 and manifest lists the actual exported object labels, deduplicated across formats. Full-report rebuild
 processes all Sessions; missing/stale reports are refreshed before normal upload. Local failures and
 upload results are recorded in `_reports/batch_upload_<time>/report.html`, `sessions.csv`, `issues.csv`
-and `run.log`. Local missing/broken data cannot enter normal uploads; unknown prop rosters remain
-warnings. Each selected Session must
-satisfy the frame-count relation. `Sessions per upload batch` defaults to `10`; `1` preserves
+and `run.log`, with the target repository and error types. Local missing/broken data enters the fault
+dataset; unknown prop rosters remain warnings. Normal Sessions must satisfy the frame-count relation.
+`Sessions per upload batch` defaults to `10`; `1` preserves
 one-Session commits, while a value at least equal to the candidate count submits all candidates in
 one batch. The next batch is prepared in the background while the current batch uploads, but remote
 uploads remain strictly serial. An upload failure is retried three times after the initial attempt;
@@ -369,7 +376,8 @@ after four failed attempts that batch is skipped and processing continues. Prepa
 validation failure excludes only the affected Session. Completed uploads are not rolled back, and
 failed staging data is retained for retry. Raw full-session files use NTFS hard links when source and
 staging are on the same compatible volume, then fall back to byte-for-byte copies,
-selects BVH/CSV/TRC/MP4 files except paths containing `unnamed`, includes no RRD, and reads the
+selects BVH/CSV/TRC/MP4 files except paths containing `unnamed` for normal uploads, retains all existing
+capture files for fault uploads, includes no RRD, and reads the
 repository from `.env`.
 Sessions without an unambiguous `[A-Z]+<digits>` token (or an explicit custom action directory in an
 `EgoMotionActions` hierarchy) are excluded.

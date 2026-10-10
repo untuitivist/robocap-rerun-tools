@@ -71,7 +71,7 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "复制匹配的 Mocap 文件夹" in config
     assert "确认删除/替换预览中的现有 mocap* 文件夹和失效检查报告" in config
     assert "Mocap 补回输出" in config
-    assert "批量上传无差帧 Session" in config
+    assert "批量检查并分流上传" in config
     assert "每个上传批次的 Session 数" in config
     assert config.count("上传任务输出") == 2
     assert "上传日期（YYYYMMDD）" in config
@@ -302,6 +302,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
             encoding="utf-8",
         )
 
+    write_report(uploaded, 80)
     write_report(problem, 72)
     write_report(clean_one, 80)
     write_report(clean_two, 80)
@@ -331,14 +332,6 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
             ),
         ),
     )
-    summarized: list[Path] = []
-    original_summarize = dataset_statistics.summarize_session
-
-    def tracked_summarize(dataset_root, session, ffprobe):
-        summarized.append(session)
-        return original_summarize(dataset_root, session, ffprobe)
-
-    monkeypatch.setattr(dataset_statistics, "summarize_session", tracked_summarize)
     validated_roots: list[Path] = []
     staged_calls: list[tuple[Path, str, Path, tuple[Path, ...]]] = []
     staged_counts: dict[Path, int] = {}
@@ -347,7 +340,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     upload_lock = threading.Lock()
     active_uploads = 0
     maximum_active_uploads = 0
-    connection = SimpleNamespace(settings=object(), api=object(), username="tester")
+    connection = SimpleNamespace(settings=SimpleNamespace(repo_id="owner/normal"), api=object(), username="tester")
     monkeypatch.setattr(modelscope_publisher, "connect_modelscope", lambda: connection)
 
     def fake_stage(session, primitive, *, dataset_root, mocap_files, **_kwargs):
@@ -407,6 +400,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
             rebuild_all_reports=False,
             batch_size=1,
             upload_workers=12,
+            quality_target="normal",
         )
     )
 
@@ -426,12 +420,10 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     assert {workers for _, workers in upload_calls} == {12}
     assert maximum_active_uploads == 1
     assert set(validated_roots) == {call[2] for call in staged_calls}
-    assert uploaded not in summarized
-    assert set(summarized) == {problem.resolve(), clean_one.resolve(), clean_two.resolve()}
     assert "已上传跳过：1" in output
     assert "P01/session-uploaded" in output
     assert "P03/session-clean-one: 远端不完整，将重新上传" in output
-    assert "session-problem: unchecked or frame-count difference" in output
+    assert "session-problem: 不属于本次选择的数据集" in output
     assert "批次 2 上传或校验未通过，跳过 1 个 Session" in output
     assert "批量处理完成：新增 1；替换 0；失败跳过 1；已上传跳过 1；本地排除 1" in output
 
@@ -561,7 +553,7 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
         "validate_pending_modelscope_frame_counts",
         lambda _root: ("_prepared/only-session",),
     )
-    connection = SimpleNamespace(settings=object(), api=object(), username="tester")
+    connection = SimpleNamespace(settings=SimpleNamespace(repo_id="owner/normal"), api=object(), username="tester")
     monkeypatch.setattr(modelscope_publisher, "connect_modelscope", lambda: connection)
     stage_calls: list[tuple[Path, str, Path]] = []
     upload_calls: list[dict[str, object]] = []

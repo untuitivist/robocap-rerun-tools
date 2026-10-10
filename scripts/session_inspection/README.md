@@ -7,6 +7,7 @@
 检查内容：
 
 - 每个 Segment 的六路头戴视频、头戴 IMU/MAG、左右腕视频和 IMU/MAG 是否齐全。
+- 每个 Segment 的 `audio_segmentN.wav` 是否存在、有实际采样数据，检查空文件、容器损坏和截断；静音不等于空文件。
 - 动捕目录唯一，并有第三人称视频。主人体 **Body0 的 TRC、BVH、CSV 三种都必需**；帽子 **Tracker0 的 TRC、CSV 都必需**。
 - Body1/2/3 等是额外追踪对象，出现时逐个检查 TRC、BVH、CSV。HH 不设置额外人体数量的硬规则，按实际文件和动作配置检查。
 - 每个物品分别检查 TRC、CSV，例如 BigBox0 和 BigBox1 分开检查，不要求物品或帽子有 BVH。文件名可带录制前缀；不同录制、不同编号不能互相补齐格式。
@@ -36,8 +37,8 @@ action_id,additional_bodies,objects
 发现问题只报告，不删除、不修补、不上传。正在录制、有数据库未合并日志、无法识别的格式都会明确提示，不会算作通过。
 三项退出码：0 为文件检查通过，1 为有问题或扫描不完整，2 为参数或环境问题。
 
-要检查后批量补传：双击项目根目录 `start_web.bat`，在“统计”页选择原始数据根目录，点 clean 分批上传。入口会先完整检查本地，再比对远端；本地多出的刚体会补传。勾选“重做全部检查报告”可刷新所有报告。共享盘可换一个根目录再运行。
+要检查后批量补传：双击项目根目录 `start_web.bat`，在“统计”页选择原始数据根目录，点“批量检查并分流上传”。检查通过的进正常库，有确认错误的进错误库。本地多出的刚体也会补传。勾选“重做全部检查报告”可刷新所有报告。共享盘可换一个根目录再运行。
 
-缺文件、空文件、损坏文件或未能完成关键检查的 Session 暂不进入正常数据集，具体原因在原始根目录的 `_reports/batch_upload_<时间>/report.html` 和 `issues.csv`。`sessions.csv` 记录逐条上传结果，`run.log` 保留完整日志。未配置物品名单单独提示待确认。
+缺文件、空文件、损坏文件、部分轨迹缺失或差帧的 Session 进入 `EgoMotionActions-fault`；metadata 和 manifest 写明错误类型、文件与原因。关键检查未完成且没有确认错误的暂不上传，正在录制的也先等结束。具体原因在原始根目录的 `_reports/batch_upload_<时间>/report.html` 和 `issues.csv`。`sessions.csv` 记录目标库与逐条上传结果，`run.log` 保留完整日志。未配置物品名单单独提示待确认。
 
 补传保留原远端日期目录和远端独有文件，不删除数据。索引 `metadata.jsonl` 和 Session 的 `manifest.json` 新增 `mocap_rigid_names`，例如 `["Body0", "Tracker0", "BigBox0"]`，只记录实际文件中的名称。

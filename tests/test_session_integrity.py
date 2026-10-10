@@ -2,6 +2,7 @@ import hashlib
 import json
 import sqlite3
 import subprocess
+import wave
 from contextlib import closing
 
 import pytest
@@ -61,6 +62,9 @@ def full_session(tmp_path, monkeypatch, *, segments=(1,)):
     directory.mkdir(parents=True)
     for segment in segments:
         name = f"segment{segment}"
+        with wave.open(str(directory / f"audio_{name}.wav"), "wb") as audio:
+            audio.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+            audio.writeframes(b"\0\0" * 160)
         for camera in layout.CAMERAS:
             (directory / f"robocap_{name}_video_{camera}.mp4").write_bytes(b"video")
         for side in ("left", "right"):
@@ -183,7 +187,7 @@ def test_full_structure_requires_body0_three_formats_and_tracker0_pair(tmp_path,
     directory = full_session(tmp_path, monkeypatch)
     info = audit(directory)
     assert info["status"] == "passed", [r for r in info["checks"] if r["state"] != "ok"]
-    assert info["fileCount"] == 21
+    assert info["fileCount"] == 22
     assert info["segments"] == ["segment1"]
 
 

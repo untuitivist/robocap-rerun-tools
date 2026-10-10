@@ -121,15 +121,25 @@ Web 的 **错误数据上传 / Fault Dataset** 页面提供独立的单项上传
 及错误信息是否相同。日期支持手填 `YYYYMMDD` 或按 Session UTC 时间戳转东八区自动匹配。
 目录仍为 `EgoMotionActions/YYYYMMDD/动作编号/session_id/`。
 
-收录条件：所选 Segment 有有效检查报告，并至少一项不满足
+“统计”页的“批量检查并分流上传”一次处理两个库：结构、内容及帧数检查通过的进入正常库；
+确认缺文件、空文件、内容损坏、部分轨迹缺失或差帧的进入错误库。帧数关系为
 `Robocap : Mocap : 第三人称 = n : ratio*(n+1) : n+1`，ratio 支持 4、8。
-未检查、报告无效和帧数完全正常的数据不进入错误库；仅有其他小异常不算差帧。
+每个 Segment 必需 `audio_segmentN.wav`，检查实际采样数据、容器长度和截断，不把静音判为空文件。
+无法检查且没有确认错误的 Session 暂停上传；正在变化的文件或未关闭的数据库也先暂停。
+仅缺失/过期报告不会被猜测为差帧。未知物品清单和不支持的可选格式仍单独提示。
 视频始终保留原始完整文件，不压缩、不裁切、不插值。多种错误只保存一份 Session，
 在 `metadata.jsonl` 和 `manifest.json` 中同时记录：
 
 - `quality_status`: `error`。
-- `error_types`: `mocap_extra`、`mocap_missing`、`third_person_extra`、`third_person_missing`。
+- `error_types`: `mocap_extra`、`mocap_missing`、`third_person_extra`、`third_person_missing`，
+  以及 `local_missing`、`local_zero_byte`、`local_invalid_format`、`local_empty_data` 等 `local_<state>` 类型。
 - `quality_details`: 每个 Segment 的比例、实际与期望帧数、差值、错误列表及源报告 SHA-256。
+- `local_integrity`: 文件路径、结构/内容检查结果及具体原因。
+- `inspection_issues`: 未完成的帧数检查及原因，不填虚假帧数。
+
+正常分流记录写 `quality_status=passed`、`error_types=[]`。错误 Session 保留实际存在的原始文件，
+缺失动捕也可归档；无法测量时长时写 `duration_s=null` 和 `duration_error`。两库独立暂存、按库和日期
+分批、分别校验，上传始终串行。此操作不删除任何现有远端 Session。
 
 错误数据使用独立暂存区；暂存标记阻止正常与错误数据混传。命令行在 `modelscope-stage` 添加
 `--quality-target fault`，随后对输出的暂存目录执行 `modelscope-upload`。
@@ -356,19 +366,19 @@ Mocap 目录时默认勾选；缺失、格式错误或
 Session 的 `manifest.json`。该操作不重传视频、不移动远端目录，Session 与 Mocap 目录两列只用于
 稳定定位，不应修改。以后准备的新 Session 也会自动把完整命名写入两处的 `mocap_capture` 字段。
 
-同一页可按批上传 clean Session。先检查所有本地 Session 的结构与文件内容，包括缺少视频的录制目录，
+同一页可按批检查并自动分流上传。先检查所有本地 Session 的结构与文件内容，包括 WAV 和缺少视频的录制目录，
 再读取远端索引，按本地实际路径、大小和 SHA-256 比对远端文件，旧 manifest 未列出的新增刚体也会补传。
 远端缺少哈希时会下载校验。补传保留原远端日期目录、远端独有文件及其他元数据；索引和 manifest
 的 `mocap_rigid_names` 记录实际对象名（如 Body0、Tracker0、BigBox0），多格式去重。
-缺文件、空文件、坏文件或关键检查未完成的本地 Session 暂不进入正常数据集；物品名单未配置单独提示待确认。
+缺文件、空文件、坏文件及差帧的 Session 进入错误库，检查通过的进入正常库；关键检查未完成且无确认错误的暂停。物品名单未配置单独提示待确认。
 逐条结果和问题明细保存在原始根目录 `_reports/batch_upload_<时间>/` 的 `report.html`、`sessions.csv`、
-`issues.csv` 和 `run.log`。勾选重做全部会处理所有项；缺失或过期的报告会先刷新。其余
-Session 必须满足上述帧数关系。“每个上传批次的 Session 数”默认是 `10`；填 `1` 时逐个提交，填入
+`issues.csv` 和 `run.log`，包含目标库与错误类型。勾选重做全部会处理所有项；缺失或过期的报告会先刷新。
+正常库 Session 必须满足上述帧数关系。“每个上传批次的 Session 数”默认是 `10`；填 `1` 时逐个提交，填入
 大于等于候选总数的值时全量作为一个批次。当前批次上传时，下一批会在后台同时准备，但远端上传严格
 串行。上传首次失败后会再重试 3 次；共 4 次仍失败则跳过该批并继续。准备或 clean 校验失败只排除对应
 Session，不停止后续队列，且不回滚已完成上传。原始文件在同一兼容 NTFS 卷上优先用硬链接暂存，失败
 时再逐字节复制；默认选择 BVH/CSV/TRC/MP4
-并排除路径含 `unnamed` 的文件，不包含 RRD，目标仓库读取 `.env`。无法唯一识别
+并排除路径含 `unnamed` 的文件；错误库保留全部现有采集文件，均不包含自动生成的 RRD。目标仓库读取 `.env`。无法唯一识别
 `[A-Z]+<一位或多位数字>`，且不在明确的 `EgoMotionActions/<动作>/...` 结构下的 Session 会排除。
 
 “查看 Rerun / Viewer”页可以扫描当前 session 下生成的 `.rrd` 文件，选择其中一个用 Rerun Web Viewer

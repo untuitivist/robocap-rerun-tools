@@ -14,6 +14,7 @@ from robocap_rerun_tools.batch_completeness import (
 )
 from robocap_rerun_tools.mocap_inventory import mocap_names
 from robocap_rerun_tools.session_integrity import (
+    INTEGRITY_VERSION,
     integrity_summary,
     save_integrity,
     source_signature,
@@ -211,7 +212,7 @@ def test_integrity_report_becomes_stale_when_file_or_roster_changes(tmp_path):
     source.mkdir()
     (source / "Body0.csv").write_bytes(b"motion")
     report = {
-        "version": 2,
+        "version": INTEGRITY_VERSION,
         "status": "passed",
         "checks": [],
         "source_signature": source_signature(source),
@@ -223,7 +224,7 @@ def test_integrity_report_becomes_stale_when_file_or_roster_changes(tmp_path):
 
 
 def test_segment_only_failure_is_visible_in_statistics(tmp_path):
-    report = {"version": 2, "status": "failed", "checks": [
+    report = {"version": INTEGRITY_VERSION, "status": "failed", "checks": [
         {"path": "mocap/Body0.csv", "state": "missing", "severity": "error"}],
         "source_signature": source_signature(tmp_path, segment="segment1")}
     save_integrity(tmp_path, report, "segment1")
@@ -277,8 +278,10 @@ def test_batch_records_incomplete_source_without_contacting_remote(tmp_path, mon
     monkeypatch.setattr(
         publisher, "connect_modelscope", lambda: pytest.fail("Must not upload incomplete data")
     )
-    output = list(web_app.bulk_upload_clean_modelscope_sessions(str(source), 8, True, "中文"))[-1]
-    assert "本地结构/内容不完整" in output
+    output = list(web_app.bulk_upload_clean_modelscope_sessions(
+        str(source), 8, False, "中文", quality_target="normal"
+    ))[-1]
+    assert "不属于本次选择的数据集" in output
     report = next((source / "_reports").glob("batch_upload_*/issues.csv"))
     assert "Body0.csv" in report.read_text(encoding="utf-8")
     assert "zero_byte" in report.read_text(encoding="utf-8")

@@ -51,7 +51,18 @@ def save_fault_repository(repository: str, env_path: Path | None = None) -> str:
     return repository
 
 
-def collect_fault_quality(source: Path, segment: str | None = None) -> dict:
+def collect_fault_quality(
+    source: Path, segment: str | None = None, *, integrity_report=None, ratio=None,
+) -> dict:
+    if integrity_report is not None:
+        from .session_quality import assess_quality, unstable_source
+
+        if unstable_source(integrity_report):
+            raise ValueError("Source is still changing or has an active database; recheck when closed.")
+        quality = assess_quality(source, integrity_report, segment=segment, ratio=ratio)
+        if quality["quality_status"] != "error":
+            raise ValueError("Fault upload requires a confirmed source or frame-count error.")
+        return quality
     references = discover_segment_references(source)
     if segment:
         references = tuple(item for item in references if item.segment == segment)
@@ -95,14 +106,16 @@ def fault_readme(document: str, repository: str = DEFAULT_FAULT_REPO) -> str:
     start = max(start, 0)
     introduction = (
         "\n# EgoMotionActions-fault\n\n"
-        "本数据集保存经过有效检查确认存在帧数差异的采集 Session，用于异常分析与对齐研究。\n"
-        "视频保留原文件；不压缩、不裁切、不补帧。未检查、报告无效或缺失动捕的数据不收录。\n\n"
-        "This companion dataset contains inspected recordings with frame-count mismatches. "
+        "本数据集保存检查确认存在帧数差异、缺文件、空文件或内容损坏的采集 Session。\n"
+        "按实际存在的文件归档；不压缩、不裁切、不补帧。缺失内容不伪造，未知时长记为 null。\n\n"
+        "This companion dataset contains recordings with confirmed frame-count or source-integrity errors. "
         "It is not a clean synchronized training split. Original videos are preserved byte-for-byte.\n\n"
         "路径：`EgoMotionActions/<YYYYMMDD>/<action_id>/<session_id>/`，日期按 UTC+08:00。\n"
         "`metadata.jsonl` 和 `manifest.json` 包含 `quality_status=error`、`error_types` 数组以及 "
         "`quality_details` 中每个 Segment 的实际/期望帧数、差值和检查报告 SHA-256。\n"
         "错误类型：`mocap_extra`、`mocap_missing`、`third_person_extra`、`third_person_missing`。"
+        "结构/内容问题为 `local_<state>`，如 `local_missing`、`local_zero_byte`、"
+        "`local_invalid_format`；`local_integrity` 保存逐文件检查，`inspection_issues` 保存未完成的帧数检查。"
         "同一 Session 可以有多种错误，但只保存一份。帧数规则为 `n:ratio*(n+1):n+1`，ratio 为 4 或 8。\n\n"
         "## Shared collection specification / 共用采集说明\n"
         "下文的动作与设备规范沿用正常数据集；这些规范不代表本库每条数据已通过同步检查。\n"
@@ -137,7 +150,9 @@ def validate_fault_staging(root: Path) -> tuple[str, ...]:
         for record in (entry, manifest):
             if record.get("quality_status") != "error" or not record.get("error_types"):
                 raise ValueError(f"Missing fault classification: {entry['session_id']}")
-        for key in ("quality_status", "error_types", "quality_details"):
+        from .session_quality import QUALITY_FIELDS
+
+        for key in QUALITY_FIELDS:
             if entry.get(key) != manifest.get(key):
                 raise ValueError(f"Fault metadata differs from manifest: {entry['session_id']}")
         validate_quality_record(entry)
@@ -146,9 +161,20 @@ def validate_fault_staging(root: Path) -> tuple[str, ...]:
 
 def validate_quality_record(record: dict) -> None:
     details = record.get("quality_details")
-    if not isinstance(details, dict) or not details:
+    if not isinstance(details, dict) or (not details and "local_integrity" not in record):
         raise ValueError("Missing per-Segment fault details")
     errors = set()
+    if "local_integrity" in record:
+        from .session_quality import integrity_error_types, unstable_source
+
+        integrity = record["local_integrity"]
+        if (not isinstance(integrity, dict) or not isinstance(integrity.get("checks"), list)
+                or any(not isinstance(row, dict) or not {"state", "severity", "path"} <= row.keys()
+                       for row in integrity["checks"])):
+            raise ValueError("Invalid local integrity details")
+        if unstable_source(integrity):
+            raise ValueError("Unstable source cannot be published")
+        errors.update(integrity_error_types(integrity))
     for detail in details.values():
         payload = {
             "ratio": detail.get("ratio"),

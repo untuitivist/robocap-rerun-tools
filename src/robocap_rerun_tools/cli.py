@@ -1928,8 +1928,21 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
     )
 
     try:
-        refresh_modelscope_inspection(args)
+        try:
+            refresh_modelscope_inspection(args)
+        except (OSError, ValueError) as exc:
+            if getattr(args, "quality_target", "normal") != "fault":
+                raise
+            print(f"Frame inspection unavailable; source errors will still be recorded: {exc}")
         resolved_ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
+        from .session_integrity import audit_session, saved_integrity
+
+        integrity = saved_integrity(args.session_dir, args.segment)
+        if integrity is None or integrity.get("status") == "stale":
+            integrity = audit_session(
+                args.session_dir, segment=args.segment, ffmpeg=args.ffmpeg,
+                ffprobe=resolved_ffprobe,
+            )
         resolved_ratio: float | None = None
         ratio_estimate = None
         if args.aligned_intersection:
@@ -1967,6 +1980,8 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
             reference_video_label=args.reference_video,
             dry_run=args.dry_run,
             quality_target=getattr(args, "quality_target", "normal"),
+            inspection_mocap_ratio=getattr(args, "inspection_mocap_ratio", 8),
+            integrity_report=integrity,
         )
     except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
         print(f"ModelScope staging failed: {exc}", file=sys.stderr)

@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -20,6 +21,9 @@ DEFAULT_EXCLUDED_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     "raw_calibration",
+    "_reports",
+    "_modelscope_dataset",
+    "_analysis",
 }
 DEFAULT_EXCLUDED_SUFFIXES = {".pyc", ".pyo"}
 
@@ -72,7 +76,8 @@ def matches_segment(path: Path, session_dir: Path, segment: str | None) -> bool:
         return True
     if "segment" not in path.name.lower():
         return True
-    return segment.lower() in path.name.lower()
+    match = re.search(r"(?:^|_)segment(\d+)(?=[_.]|$)", path.name, re.IGNORECASE)
+    return match is None or f"segment{match[1]}".lower() == segment.lower()
 
 
 def discover_package_files(

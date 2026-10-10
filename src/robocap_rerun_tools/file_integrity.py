@@ -7,6 +7,7 @@ import json
 import math
 import re
 import sqlite3
+import struct
 import subprocess
 from contextlib import closing, contextmanager
 from pathlib import Path
@@ -435,6 +436,82 @@ def inspect_motion(path):
     raise ValueError("Unsupported text encoding")
 
 
+def inspect_wav(path: Path):
+    """Read every PCM/float sample and verify RIFF chunk lengths, including truncated data."""
+    size = path.stat().st_size
+    with path.open("rb") as stream:
+        header = stream.read(12)
+        if len(header) != 12 or header[:4] not in {b"RIFF", b"RF64"} or header[8:] != b"WAVE":
+            return result("invalid_format", "Missing RIFF/RF64 WAVE header")
+        end = struct.unpack_from("<I", header, 4)[0] + 8
+        large_data_size = None
+        if header[:4] == b"RF64":
+            end = size  # ds64 supplies the actual 64-bit sizes below.
+        if end > size or end < 12:
+            return result("invalid_format", "WAV RIFF length exceeds available bytes")
+        fmt = None
+        data_bytes = 0
+        while stream.tell() < end:
+            chunk = stream.read(8)
+            if len(chunk) != 8:
+                return result("invalid_format", "Truncated WAV chunk header")
+            name, length = struct.unpack("<4sI", chunk)
+            if name == b"data" and length == 0xFFFFFFFF and large_data_size is not None:
+                length = large_data_size
+            if stream.tell() + length > min(end, size):
+                return result("invalid_format", "Truncated WAV " + repr(name) + " chunk")
+            if name == b"ds64" and header[:4] == b"RF64":
+                if length < 28:
+                    return result("invalid_format", "Invalid RF64 ds64 chunk")
+                riff_size, large_data_size = struct.unpack("<QQ", stream.read(16))
+                end = riff_size + 8
+                if end != size:
+                    return result("invalid_format", "RF64 size does not match actual bytes")
+                stream.seek(length - 16, 1)
+            elif name == b"fmt ":
+                if length < 16:
+                    return result("invalid_format", "Incomplete WAV format chunk")
+                raw = stream.read(min(length, 40))
+                codec, channels, rate, byte_rate, alignment, bits = struct.unpack_from("<HHIIHH", raw)
+                if codec == 0xFFFE and len(raw) >= 40:
+                    codec = struct.unpack_from("<I", raw, 24)[0]
+                if codec not in {1, 3}:
+                    return result("not_checked", f"Unsupported WAV codec: {codec}")
+                if (not channels or not rate or not bits or bits % 8
+                        or alignment != channels * (bits // 8) or byte_rate != rate * alignment
+                        or (codec == 3 and bits not in {32, 64})):
+                    return result("invalid_format", "Invalid WAV sample format/rate/alignment")
+                fmt = codec, channels, rate, alignment, bits
+                stream.seek(length - len(raw), 1)
+            elif name == b"data":
+                if fmt is None or length % fmt[3]:
+                    return result("invalid_format", "Missing format or incomplete audio sample frame")
+                remaining = length
+                while remaining:
+                    block = stream.read(min(remaining, 1024 * 1024))
+                    if not block:
+                        return result("invalid_format", "Truncated audio samples")
+                    if fmt[0] == 3:
+                        values = struct.iter_unpack("<f" if fmt[4] == 32 else "<d", block)
+                        if any(not math.isfinite(value[0]) for value in values):
+                            return result("invalid_data", "Non-finite WAV audio samples")
+                    remaining -= len(block)
+                data_bytes += length
+            else:
+                stream.seek(length, 1)
+            if length % 2 and stream.tell() < end:
+                stream.seek(1, 1)
+        if end != size or (header[:4] == b"RF64" and large_data_size is None):
+            return result("invalid_format", "WAV container size mismatch or missing RF64 ds64")
+    if not fmt or not data_bytes:
+        return result("empty_data", "No audio sample frames")
+    frames = data_bytes // fmt[3]
+    return result(
+        detail=f"Full audio read: {frames} sample frames, {fmt[2]} Hz, {fmt[1]} channels",
+        sample_frames=frames, sample_rate=fmt[2], channels=fmt[1], duration_s=frames / fmt[2],
+    )
+
+
 def inspect_file(path: Path, *, ffmpeg=None, ffprobe=None, video_log=None):
     before = None
     try:
@@ -452,6 +529,8 @@ def inspect_file(path: Path, *, ffmpeg=None, ffprobe=None, video_log=None):
                 checked = inspect_sensor_database(path)
         elif path.suffix.lower() in VIDEO_SUFFIXES:
             checked = inspect_video(path, ffmpeg, ffprobe, video_log)
+        elif path.suffix.lower() == ".wav":
+            checked = inspect_wav(path)
         elif path.suffix.lower() in MOTION_SUFFIXES:
             checked = inspect_motion(path)
         elif path.suffix.lower() == ".json":

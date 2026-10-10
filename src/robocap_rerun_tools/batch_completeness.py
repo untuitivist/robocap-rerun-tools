@@ -7,12 +7,13 @@ import json
 from pathlib import Path
 
 from .inventory_report import render_table, write_csv
-from .session_integrity import audit_session, save_integrity, source_signature
+from .session_integrity import INTEGRITY_VERSION, audit_session, save_integrity, source_signature
 
 
 def blocks_normal_upload(report):
     return bool(report["errors"]) or any(
         row.get("state") in {"active_database", "changed", "tool_unavailable", "partial_data"}
+        or (row.get("state") == "not_checked" and row.get("path", "").lower().endswith(".wav"))
         for row in report["checks"]
     )
 
@@ -26,7 +27,7 @@ def inspection_is_current(reference, ratio):
         signature = integrity.get("source_signature")
         return (
             payload.get("ratio") == ratio
-            and integrity.get("version") == 2
+            and integrity.get("version") == INTEGRITY_VERSION
             and signature is not None
             and signature
             in {
@@ -38,20 +39,41 @@ def inspection_is_current(reference, ratio):
         return False
 
 
-def local_upload_inventory(session: Path, mocap_files, progress=None):
+def fault_source_files(session: Path, segment=None):
+    """Include existing capture files even when Mocap is absent or ambiguous."""
+    from .data_packager import is_excluded
+    from .session_integrity import matches_segment, source_files
+
+    files, errors = source_files(session)
+    if errors:
+        raise ValueError("Cannot inventory all source files: " + "; ".join(str(p) for p, _ in errors))
+    return [p for p in files if p.name.lower() != "manifest.json"
+            and not is_excluded(p, session, False, False) and matches_segment(p, segment)]
+
+
+def fault_relative_path(path: Path, session: Path):
+    from .session_layout import canonical_mocap_relative_path, discover_mocap_directories
+
+    if len(discover_mocap_directories(session)) > 1:
+        return path.relative_to(session)  # Keep ambiguous captures separate, never overwrite one.
+    return canonical_mocap_relative_path(path, session)
+
+
+def local_upload_inventory(session: Path, mocap_files, progress=None, *, quality_target="normal"):
     from .data_packager import discover_package_files
     from .modelscope_publisher import resolve_mocap_files
     from .session_layout import canonical_mocap_relative_path, is_path_under_mocap
     from .upload_verification import file_digest
 
-    files = [
+    files = fault_source_files(session) if quality_target == "fault" else [
         p
         for p in discover_package_files(session, None, include_artifacts=False, include_rrd=False)
         if not is_path_under_mocap(p, session)
     ] + resolve_mocap_files(session, mocap_files)
     inventory = {}
     for path in files:
-        relative = canonical_mocap_relative_path(path, session).as_posix()
+        relative = (fault_relative_path(path, session) if quality_target == "fault"
+                    else canonical_mocap_relative_path(path, session)).as_posix()
         if relative in inventory:
             raise ValueError(f"Duplicate packaged path: {relative}")
         if progress:
@@ -136,6 +158,8 @@ def write_batch_report(output: Path, reports, decisions, scan_errors=()):
         "errors": "错误数",
         "warnings": "待确认数",
         "mocap_rigid_names": "实际对象名称",
+        "target": "目标数据集",
+        "error_types": "错误类型",
         "upload_status": "上传结果",
         "detail": "原因",
     }
