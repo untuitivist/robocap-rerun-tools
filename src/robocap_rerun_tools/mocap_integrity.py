@@ -90,18 +90,6 @@ def check_mocap_exports(mocap_dirs, mocap_files, add, *, requirements_path=None)
 
     configured = None
     action = next(iter(actions)) if len(actions) == 1 else None
-    if action and action.startswith("HH"):
-        bodies = sorted(label for label in by_label if BODY_NAME.fullmatch(label))
-        add(
-            "mocap*/Body*",
-            "mocap",
-            result(
-                "ok" if len(bodies) >= 2 else "missing",
-                f"{action} 是多人交互动作，至少需要 2 个人体；"
-                f"发现 {len(bodies)} 个: {'; '.join(bodies) or '无'}。物品不计作人体。",
-            ),
-            "HH 多人采集",
-        )
     path = requirements_path if requirements_path is not None else DEFAULT_REQUIREMENTS
     try:
         rules = read_requirements(Path(path))

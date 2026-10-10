@@ -33,6 +33,7 @@ from .dataset_intersection import (
     stage_aligned_file,
 )
 from .dataset_statistics import discover_segment_references, probe_video_duration
+from .mocap_inventory import manifest_mocap_names
 from .mocap_metadata import (
     COMPACT_ACTION_ID_PATTERN,
     MocapCaptureMetadata,
@@ -952,6 +953,12 @@ followed by one or more digits, and preserve leading zeros. Metadata-only correc
 and matching manifests in one commit without moving Session directories or uploading capture files
 again.
 
+The dataset index and Session manifest also contain `mocap_rigid_names`: the actual exported
+entity labels (for example `Body0`, `Tracker0`, `BigBox0`), deduplicated across formats. No objects
+or extra HH bodies are inferred. Backfills retain existing Session paths and remote-only files,
+merge manifests, and verify uploaded bytes. Local structural/content failures are recorded before
+normal batch uploads; frame-count statistics are a separate quality dimension.
+
 At upload time, `participants.jsonl` is read from the destination dataset and matched against
 `mocap_capture.participant` (case-insensitive). Session index rows and manifests both receive
 `participant_gender`, `participant_height_cm`, and `participant_weight_kg`. Unavailable measurements
@@ -976,10 +983,11 @@ inspection report. Paths inside manifests and reports are dataset-relative.
 
 - Required capture streams: six `robocap_<segment>_video_*.mp4` first-person cameras, Robocap
   IMU/MAG databases, third-person videos, and Robowrist left/right video and sensor streams.
-- Required motion-capture content: the explicitly selected NOKOV body, rigid-body, and third-person
-  files under `mocap/`. The concrete BVH, CSV, TRC, XRS, C3D, or other export formats are optional
-  choices, but at least one motion-capture format must be present. Files not selected during
-  staging are not published.
+- Standard motion-capture exports under `mocap/`: Body0 in TRC/BVH/CSV, Tracker0 (hat) in
+  TRC/CSV, all three formats for each detected extra Body, and TRC/CSV for each named object.
+  HH imposes no fixed extra-body count. Action-specific requirements can add exact object names.
+  Other formats are optional and cannot replace missing standard exports. Normal batch uploads
+  check this standard; manual staging publishes only the explicitly selected files.
 - Optional artifact: RRD files, only when explicitly selected.
 - Generated: `manifest.json` and `timestamp_anomaly_detail_table.html`.
 
@@ -998,8 +1006,8 @@ frame and timestamp columns and the C3D first-frame identity remain unchanged fo
 
 ## Complete dataset structure
 
-Only the concrete NOKOV motion-capture export format selection and explicitly selected RRD files
-are optional. All other listed capture streams and generated records are required.
+Additional native export formats and explicitly selected RRD files are optional. The standard
+Body0/Tracker0/object exports, capture streams and generated records are required for normal batches.
 
 ```text
 <dataset_root>/
@@ -1016,7 +1024,11 @@ are optional. All other listed capture streams and generated records are require
           robocap_<segment>_mag_*.db             # required Robocap MAG
           mocap/
             *.mp4                                # required third-person video
-            *.{bvh,trc,csv,xrs,c3d,...}          # one or more formats required
+            *Body0.{trc,bvh,csv}                 # required main body, all three formats
+            *Tracker0.{trc,csv}                  # required hat, both formats
+            *Body<N>.{trc,bvh,csv}               # extra tracked entities when present/configured
+            *<object>.{trc,csv}                  # each named object, both formats
+            *.{xrs,c3d,...}                      # optional additional exports
           robowrist_<device_id>_left/             # required left streams
           robowrist_<device_id>_right/            # required right streams
           rerun/<segment>/inspection/*.rrd        # optional
@@ -1031,13 +1043,13 @@ are optional. All other listed capture streams and generated records are require
 `raw_calibration/` is a required dataset-level collection maintained by the calibration workflow;
 session staging never copies session-local calibration files into it. Session preparation writes
 to local `_prepared/<primitive_id>/<session_id>/`; the upload operation assigns one shared
-local-time batch ID and moves every pending session into its final `EgoMotionActions/` path before
-uploading. `_prepared/` is never uploaded.
+local-time batch ID to new sessions and moves them into their final `EgoMotionActions/` paths before
+uploading. Existing sessions keep their remote date/path during backfill. `_prepared/` is never uploaded.
 
 Before updating `metadata.jsonl`, the uploader downloads the current remote index and merges it with
-the local rows by `(primitive_id, session_id)`. Local rows replace matching remote rows; unrelated
-remote batches and `Demo` records remain indexed. Session files are transferred first, and the
-merged metadata is committed only after that transfer succeeds.
+the local rows by `(primitive_id, session_id)`. Updated fields replace matching values; unknown remote
+fields, unrelated batches and `Demo` records remain indexed. The combined manifest retains remote-only
+files, and both uploaded files and metadata are verified after transfer.
 """
     )
 
@@ -1414,6 +1426,11 @@ def stage_session(
             record["aligned_selection"] = aligned_records[item.source]
         file_records.append(record)
     file_records.append(report_record)
+    from .upload_verification import file_digest
+
+    for record in file_records:
+        record["sha256"] = file_digest(target / record["packaged_as"])
+    rigid_names = manifest_mocap_names(file_records)
     total_bytes = sum(int(item["packaged_bytes"]) for item in file_records)
     manifest = {
         "schema_version": 2 if intersection_plan is not None else 1,
@@ -1425,6 +1442,7 @@ def stage_session(
         "segment": segment or "auto/all",
         "duration_s": duration_s,
         "device_ids": device_ids,
+        "mocap_rigid_names": rigid_names,
         "options": {
             "raw_video": raw_video,
             "proxy_height": proxy_height,
@@ -1462,6 +1480,7 @@ def stage_session(
         "duration_s": duration_s,
         "device_ids": device_ids,
         "file_count": len(file_records),
+        "mocap_rigid_names": rigid_names,
         "packaged_bytes": total_bytes,
     }
     if mocap_capture is not None:
@@ -1611,6 +1630,7 @@ def finalize_upload_batch(
     upload_time: datetime | None = None,
     upload_date: str | None = None,
     progress: Callable[[str], None] | None = print,
+    remote_entries: Sequence[Mapping[str, object]] = (),
 ) -> tuple[StagedDataset, str | None]:
     requested_batch = validate_upload_date(upload_date) if upload_date is not None else None
     entries = _read_metadata(staged.metadata_path)
@@ -1618,7 +1638,7 @@ def finalize_upload_batch(
     pending_indices = [index for index, item in enumerate(parsed) if item[3] is None]
     if not pending_indices:
         latest_batch = max(staged.batch_ids, default=None)
-        if requested_batch is not None and any(
+        if not remote_entries and requested_batch is not None and any(
             batch_id != requested_batch for batch_id in staged.batch_ids
         ):
             raise ModelScopePublisherError(
@@ -1642,11 +1662,20 @@ def finalize_upload_batch(
         / moment.strftime("%Y%m%d_%H%M%S_%f")
     )
     moves: list[_UploadSessionMove] = []
+    remote_by_key = {(row.get("primitive_id"), row.get("session_id")): row for row in remote_entries}
 
     for index in pending_indices:
         primitive, session_id, relative_path, _ = parsed[index]
         source = staged.dataset_root / Path(relative_path)
         published_path = published_session_path(batch_id, primitive, session_id)
+        entry_batch = batch_id
+        entry_created_at = batch_created_at
+        previous = remote_by_key.get((primitive, session_id))
+        if previous is not None:
+            _, _, published_path, entry_batch = _metadata_session_location(previous)
+            if entry_batch is None:
+                raise ModelScopePublisherError("Remote metadata cannot contain a prepared Session")
+            entry_created_at = previous.get("upload_batch_created_at", batch_created_at)
         target = staged.dataset_root / Path(published_path)
         if not source.is_dir():
             raise FileNotFoundError(f"Prepared session directory is missing: {source}")
@@ -1662,8 +1691,8 @@ def finalize_upload_batch(
         manifest = json.loads(manifest_text)
         if not isinstance(manifest, dict):
             raise ModelScopePublisherError(f"Staged manifest is not a JSON object: {manifest_path}")
-        manifest["upload_batch_id"] = batch_id
-        manifest["upload_batch_created_at"] = batch_created_at
+        manifest["upload_batch_id"] = entry_batch
+        manifest["upload_batch_created_at"] = entry_created_at
         manifest["dataset_path"] = published_path
         updated_manifest_text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
         moves.append(
@@ -1677,8 +1706,8 @@ def finalize_upload_batch(
         )
 
         entry = updated_entries[index]
-        entry["upload_batch_id"] = batch_id
-        entry["upload_batch_created_at"] = batch_created_at
+        entry["upload_batch_id"] = entry_batch
+        entry["upload_batch_created_at"] = entry_created_at
         entry["session_path"] = published_path
         entry["manifest"] = f"{published_path}/manifest.json"
         entry["inspection_html"] = f"{published_path}/{REPORT_NAME}"
@@ -1743,7 +1772,7 @@ def merge_metadata_entries(
                 raise ModelScopePublisherError(
                     f"Invalid {source} {METADATA_NAME} identity: {exc}"
                 ) from exc
-            merged[(primitive, session_id)] = dict(entry)
+            merged[(primitive, session_id)] = {**merged.get((primitive, session_id), {}), **entry}
     return sorted(
         merged.values(),
         key=lambda item: (
@@ -1915,6 +1944,8 @@ def _list_remote_session_files(
     repository: str,
     revision: str,
     session_path: str,
+    *,
+    digests: dict[str, str] | None = None,
 ) -> dict[str, int]:
     legacy = getattr(api, "legacy", None)
     legacy_list = getattr(legacy, "list_repo_files", None)
@@ -1952,13 +1983,17 @@ def _list_remote_session_files(
         if path in files:
             raise ModelScopePublisherError(f"Remote repository listed duplicate file path: {path}.")
         files[path] = size
+        digest = ((item.get("Sha256") or item.get("sha256")) if isinstance(item, dict)
+                  else getattr(item, "sha256", None))
+        if digests is not None and re.fullmatch(r"[0-9a-fA-F]{64}", str(digest or "")):
+            digests[path] = str(digest).lower()
     return files
 
 
 def _manifest_relative_path(value: object, field: str) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{field} must be a non-empty relative POSIX path.")
-    if "\\" in value:
+    if "\\" in value or ":" in value:
         raise ValueError(f"{field} must use forward slashes: {value!r}.")
     parts = value.split("/")
     path = PurePosixPath(value)
@@ -1979,11 +2014,13 @@ def _audit_remote_session_entry(
     revision: str,
     entry: Mapping[str, object],
     token: str | None,
+    local_files: Mapping[str, Mapping[str, object]] | None = None,
 ) -> RemoteSessionIntegrity:
     primitive, session_id, session_path, batch_id = _metadata_session_location(entry)
     expected_manifest = f"{session_path}/manifest.json"
     expected_report = f"{session_path}/{REPORT_NAME}"
     issues: list[str] = []
+    remote_hashes: dict[str, str] = {}
 
     if entry.get("manifest") != expected_manifest:
         issues.append(f"metadata manifest path must be {expected_manifest}")
@@ -1991,7 +2028,7 @@ def _audit_remote_session_entry(
         issues.append(f"metadata inspection path must be {expected_report}")
 
     try:
-        remote_files = _list_remote_session_files(api, repository, revision, session_path)
+        remote_files = _list_remote_session_files(api, repository, revision, session_path, digests=remote_hashes)
     except ModelScopePublisherError:
         raise
     except Exception as exc:
@@ -2103,6 +2140,32 @@ def _audit_remote_session_entry(
 
     if REPORT_NAME not in packaged_paths:
         issues.append(f"manifest does not include required report: {REPORT_NAME}")
+    if local_files is not None:
+        records_by_path = {r.get("packaged_as"): r for r in file_records if isinstance(r, Mapping)}
+        for relative, expected in local_files.items():
+            record = records_by_path.get(relative)
+            if record is None:
+                issues.append(f"local file absent from remote manifest: {relative}")
+            elif (record.get("packaged_bytes") != expected["size"]
+                  or record.get("sha256") != expected["sha256"]):
+                issues.append(f"local file changed or remote hash unknown: {relative}")
+            elif remote_files.get(f"{session_path}/{relative}") == expected["size"]:
+                remote_key = f"{session_path}/{relative}"
+                actual_hash = remote_hashes.get(remote_key)
+                if actual_hash is None:
+                    from .upload_verification import file_digest
+
+                    downloaded = _remote_read_with_retries(
+                        lambda remote_key=remote_key: api.download_file(
+                            repository, "dataset", remote_key, revision=revision, force=True,
+                        )
+                    )
+                    actual_hash = file_digest(Path(downloaded))
+                if actual_hash != expected["sha256"]:
+                    issues.append(f"remote hash mismatch: {relative}")
+        names = manifest_mocap_names(file_records)
+        if entry.get("mocap_rigid_names") != names or manifest.get("mocap_rigid_names") != names:
+            issues.append("mocap_rigid_names metadata missing or different")
     try:
         metadata_file_count = _json_nonnegative_int(entry.get("file_count"), "metadata file_count")
         if metadata_file_count != len(file_records):
@@ -2144,6 +2207,7 @@ def audit_remote_sessions(
     api: Any | None = None,
     progress: Callable[[str], None] | None = print,
     expected_quality: Mapping[tuple[str, str], dict] | None = None,
+    local_files: Mapping[tuple[str, str], Mapping[str, Mapping[str, object]]] | None = None,
 ) -> RemoteSessionIntegrityReport:
     if max_workers < 1:
         raise ValueError("max_workers must be positive.")
@@ -2199,6 +2263,8 @@ def audit_remote_sessions(
                 target_revision,
                 entry,
                 resolved.token,
+                local_files.get((str(entry["primitive_id"]), str(entry["session_id"])))
+                if local_files is not None else None,
             )
 
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
@@ -2456,11 +2522,19 @@ def upload_staged_dataset(
         remote_metadata = (
             _download_remote_metadata(api, repository, target_revision) if exists else ""
         )
+        remote_entries = _read_metadata_document(remote_metadata, f"remote {METADATA_NAME}")
         staged, batch_id = finalize_upload_batch(
             staged,
             upload_time=upload_time,
             upload_date=upload_date,
             progress=progress,
+            remote_entries=remote_entries,
+        )
+        from .remote_backfill import reconcile_staged_sessions
+
+        retained = reconcile_staged_sessions(
+            staged, remote_entries, api=api, repository=repository,
+            revision=target_revision, progress=progress,
         )
         allow_patterns = [f"{glob.escape(path)}/**" for path in staged.session_paths]
         if (staged.dataset_root / CALIBRATION_DIR_NAME).is_dir():
@@ -2472,10 +2546,6 @@ def upload_staged_dataset(
             else f"Upload {len(staged.session_paths)} indexed session(s)"
         )
         local_entries = _read_metadata(staged.metadata_path)
-        remote_entries = _read_metadata_document(
-            remote_metadata,
-            f"remote {METADATA_NAME}",
-        )
         from .participant_metadata import (
             enrich_staged_participants,
             load_catalog,
@@ -2507,7 +2577,7 @@ def upload_staged_dataset(
         try:
             from .upload_verification import prepare_inventory, verify_and_repair
 
-            inventory = prepare_inventory(staged, progress)
+            inventory = prepare_inventory(staged, progress, retained=retained)
             commit_result = api.upload_folder(
                 repository,
                 "dataset",

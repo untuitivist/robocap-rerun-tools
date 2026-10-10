@@ -1789,7 +1789,7 @@ def inspect_session_report(session_dir, segment, out_dir, ffprobe="ffprobe", ffm
                            mocap_ratio=8, *, layout="raw", progress=print, video_log=None,
                            requirements_path=None):
     from .media_tools import activate_media_tools
-    from .session_integrity import audit_session
+    from .session_integrity import audit_session, save_integrity, saved_integrity
     from .timestamp_anomaly import write_timestamp_anomaly_report
 
     session_dir = session_dir.resolve()
@@ -1798,11 +1798,17 @@ def inspect_session_report(session_dir, segment, out_dir, ffprobe="ffprobe", ffm
     ffprobe = tools.ffprobe if ffprobe in {None, "ffprobe"} else ffprobe
     ffprobe = resolve_ffprobe(ffprobe or "ffprobe", ffmpeg)
     progress("Check expected structure and full file contents (videos are fully decoded).")
-    integrity = audit_session(
-        session_dir, segment=segment, layout=layout, ffmpeg=ffmpeg, ffprobe=ffprobe,
-        progress=progress, video_log=video_log,
-        requirements_path=requirements_path,
-    )
+    integrity = saved_integrity(session_dir, requirements_path=requirements_path) if segment else None
+    if (not integrity or integrity['status'] in {'stale', 'failed'} or integrity.get('layout') != layout
+            or any(row.get('state') in {'tool_unavailable', 'active_database', 'changed'}
+                   for row in integrity.get('checks', []))):
+        integrity = audit_session(
+            session_dir, segment=segment, layout=layout, ffmpeg=ffmpeg, ffprobe=ffprobe,
+            progress=progress, video_log=video_log,
+            requirements_path=requirements_path,
+        )
+        if out_dir.resolve().is_relative_to(session_dir):
+            save_integrity(session_dir, integrity, segment)
     by_path = {row["path"]: row for row in integrity["checks"] if row["category"] == "content"}
     files = inspection_files(session_dir, segment)
     total_steps = len(files) + 1

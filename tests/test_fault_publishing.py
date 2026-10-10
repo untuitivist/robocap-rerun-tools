@@ -139,7 +139,7 @@ def test_fault_web_upload_uses_utc8_date_and_own_repo(tmp_path, monkeypatch):
     assert "/fault/" in Path(args[1]).as_posix()
 
 
-def test_fault_batch_filters_clean_and_invalid_and_retries_tail(tmp_path, monkeypatch):
+def test_fault_batch_filters_clean_and_invalid_and_retries_tail(tmp_path, monkeypatch, stub_batch_checks):
     from robocap_rerun_tools import cli, dataset_statistics, web_app
 
     for name in ("fault1", "fault2", "fault3"):

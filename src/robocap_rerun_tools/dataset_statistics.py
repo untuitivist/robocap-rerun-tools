@@ -61,6 +61,8 @@ class SessionStatistic:
     clean_duration_s: float
     segments: tuple[SegmentStatistic, ...]
     errors: tuple[str, ...]
+    integrity_status: str = "unchecked"
+    integrity_issues: tuple[str, ...] = ()
 
     @property
     def duration_s(self) -> float:
@@ -325,6 +327,9 @@ def summarize_session(
             )
         )
 
+    from .session_integrity import integrity_summary
+
+    integrity_status, integrity_issues = integrity_summary(session_dir)
     return SessionStatistic(
         primitive_id=infer_action_primitive(dataset_root, session_dir),
         session_dir=session_dir,
@@ -333,6 +338,8 @@ def summarize_session(
         clean_duration_s=duration_by_status["clean"],
         segments=tuple(segments),
         errors=tuple(errors),
+        integrity_status=integrity_status,
+        integrity_issues=integrity_issues,
     )
 
 
@@ -729,4 +736,13 @@ def render_statistics_markdown(
                 ),
             ]
         )
+    lines.extend([
+        "", "### 文件完整性（独立于帧数）" if is_chinese else "### File integrity (separate from frame counts)", "",
+        "| Session | 完整性 / Integrity | 缺失、损坏或待确认 / Issues |", "|---|---|---|",
+    ])
+    for session in all_sessions:
+        lines.append("| " + " | ".join(_markdown_cell(value) for value in (
+            session.session_dir.relative_to(dataset_root).as_posix(), session.integrity_status,
+            "; ".join(session.integrity_issues),
+        )) + " |")
     return "\n".join(lines)

@@ -8,7 +8,7 @@
 共享目录可选，240 FPS 选 `8`、120 FPS 选 `4`。它逐 Segment 核对必需文件，完整解码视频，
 检查数据库表与实际记录、动捕实际数据行及列数，再生成原有帧数和时间戳报告。
 动捕必需 Body0 的 TRC/BVH/CSV 和帽子 Tracker0 的 TRC/CSV。额外 Body 逐个核对三种格式，
-HH 至少两个人体；每个物品逐个核对 TRC/CSV。按动作的额外人体/物品名称填写在同目录的
+HH 不设置额外人体数量的硬规则；每个物品逐个核对 TRC/CSV。按动作的额外人体/物品名称填写在同目录的
 `mocap_requirements.csv`；尚未配置的动作会标为“动作刚体清单待确认”。
 主程序 `inspect` 和 Web 的检查入口也使用同一套检查。旧报告需要重新生成。
 输出位于 `_artifacts/session_inspection/<运行时间>/`，结束后自动打开汇总报告；
@@ -274,7 +274,7 @@ start_web.bat
 
 页面顶部先填写包含多条录制数据的数据集根目录，再点击“扫描 Session”。扫描器兼容 Session
 直接位于根目录下，以及 `EgoMotionActions/<批次>/<动作>/<session_id>` 这类嵌套结构；下拉框使用相对路径
-区分同名 Session。Session 的判定标准是其根目录直接存在至少一个 `robocap_*` 源文件。
+区分同名 Session。根目录有 `robocap_*` 源文件，或目录名符合标准时间戳 Session 格式时都会识别，避免漏掉缺少视频的录制。
 扫描会排除分析结果、生成产物、ModelScope 暂存数据、标定目录、虚拟环境和构建目录。数据集根目录
 和最近选择的 Session 会在 Web 重启后恢复；切换 Session 时会清空上一条 Session 派生出的 GT、
 检查报告、RRD、第三人称视频和 Offset 参考文件选择，避免跨 Session 误用。
@@ -356,10 +356,13 @@ Mocap 目录时默认勾选；缺失、格式错误或
 Session 的 `manifest.json`。该操作不重传视频、不移动远端目录，Session 与 Mocap 目录两列只用于
 稳定定位，不应修改。以后准备的新 Session 也会自动把完整命名写入两处的 `mocap_capture` 字段。
 
-同一页可按批上传 clean Session。流程先读取目标仓库的远端 `metadata.jsonl`，再对本地匹配的
-`(primitive_id, session_id)` 下载小型 manifest，核对远端检查报告、所有声明文件、文件数量和字节数，
-不会下载大型采集文件。默认只跳过校验完整的已有项；索引存在但文件缺失、大小不符、manifest 损坏或
-元数据不一致的 Session 会自动进入替换上传进行修复。取消该选项后，远端完整项也会重新上传。其余
+同一页可按批上传 clean Session。先检查所有本地 Session 的结构与文件内容，包括缺少视频的录制目录，
+再读取远端索引，按本地实际路径、大小和 SHA-256 比对远端文件，旧 manifest 未列出的新增刚体也会补传。
+远端缺少哈希时会下载校验。补传保留原远端日期目录、远端独有文件及其他元数据；索引和 manifest
+的 `mocap_rigid_names` 记录实际对象名（如 Body0、Tracker0、BigBox0），多格式去重。
+缺文件、空文件、坏文件或关键检查未完成的本地 Session 暂不进入正常数据集；物品名单未配置单独提示待确认。
+逐条结果和问题明细保存在原始根目录 `_reports/batch_upload_<时间>/` 的 `report.html`、`sessions.csv`、
+`issues.csv` 和 `run.log`。勾选重做全部会处理所有项；缺失或过期的报告会先刷新。其余
 Session 必须满足上述帧数关系。“每个上传批次的 Session 数”默认是 `10`；填 `1` 时逐个提交，填入
 大于等于候选总数的值时全量作为一个批次。当前批次上传时，下一批会在后台同时准备，但远端上传严格
 串行。上传首次失败后会再重试 3 次；共 4 次仍失败则跳过该批并继续。准备或 clean 校验失败只排除对应
@@ -425,7 +428,7 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
           mocap/
             *Body0.{trc,bvh,csv}              # 必需：主人体三种格式
             *Tracker0.{trc,csv}               # 必需：帽子两种格式
-            *Body<N>.{trc,bvh,csv}            # 额外人体；HH 至少两个人体
+            *Body<N>.{trc,bvh,csv}            # 额外追踪对象；HH 无额外数量硬规则
             *<object>.{trc,csv}               # 按动作所需物品/实例逐个检查
             *.{xrs,c3d,...}                   # 可选附加格式
             *.mp4                             # 必需：一个或多个第三人称视频

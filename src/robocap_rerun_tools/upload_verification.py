@@ -28,20 +28,28 @@ def file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
-def prepare_inventory(staged, progress):
+def prepare_inventory(staged, progress, *, retained=None):
+    retained = retained or {}
     paths = {staged.readme_path}
+    declared_hashes = {}
     for session_path in staged.session_paths:
         directory = staged.dataset_root / session_path
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
         for record in manifest["files"]:
             relative = publisher._manifest_relative_path(record["packaged_as"], "packaged_as")
             path = directory / relative
+            if not path.is_file() and f"{session_path}/{relative}" in retained:
+                if retained[f"{session_path}/{relative}"]["size"] != record["packaged_bytes"]:
+                    raise UploadVerificationError(f"Retained size mismatch: {path}")
+                continue
             if not path.is_file() or path.stat().st_size != record["packaged_bytes"]:
                 raise UploadVerificationError(f"Staged file missing or size changed: {path}")
+            if record.get("sha256"):
+                declared_hashes[path] = record["sha256"]
         paths.update(path for path in directory.rglob("*") if path.is_file())
     calibration = staged.dataset_root / publisher.CALIBRATION_DIR_NAME
     paths.update(path for path in calibration.rglob("*") if path.is_file())
-    inventory = {}
+    inventory = dict(retained)
     for number, path in enumerate(sorted(paths), 1):
         relative = path.relative_to(staged.dataset_root).as_posix()
         if progress:
@@ -51,6 +59,8 @@ def prepare_inventory(staged, progress):
         after = path.stat()
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise UploadVerificationError(f"Staged file changed while hashing: {path}")
+        if path in declared_hashes and declared_hashes[path] != digest:
+            raise UploadVerificationError(f"Staged hash differs from manifest: {path}")
         inventory[relative] = {"size": before.st_size, "sha256": digest}
     return inventory
 
@@ -186,6 +196,14 @@ def verify_and_repair(
                 f"Upload verified: {len(entries)} Session(s), {len(inventory)} files; report: {report_path}"
             )
             return
+        unrepairable = [path for path in issues if inventory.get(path, {}).get("remote_only")]
+        if unrepairable:
+            report["status"] = "remote_only_changed"
+            save()
+            raise UploadVerificationError(
+                "Retained remote-only files changed; no local copy to repair: "
+                + ", ".join(unrepairable) + f"; report: {report_path}"
+            )
         if attempt == REPAIR_RETRIES:
             break
         failed_paths = sorted(issues)

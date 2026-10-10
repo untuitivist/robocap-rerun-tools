@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -15,7 +16,8 @@ from .file_integrity import (
     inspect_file,
     result,
 )
-from .mocap_integrity import check_mocap_exports
+from .mocap_integrity import DEFAULT_REQUIREMENTS, check_mocap_exports
+from .mocap_inventory import mocap_names
 from .session_layout import is_mocap_directory_name
 
 CAMERAS = ("left", "left_eye", "left_front", "right", "right_eye", "right_front")
@@ -152,6 +154,7 @@ def audit_session(
     if segment is not None and not SEGMENT_NAME.fullmatch(segment):
         raise ValueError("segment must be segment followed by digits")
     session = session.resolve()
+    signature = source_signature(session, segment=segment, requirements_path=requirements_path)
     paths, errors = source_files(session)
     paths = [path for path in paths if matches_segment(path, segment)]
     rows = []
@@ -285,10 +288,12 @@ def audit_session(
                 add(report_path, "content", result("invalid_format", str(exc)), "已发布检查报告")
     if manifest is not None:
         _check_manifest(session, manifest, add, segment)
+    if signature != source_signature(session, segment=segment, requirements_path=requirements_path):
+        add(".", "structure", result("changed", "Source files changed during inspection; rerun"))
     counts = Counter(row["severity"] for row in rows)
     status = "failed" if counts["error"] else "incomplete" if counts["warning"] else "passed"
     return {
-        "version": 1,
+        "version": 2,
         "layout": layout,
         "status": status,
         "fileCount": len(paths),
@@ -296,7 +301,85 @@ def audit_session(
         "warnings": counts["warning"],
         "checks": rows,
         "segments": sorted(segments),
+        "source_signature": signature,
+        "mocap_rigid_names": mocap_names(mocap_files),
     }
+
+
+def source_signature(session: Path, *, segment=None, requirements_path=None):
+    """Invalidate old verdicts when files or the action requirements change."""
+    session = session.resolve()
+    paths, errors = source_files(session)
+    inventory = []
+    for path in paths:
+        if not matches_segment(path, segment):
+            continue
+        try:
+            info = path.stat()
+            inventory.append((path.relative_to(session).as_posix(), info.st_size, info.st_mtime_ns))
+        except OSError as exc:
+            errors.append((path, str(exc)))
+    rules = Path(requirements_path or DEFAULT_REQUIREMENTS)
+    try:
+        rules_hash = hashlib.sha256(rules.read_bytes()).hexdigest()
+    except OSError as exc:
+        rules_hash = type(exc).__name__
+    document = json.dumps(
+        {"files": sorted(inventory), "errors": [(str(p), e) for p, e in errors],
+         "requirements": rules_hash}, ensure_ascii=False, sort_keys=True,
+    )
+    return hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def save_integrity(session: Path, integrity: dict, segment=None):
+    if segment is not None and not SEGMENT_NAME.fullmatch(segment):
+        raise ValueError("Invalid integrity segment")
+    path = session / "_artifacts" / f"integrity-{segment or 'all'}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(integrity, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def saved_integrity(session: Path, segment=None, *, requirements_path=None):
+    """Read an integrity verdict without treating stale reports as current passes."""
+    path = session / "_artifacts" / f"integrity-{segment or 'all'}.json"
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        if (not isinstance(report, dict) or report.get("version") != 2
+                or not isinstance(report.get("checks"), list)
+                or report.get("status") not in {"passed", "failed", "incomplete"}
+                or any(not isinstance(row, dict) or not {"path", "state", "severity"} <= row.keys()
+                       for row in report["checks"])):
+            return None
+        if report.get("source_signature") != source_signature(
+            session, segment=segment, requirements_path=requirements_path,
+        ):
+            return {**report, "status": "stale"}
+        return report
+    except (OSError, ValueError):
+        return None
+
+
+def integrity_summary(session: Path):
+    report = saved_integrity(session)
+    if report is None:
+        reports = [
+            saved_integrity(session, path.stem.removeprefix("integrity-"))
+            for path in (session / "_artifacts").glob("integrity-segment*.json")
+        ]
+        reports = [item for item in reports if item is not None]
+        if reports:
+            # Partial Segment coverage must not become a whole-Session pass.
+            state = ("stale" if any(p["status"] == "stale" for p in reports) else
+                     "failed" if any(p["status"] == "failed" for p in reports) else "partial")
+            report = {"status": state, "checks": [r for p in reports for r in p["checks"]]}
+    if report is None:
+        return "unchecked", ()
+    issues = tuple(dict.fromkeys(
+        f"{row['path']}: {row.get('status', row['state'])} {row.get('detail', '')}".strip()
+        for row in report["checks"] if row.get("severity") != "pass"
+    ))
+    return report["status"], issues
 
 
 def _check_manifest(session, manifest, add, segment):

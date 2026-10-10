@@ -221,6 +221,7 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
             "duration_s": 12.5,
             "device_ids": {"main": None, "left": None, "right": None},
             "file_count": 3,
+            "mocap_rigid_names": ["motion"],
             "packaged_bytes": staged.total_bytes,
         }
     ]
@@ -240,14 +241,14 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
         assert f"- {tag}\n" in dataset_readme
     assert "Required capture streams" in dataset_readme
     assert "Complete dataset structure" in dataset_readme
-    assert "Only the concrete NOKOV motion-capture export format selection" in normalized_readme
+    assert "Additional native export formats and explicitly selected RRD files are optional" in normalized_readme
     assert "EgoMotionActions/<YYYYMMDD>/<primitive_id>/<session_id>/" in dataset_readme
     assert "EgoMotionActions/Demo/<primitive_id>/<session_id>/" in dataset_readme
     assert "raw_calibration/<device_id>/" in dataset_readme
     assert "pending sessions in one upload operation share that date" in normalized_readme
     assert "Legacy `YYYYMMDD_HHMMSS` paths remain readable" in dataset_readme
     assert "rerun/<segment>/inspection/*.rrd" in dataset_readme
-    assert "at least one motion-capture format must be present" in normalized_readme
+    assert "Body0 in TRC/BVH/CSV, Tracker0 (hat) in TRC/CSV" in normalized_readme
     assert "under `mocap/`" in dataset_readme
     assert "Optional artifact: RRD files" in dataset_readme
     assert "Optional: third-person" not in dataset_readme

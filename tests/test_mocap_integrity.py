@@ -83,10 +83,11 @@ def test_binary_definition_or_export_is_not_a_complete_object(tmp_path):
     assert all(row["state"] == "ok" for row in rows)
 
 
-def test_hh_needs_extra_human_not_just_extra_prop(tmp_path):
+def test_hh_does_not_impose_a_fixed_body_count(tmp_path):
     rows = check(tmp_path, BASE + ["Box.csv", "Box.trc"], action="HH01", rules="HH01,,Box\n")
     problems = [row for row in rows if row["state"] != "ok"]
-    assert len(problems) == 1 and problems[0]["requirement"] == "HH 多人采集"
+    assert not problems
+    assert all(row["state"] == "ok" for row in check(tmp_path, BASE, action="HH01", rules="HH01,,\n"))
     names = BASE + ["Body3.csv", "Body3.trc", "Body3.bvh"]
     assert all(
         row["state"] == "ok" for row in check(tmp_path, names, action="HH15", rules="HH15,,\n")

@@ -274,7 +274,7 @@ def test_statistics_can_rebuild_existing_report(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("verification_failure", [False, True])
-def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatch, verification_failure) -> None:
+def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatch, verification_failure, stub_batch_checks) -> None:
     from robocap_rerun_tools import cli, dataset_statistics, modelscope_publisher
 
     monkeypatch.setattr(web_app, "STREAM_REFRESH_SECONDS", 0.01)
@@ -404,18 +404,15 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
             "中文",
             "20260901",
             True,
-            rebuild_all_reports=True,
+            rebuild_all_reports=False,
             batch_size=1,
             upload_workers=12,
         )
     )
 
     inspect_commands = [command for command in commands if command[0] == "inspect"]
-    assert {Path(command[1]) for command in inspect_commands} == {
-        problem.resolve(),
-        clean_one.resolve(),
-        clean_two.resolve(),
-    }
+    assert inspect_commands == []
+    assert set(stub_batch_checks) == {uploaded, problem, clean_one, clean_two}
     assert [(call[0], call[1]) for call in staged_calls] == [
         (clean_two.resolve(), "A04"),
         (clean_one.resolve(), "P03"),
@@ -522,8 +519,9 @@ def test_statistics_batch_upload_rejects_invalid_batch_controls(
         )
 
 
+@pytest.mark.parametrize("rebuild", [False, True])
 def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, stub_batch_checks, rebuild
 ) -> None:
     from robocap_rerun_tools import cli, dataset_statistics, modelscope_publisher
 
@@ -599,12 +597,14 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
             True,
             "中文",
             "20260828",
-            False,
+            rebuild,
             auto_match_upload_date=True,
+            rebuild_all_reports=rebuild,
         )
     )
 
-    assert commands == []
+    assert len(commands) == (1 if rebuild else 0)
+    assert stub_batch_checks == [session]
     assert len(stage_calls) == 1
     assert stage_calls[0][0:2] == (session.resolve(), "P01")
     assert len(upload_calls) == 1

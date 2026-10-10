@@ -168,6 +168,16 @@ def test_changed_source_is_not_uploaded_as_repair(upload):
     assert not api.uploads
 
 
+def test_staged_content_changed_after_manifest_cannot_be_published(upload):
+    staged, _, _, _ = upload
+    manifest_path = staged.dataset_root / staged.session_paths[0] / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"][0]["sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(verification.UploadVerificationError, match="hash differs from manifest"):
+        verification.prepare_inventory(staged, None)
+
+
 def test_missing_staged_file_rejected_before_upload(upload):
     staged = upload[0]
     manifest = staged.dataset_root / staged.session_paths[0] / "manifest.json"

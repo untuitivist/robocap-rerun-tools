@@ -8,7 +8,7 @@ Start with `scripts/session_inspection/inspect_sessions.bat` for full Session ch
 the expected per-Segment streams, fully decodes video without resampling, validates sensor
 schemas and data rows, checks actual motion rows/columns, and retains the timestamp report.
 Mocap checks require Body0 in TRC/BVH/CSV and Tracker0 (hat) in TRC/CSV. Every detected extra
-Body needs all three formats; HH actions need at least two distinct bodies. Each named object
+Body needs all three formats; HH has no fixed extra-body count. Each named object
 needs its own TRC/CSV pair. Configure exact per-action extra bodies/objects in
 `scripts/session_inspection/mocap_requirements.csv`; an unconfigured action is explicitly
 unverified for missing whole objects. The bundled roster is initially empty, not a no-props claim.
@@ -250,7 +250,8 @@ At the top of the page, enter the directory that contains the recording collecti
 `Scan sessions`. The scanner finds direct children and nested layouts such as
 `EgoMotionActions/<batch>/<primitive_id>/<session_id>`, then fills a searchable Session dropdown with
 relative labels.
-A session is recognized when its root directly contains at least one `robocap_*` source file.
+A session is recognized by a direct `robocap_*` source file or its standard timestamped Session
+directory name, so missing-video recordings remain visible for inspection.
 Generated analysis/artifact/dataset trees, calibration data, virtual environments, and build trees
 are excluded. The collection root and last selected Session are restored after a Web UI restart.
 Changing Session clears file selections derived from the previous Session before any new operation.
@@ -346,14 +347,17 @@ does not rename directories, move remote data, or upload videos.
 The same tab uploads clean Sessions in configurable batches. Its `YYYYMMDD` field starts with the
 current UTC+08:00 date and can be edited. Auto-match is enabled by default: a timestamped Session name
 is parsed as UTC and converted to its UTC+08:00 calendar date; the field is used as fallback when a
-timestamp is absent. Candidates are grouped by date before applying the configured batch size. It first reads the target
-repository's remote `metadata.jsonl`. `Skip complete existing remote Sessions` is enabled by default.
-For each matching `(primitive_id, session_id)`, the tool downloads only its small manifest and checks
-the remote report, every declared file, file count, and byte size against that manifest and metadata;
-large capture files are not downloaded. A matching complete Session is excluded before missing-report
-generation, staging, or video processing. An indexed but incomplete Session is automatically sent
-through replacement upload for repair. Clear the option to re-upload complete matching Sessions too.
-Choosing a different date does not delete the old remote directory. Each selected Session must
+timestamp is absent. Candidates are grouped by date before applying the configured batch size.
+Every local Session is checked for structure and readable contents before any remote skip decision,
+including incomplete recording directories. Matching remote Sessions are compared against the actual
+local file paths, sizes and SHA-256; local additions missing from an old manifest trigger backfill.
+Remote files are downloaded for verification if their hash is unavailable. Backfills preserve the
+original remote path/date, remote-only files and unknown metadata. `mocap_rigid_names` in both index
+and manifest lists the actual exported object labels, deduplicated across formats. Full-report rebuild
+processes all Sessions; missing/stale reports are refreshed before normal upload. Local failures and
+upload results are recorded in `_reports/batch_upload_<time>/report.html`, `sessions.csv`, `issues.csv`
+and `run.log`. Local missing/broken data cannot enter normal uploads; unknown prop rosters remain
+warnings. Each selected Session must
 satisfy the frame-count relation. `Sessions per upload batch` defaults to `10`; `1` preserves
 one-Session commits, while a value at least equal to the candidate count submits all candidates in
 one batch. The next batch is prepared in the background while the current batch uploads, but remote
@@ -421,7 +425,7 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
           mocap/
             *Body0.{trc,bvh,csv}              # required: all three main-body formats
             *Tracker0.{trc,csv}               # required: both hat formats
-            *Body<N>.{trc,bvh,csv}            # extra bodies; HH needs at least two bodies total
+            *Body<N>.{trc,bvh,csv}            # extra tracked entities; no fixed HH count
             *<object>.{trc,csv}               # each required object/instance, separately
             *.{xrs,c3d,...}                   # optional additional formats
             *.mp4                             # required: third-person video(s)
@@ -436,8 +440,8 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
 
 The current inspection standard requires the main-body trio, hat pair and action-specific
 extra bodies/objects above. Extra export formats and RRD files are optional and cannot replace
-required exports. Existing publishing selection and frame-count statistics are separate from
-this stricter inspection verdict.
+required exports. Normal batch publishing checks structural/content integrity in addition to
+frame counts. Duration statistics retain the original frame-count categories separately.
 
 Raw calibration is outside every action session and is stored once at
 `<dataset_root>/raw_calibration/<device_id>/`. The session staging command does not copy a source
