@@ -38,8 +38,12 @@ STATUS_LABELS = {
     "not_checked": "格式尚未验证",
     "ambiguous": "存在多个候选",
     "manifest_mismatch": "与清单不一致",
+    "requirements_unknown": "动作刚体清单待确认",
 }
-WARNING_STATES = {"partial_data", "not_checked", "tool_unavailable", "active_database", "changed"}
+WARNING_STATES = {
+    "partial_data", "not_checked", "tool_unavailable", "active_database", "changed",
+    "requirements_unknown",
+}
 
 
 def result(state="ok", detail="", **metrics):

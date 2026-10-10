@@ -89,6 +89,9 @@ Inspection also checks the expected per-Segment file structure, fully decodes vi
 SQLite tables/data and actual motion rows/columns. This takes longer than header checks. File integrity
 and timestamp/frame-count results are separate; unknown formats are explicitly unverified. Raw recordings
 do not need generated manifests. Regenerate old reports to include the new checks.
+Mocap requires Body0 TRC/BVH/CSV and Tracker0 TRC/CSV, all three formats for each extra Body,
+and TRC/CSV for each named object. HH requires at least two bodies. The BAT folder's
+`mocap_requirements.csv` lists per-action extra bodies/objects; absent rules remain unverified.
 Inspection writes one standalone `timestamp_anomaly_detail_table.html`. Its data, styles, and
 JavaScript are embedded, so the file can be shared and opened offline. The report only computes
 diffs between adjacent valid rows and lists every timestamp/frame-index anomaly with neighboring rows.
@@ -247,6 +250,9 @@ ZH_DOC = """# Robocap Rerun Tools 中文说明
 检查还会逐 Segment 核对必需文件，完整解码视频，验证数据库的表和实际记录，以及动捕实际数据行、
 列数。完整读取会比只看表头更久。文件完整性和帧数/时间戳结果分别显示；未知格式不会算作通过。
 原始录制不要求提前有发布清单，旧报告需要重新生成才能包含这些检查。
+动捕要求 Body0 的 TRC/BVH/CSV、Tracker0 的 TRC/CSV；额外 Body 逐个检查三种格式，物品逐个
+检查 TRC/CSV，HH 至少两个人体。各动作额外人体/物品填写在 BAT 同目录 `mocap_requirements.csv`，
+未配置的动作标为清单待确认。
 检查只生成一个独立的 `timestamp_anomaly_detail_table.html`。数据、样式和 JavaScript 都内嵌在
 文件中，可以离线打开并直接分享。报告只计算时间戳均有效的相邻数据行，并逐点列出时间戳与
 frame_index 异常及其上下行。

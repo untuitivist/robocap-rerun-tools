@@ -13,6 +13,8 @@ if "%INTERACTIVE%"=="0" goto arguments
 echo Full Session check - structure, contents, frame counts and timestamps
 echo Videos are fully decoded. Please leave this window open until finished.
 echo Help: scripts\session_inspection\README.md (Chinese)
+echo Mocap rules: Body0=TRC/BVH/CSV, Tracker0=TRC/CSV; HH needs 2 or more bodies.
+echo Extra bodies and props: scripts\session_inspection\mocap_requirements.csv
 echo Reports and run.log: _artifacts\session_inspection
 echo Enter paths without quotes.
 set "SESSION_LOCAL_ROOT=F:\"

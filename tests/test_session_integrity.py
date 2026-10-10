@@ -8,6 +8,7 @@ import pytest
 
 from robocap_rerun_tools import cli
 from robocap_rerun_tools import file_integrity as content
+from robocap_rerun_tools import mocap_integrity as mocap_checks
 from robocap_rerun_tools import session_inspection as batch
 from robocap_rerun_tools import session_integrity as layout
 from robocap_rerun_tools.media_tools import activate_media_tools
@@ -73,7 +74,14 @@ def full_session(tmp_path, monkeypatch, *, segments=(1,)):
     mocap = directory / "mocap-P01-S01-person-1p"
     mocap.mkdir()
     (mocap / "Body0.csv").write_text(pose_text(), encoding="utf-8")
+    (mocap / "Body0.trc").write_text(trc_text(), encoding="utf-8")
+    (mocap / "Body0.bvh").write_text(bvh_text(), encoding="utf-8")
+    (mocap / "Tracker0.csv").write_text(pose_text(), encoding="utf-8")
+    (mocap / "Tracker0.trc").write_text(trc_text(), encoding="utf-8")
     (mocap / "third.mp4").write_bytes(b"third")
+    rules = tmp_path / "mocap_requirements.csv"
+    rules.write_text("action_id,additional_bodies,objects\nP01,,\n", encoding="utf-8")
+    monkeypatch.setattr(mocap_checks, "DEFAULT_REQUIREMENTS", rules)
     monkeypatch.setattr(content, "inspect_video", lambda *args: content.result(frames=3))
     return directory
 
@@ -171,12 +179,38 @@ def test_active_database_and_broken_database_do_not_pass(tmp_path):
     assert not (tmp_path / "missing.db").exists()
 
 
-def test_full_structure_passes_without_requiring_every_motion_export_format(tmp_path, monkeypatch):
+def test_full_structure_requires_body0_three_formats_and_tracker0_pair(tmp_path, monkeypatch):
     directory = full_session(tmp_path, monkeypatch)
     info = audit(directory)
     assert info["status"] == "passed", [r for r in info["checks"] if r["state"] != "ok"]
-    assert info["fileCount"] == 17
+    assert info["fileCount"] == 21
     assert info["segments"] == ["segment1"]
+
+
+def test_unconfigured_objects_prevent_complete_pass_and_missing_objects_fail(tmp_path, monkeypatch):
+    directory = full_session(tmp_path, monkeypatch)
+    rules = tmp_path / "mocap_requirements.csv"
+    rules.write_text("action_id,additional_bodies,objects\n", encoding="utf-8")
+    info = audit(directory)
+    assert info["status"] == "incomplete" and info["warnings"] == 1
+    assert any(row["state"] == "requirements_unknown" for row in info["checks"])
+    rules.write_text("action_id,additional_bodies,objects\nP01,,BigBox0\n", encoding="utf-8")
+    info = audit(directory)
+    assert info["status"] == "failed" and info["errors"] == 2
+    assert {row["path"] for row in info["checks"] if row["state"] == "missing"} == {
+        "mocap*/BigBox0.trc", "mocap*/BigBox0.csv",
+    }
+
+
+def test_complete_export_names_still_fail_for_empty_required_body(tmp_path, monkeypatch):
+    directory = full_session(tmp_path, monkeypatch)
+    (directory / "mocap-P01-S01-person-1p" / "Body0.bvh").write_bytes(b"")
+    info = audit(directory)
+    assert info["status"] == "failed"
+    assert any(
+        row["path"].endswith("Body0.bvh") and row["state"] == "zero_byte"
+        for row in info["checks"]
+    )
 
 
 def test_missing_slot_cannot_be_hidden_by_another_segment(tmp_path, monkeypatch):

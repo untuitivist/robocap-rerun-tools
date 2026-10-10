@@ -7,6 +7,9 @@
 录制后可双击 `scripts/session_inspection/inspect_sessions.bat` 做完整检查，默认目录 `F:\`，
 共享目录可选，240 FPS 选 `8`、120 FPS 选 `4`。它逐 Segment 核对必需文件，完整解码视频，
 检查数据库表与实际记录、动捕实际数据行及列数，再生成原有帧数和时间戳报告。
+动捕必需 Body0 的 TRC/BVH/CSV 和帽子 Tracker0 的 TRC/CSV。额外 Body 逐个核对三种格式，
+HH 至少两个人体；每个物品逐个核对 TRC/CSV。按动作的额外人体/物品名称填写在同目录的
+`mocap_requirements.csv`；尚未配置的动作会标为“动作刚体清单待确认”。
 主程序 `inspect` 和 Web 的检查入口也使用同一套检查。旧报告需要重新生成。
 输出位于 `_artifacts/session_inspection/<运行时间>/`，结束后自动打开汇总报告；
 完整读取比原先只看表头耗时更长。详见 [完整检查说明](scripts/session_inspection/README.md)。
@@ -420,8 +423,11 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
           robocap_<segment>_imu_*.db          # 必需：Robocap IMU
           robocap_<segment>_mag_*.db          # 必需：Robocap MAG
           mocap/
-            *.{bvh,trc,csv,xrs,c3d,...}       # [可选格式]：至少存在一种
-                                              # 每种已选格式包含全部人体和刚体
+            *Body0.{trc,bvh,csv}              # 必需：主人体三种格式
+            *Tracker0.{trc,csv}               # 必需：帽子两种格式
+            *Body<N>.{trc,bvh,csv}            # 额外人体；HH 至少两个人体
+            *<object>.{trc,csv}               # 按动作所需物品/实例逐个检查
+            *.{xrs,c3d,...}                   # 可选附加格式
             *.mp4                             # 必需：一个或多个第三人称视频
           robowrist_<device_id>_<side>/       # 必需：左右视频、IMU、MAG
           rerun/<segment>/inspection/*.rrd    # [可选]：仅勾选后包含
@@ -432,8 +438,9 @@ scripts\export_data_package.bat Z:\DATASETS\Frodobots\nokov\20260707_083023_sess
         <session_id>/                      # 内容与上面的 session 相同
 ```
 
-采集数据与动捕内容本身必需。只有具体采用哪些 NOKOV 导出格式和是否包含 RRD 是可选项；动捕格式
-至少存在一种。Web 的 ModelScope 页会扫描 Session 直属的唯一 `mocap*` 目录，并像选择 RRD 一样
+当前检查要求主人体三种格式、帽子两种格式，以及按动作要求的额外人体和物品。附加导出格式及 RRD
+可选，不能替代上述必需文件。现有上传选择和按帧数统计与这个更严格的检查结论分别处理。
+Web 的 ModelScope 页会扫描 Session 直属的唯一 `mocap*` 目录，并像选择 RRD 一样
 逐文件显示复选框。扫描后默认只勾选 BVH、CSV、TRC 与 MP4；相对路径中含 `unnamed` 的文件不区分
 大小写，默认不勾选。其他文件仍可手动勾选；未勾选的杂项不会进入暂存，且至少保留一个 Mocap 文件。
 

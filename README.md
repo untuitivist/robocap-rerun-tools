@@ -7,6 +7,11 @@
 Start with `scripts/session_inspection/inspect_sessions.bat` for full Session checks. It checks
 the expected per-Segment streams, fully decodes video without resampling, validates sensor
 schemas and data rows, checks actual motion rows/columns, and retains the timestamp report.
+Mocap checks require Body0 in TRC/BVH/CSV and Tracker0 (hat) in TRC/CSV. Every detected extra
+Body needs all three formats; HH actions need at least two distinct bodies. Each named object
+needs its own TRC/CSV pair. Configure exact per-action extra bodies/objects in
+`scripts/session_inspection/mocap_requirements.csv`; an unconfigured action is explicitly
+unverified for missing whole objects. The bundled roster is initially empty, not a no-props claim.
 The existing `inspect` CLI and Web inspection use the same validators. Regenerate old reports
 to include these checks. Read-only batch reports/logs go to `_artifacts/session_inspection/`.
 Use `--layout published` for local published copies that also require manifest/report files;
@@ -414,8 +419,11 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
           robocap_<segment>_imu_*.db          # required: Robocap IMU
           robocap_<segment>_mag_*.db          # required: Robocap MAG
           mocap/
-            *.{bvh,trc,csv,xrs,c3d,...}       # [optional format]: at least one is required
-                                              # include all bodies and rigid bodies in each format
+            *Body0.{trc,bvh,csv}              # required: all three main-body formats
+            *Tracker0.{trc,csv}               # required: both hat formats
+            *Body<N>.{trc,bvh,csv}            # extra bodies; HH needs at least two bodies total
+            *<object>.{trc,csv}               # each required object/instance, separately
+            *.{xrs,c3d,...}                   # optional additional formats
             *.mp4                             # required: third-person video(s)
           robowrist_<device_id>_<side>/       # required: left/right video, IMU, and MAG
           rerun/<segment>/inspection/*.rrd    # [optional]: only when explicitly selected
@@ -426,8 +434,10 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
         <session_id>/                      # same session contents as above
 ```
 
-The capture streams and motion-capture content are required. Only the concrete NOKOV export
-format(s) and RRD files are optional; at least one motion-capture format must be present.
+The current inspection standard requires the main-body trio, hat pair and action-specific
+extra bodies/objects above. Extra export formats and RRD files are optional and cannot replace
+required exports. Existing publishing selection and frame-count statistics are separate from
+this stricter inspection verdict.
 
 Raw calibration is outside every action session and is stored once at
 `<dataset_root>/raw_calibration/<device_id>/`. The session staging command does not copy a source

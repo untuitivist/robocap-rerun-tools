@@ -10,12 +10,12 @@ from collections import Counter
 from pathlib import Path, PurePosixPath
 
 from .file_integrity import (
-    MOTION_SUFFIXES,
     VIDEO_SUFFIXES,
     WARNING_STATES,
     inspect_file,
     result,
 )
+from .mocap_integrity import check_mocap_exports
 from .session_layout import is_mocap_directory_name
 
 CAMERAS = ("left", "left_eye", "left_front", "right", "right_eye", "right_front")
@@ -145,6 +145,7 @@ def audit_session(
     ffprobe=None,
     video_log=None,
     progress=print,
+    requirements_path=None,
 ):
     if layout not in {"raw", "published"}:
         raise ValueError("layout must be raw or published")
@@ -246,12 +247,12 @@ def audit_session(
         "动捕目录",
     )
     mocap_files = [p for p in paths if any(p.is_relative_to(d) for d in mocap_dirs)]
-    for suffixes, role, pattern in (
-        (MOTION_SUFFIXES, "至少一种动捕数据格式", "mocap*/*.{bvh,trc,csv,tsv,xrs,c3d}"),
-        (VIDEO_SUFFIXES, "第三人称视频", "mocap*/*.{mp4,mov,avi,mkv}"),
-    ):
-        count = sum(p.suffix.lower() in suffixes for p in mocap_files)
-        add(pattern, "structure", result("ok" if count else "missing", f"{count} files"), role)
+    check_mocap_exports(mocap_dirs, mocap_files, add, requirements_path=requirements_path)
+    count = sum(p.suffix.lower() in VIDEO_SUFFIXES for p in mocap_files)
+    add(
+        "mocap*/*.{mp4,mov,avi,mkv}", "structure",
+        result("ok" if count else "missing", f"{count} files"), "第三人称视频",
+    )
     for index, path in enumerate(paths, 1):
         progress(f"  [{index}/{len(paths)}] content: {path.relative_to(session)}")
         checked = inspect_file(path, ffmpeg=ffmpeg, ffprobe=ffprobe, video_log=video_log)

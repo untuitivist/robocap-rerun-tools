@@ -1779,13 +1779,15 @@ def command_inspect(args: argparse.Namespace) -> int:
     anomaly_report, _ = inspect_session_report(
         args.session_dir, args.segment, out_dir, args.ffprobe, args.ffmpeg,
         args.mocap_ratio, layout=getattr(args, "layout", "raw"),
+        requirements_path=getattr(args, "mocap_requirements", None),
     )
     print(f"Wrote Session inspection to {anomaly_report}")
     return 0  # A report with failures is still successfully generated; read its verdict.
 
 
 def inspect_session_report(session_dir, segment, out_dir, ffprobe="ffprobe", ffmpeg="ffmpeg",
-                           mocap_ratio=8, *, layout="raw", progress=print, video_log=None):
+                           mocap_ratio=8, *, layout="raw", progress=print, video_log=None,
+                           requirements_path=None):
     from .media_tools import activate_media_tools
     from .session_integrity import audit_session
     from .timestamp_anomaly import write_timestamp_anomaly_report
@@ -1799,6 +1801,7 @@ def inspect_session_report(session_dir, segment, out_dir, ffprobe="ffprobe", ffm
     integrity = audit_session(
         session_dir, segment=segment, layout=layout, ffmpeg=ffmpeg, ffprobe=ffprobe,
         progress=progress, video_log=video_log,
+        requirements_path=requirements_path,
     )
     by_path = {row["path"]: row for row in integrity["checks"] if row["category"] == "content"}
     files = inspection_files(session_dir, segment)
@@ -2067,6 +2070,10 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_parser.add_argument("--output", type=Path, default=None)
     inspect_parser.add_argument("--ffprobe", default="ffprobe")
     inspect_parser.add_argument("--ffmpeg", default="ffmpeg")
+    inspect_parser.add_argument(
+        "--mocap-requirements", type=Path, default=None,
+        help="Action-specific additional bodies and object names CSV; defaults to the BAT folder.",
+    )
     inspect_parser.add_argument("--layout", choices=("raw", "published"), default="raw",
                                 help="Published copies also require manifest and inspection HTML")
     inspect_parser.add_argument(

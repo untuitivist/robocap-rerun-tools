@@ -95,6 +95,10 @@ def main(argv=None):
         / datetime.now(UTC).astimezone().strftime("%Y%m%d_%H%M%S_%f"),
     )
     parser.add_argument("--layout", choices=("raw", "published"), default="raw")
+    parser.add_argument(
+        "--mocap-requirements", type=Path, default=None,
+        help="Action-specific required objects/additional bodies CSV (default: BAT folder).",
+    )
     parser.add_argument("--mocap-ratio", type=int, choices=(4, 8), default=8)
     parser.add_argument("--open-report", action="store_true")
     args = parser.parse_args(argv)
@@ -128,6 +132,7 @@ def main(argv=None):
                     layout=args.layout,
                     progress=log,
                     video_log=directory / "video_decode.log",
+                    requirements_path=args.mocap_requirements,
                 )
                 sessions.append(
                     {

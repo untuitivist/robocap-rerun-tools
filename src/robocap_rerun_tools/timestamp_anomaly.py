@@ -882,7 +882,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       const query=document.getElementById('integrityQuery').value.toLowerCase(),problems=document.getElementById('integrityProblems').checked;
       info.checks.filter(row=>(!problems||row.severity!=='pass')&&`${row.path} ${row.requirement||''} ${row.status} ${row.detail}`.toLowerCase().includes(query)).forEach(row=>{
         const tr=el('tr',`integrity-${row.severity}`);
-        const label=row.requirement||({structure:'结构',content:'文件内容',manifest:'发布清单'}[row.category]||row.category);
+        const label=row.requirement||({structure:'结构',content:'文件内容',manifest:'发布清单',mocap:'动捕导出'}[row.category]||row.category);
         [label,row.path,row.status,number(row.size_bytes),number(row.frames??row.rows),row.detail].forEach(value=>tr.appendChild(el('td','',value)));
         root.appendChild(tr);
       });
