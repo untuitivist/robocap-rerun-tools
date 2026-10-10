@@ -9,6 +9,27 @@ set "no_proxy=%NO_PROXY%"
 
 cd /d "%REPO_DIR%"
 
+if "%ROBOCAP_LAUNCHER_UPDATED%"=="1" goto updated
+where git >nul 2>&1
+if errorlevel 1 (
+  echo Git was not found on PATH. Install Git before starting the web tool.
+  exit /b 1
+)
+echo Checking for code updates with git pull --ff-only...
+git -c merge.autostash=false -c rebase.autostash=false pull --ff-only --no-rebase
+if errorlevel 1 (
+  echo Git update failed. Resolve the error above, then run the launcher again.
+  pause
+  exit /b 1
+)
+rem Reload the launcher in case the pull updated this file.
+set "ROBOCAP_LAUNCHER_UPDATED=1"
+call "%~f0"
+exit /b %ERRORLEVEL%
+
+:updated
+set "ROBOCAP_LAUNCHER_UPDATED="
+
 where uv >nul 2>&1
 if errorlevel 1 (
   echo uv was not found on PATH.

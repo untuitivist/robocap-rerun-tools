@@ -164,7 +164,10 @@ cd robocap-rerun-tools
 start_web.bat
 ```
 
-`start_web.bat` runs `uv sync --extra web`, creates `.venv`, downloads a compatible Python 3.11+
+`start_web.bat` first runs `git pull --ff-only` against the current branch's configured upstream,
+then reloads the launcher and runs `uv sync --extra web`. Git update failures stop startup;
+local changes are never automatically stashed, discarded, or merged. Run from a Git clone with
+Git available on `PATH`. The dependency sync creates `.venv`, downloads a compatible Python 3.11+
 interpreter when needed, installs all Python dependencies, and opens the Web UI on an automatically
 selected available localhost port. Each launcher instance selects its own port, so multiple Web UIs
 can run at the same time. The actual URL is printed in that instance's console and opened in the
@@ -188,10 +191,10 @@ cd robocap-rerun-tools
 ./start_web.sh
 ```
 
-`start_web.sh` performs the same dependency synchronization as the Windows launcher, uses
+`start_web.sh` performs the same Git update and dependency synchronization as the Windows launcher, uses
 `.venv/bin/robocap-rerun`, and keeps the Web process attached so logs remain visible. Set
-`ROBOCAP_SKIP_SYNC=1` only when the environment is already synchronized. A Git clone preserves the
-script's executable bit; for a source archive that does not, run `chmod +x start_web.sh` once.
+`ROBOCAP_SKIP_SYNC=1` only when the environment is already synchronized; this does not skip the Git
+update. A Git clone preserves the script's executable bit; if needed, run `chmod +x start_web.sh` once.
 
 ## CLI And Development
 
