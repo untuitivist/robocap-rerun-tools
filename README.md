@@ -172,7 +172,9 @@ start_web.bat
 ```
 
 `start_web.bat` first runs `git pull --ff-only` against the current branch's configured upstream,
-then reloads the launcher and runs `uv sync --extra web`. Git update failures stop startup;
+then reloads the launcher and runs `uv sync --extra web`. If Git is unavailable or the update
+fails (including connection errors or timeouts reported by Git), it prints a warning and continues
+startup using local code;
 local changes are never automatically stashed, discarded, or merged. Run from a Git clone with
 Git available on `PATH`. The dependency sync creates `.venv`, downloads a compatible Python 3.11+
 interpreter when needed, installs all Python dependencies, and opens the Web UI on an automatically

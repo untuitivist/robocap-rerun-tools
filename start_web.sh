@@ -14,17 +14,17 @@ cd "$REPO_DIR" || exit 1
 
 if [ "${ROBOCAP_LAUNCHER_UPDATED:-0}" != "1" ]; then
   if ! command -v git >/dev/null 2>&1; then
-    echo "Git was not found on PATH. Install Git before starting the web tool."
-    exit 1
+    echo "WARNING: Git was not found. Skipping update and starting with local code."
+  else
+    echo "Checking for code updates with git pull --ff-only..."
+    if git -c merge.autostash=false -c rebase.autostash=false pull --ff-only --no-rebase; then
+      # Reload the launcher in case the pull updated this file.
+      export ROBOCAP_LAUNCHER_UPDATED=1
+      exec sh "$REPO_DIR/start_web.sh"
+    else
+      echo "WARNING: Git update failed. Skipping update and starting with local code."
+    fi
   fi
-  echo "Checking for code updates with git pull --ff-only..."
-  if ! git -c merge.autostash=false -c rebase.autostash=false pull --ff-only --no-rebase; then
-    echo "Git update failed. Resolve the error above, then run the launcher again."
-    exit 1
-  fi
-  # Reload the launcher in case the pull updated this file.
-  export ROBOCAP_LAUNCHER_UPDATED=1
-  exec sh "$REPO_DIR/start_web.sh"
 fi
 unset ROBOCAP_LAUNCHER_UPDATED
 
