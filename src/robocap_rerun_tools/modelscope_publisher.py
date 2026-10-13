@@ -958,6 +958,9 @@ The dataset index and Session manifest also contain `mocap_rigid_names`: the act
 entity names. `objects` contains only actual prop instance names, for example `["BigBox0", "BigBox1"]`.
 Scan bundles are stored under `3dobjs/`; `3dobjs/index.json` maps each object name to its bundle.
 Several numbered instances may share one scan. Instances are never renumbered or inferred.
+Scan categories use PascalCase without spaces or bracket lists (`OpenBox.objcap`). Object names
+use PascalCase plus an instance number (`OpenBox0`); unnumbered objects default to instance 0.
+Original Mocap filenames and `mocap_rigid_names` remain unchanged.
 The `mocap_rigid_names` field retains all
 entity labels (for example `Body0`, `Tracker0`, `BigBox0`), deduplicated across formats. No objects
 or extra HH bodies are inferred. Backfills retain existing Session paths and remote-only files,
