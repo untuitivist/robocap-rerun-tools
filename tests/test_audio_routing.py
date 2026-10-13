@@ -140,7 +140,7 @@ def fake_repositories(tmp_path, monkeypatch):
     return apis
 
 
-def test_auto_batch_routes_to_separate_repositories_and_verifies_metadata(tmp_path, monkeypatch):
+def test_batch_upload_uses_frame_reports_without_automatic_content_routing(tmp_path, monkeypatch):
     root = tmp_path / "raw"
     sources = []
     for index in range(1, 4):
@@ -152,29 +152,28 @@ def test_auto_batch_routes_to_separate_repositories_and_verifies_metadata(tmp_pa
         current_report(source, report, mocap_frames=72 if index == 3 else 80)
         sources.append(source)
     apis = fake_repositories(tmp_path, monkeypatch)
+    monkeypatch.setattr(batch_completeness, "inspect_local_batch", lambda *a: pytest.fail("No full upload audit"))
     output = list(web_app.bulk_upload_clean_modelscope_sessions(
         str(root), 8, False, upload_date="20261010", batch_size=2,
     ))[-1]
     normal_rows = [json.loads(line) for line in apis["owner/normal"].files["metadata.jsonl"].splitlines()]
+    assert len(normal_rows) == 2, output
+    assert not apis["owner/fault"].uploads
+    assert {row["session_id"] for row in normal_rows} == {s.name for s in sources[:2]}
+    list(web_app.bulk_upload_clean_modelscope_sessions(
+        str(root), 8, False, upload_date="20261010", quality_target="fault",
+    ))
     fault_rows = [json.loads(line) for line in apis["owner/fault"].files["metadata.jsonl"].splitlines()]
-    assert len(normal_rows) == 1, output
-    assert len(fault_rows) == 2, output
-    assert normal_rows[0]["quality_status"] == "passed"
-    assert normal_rows[0]["error_types"] == []
-    assert {tuple(row["error_types"]) for row in fault_rows} == {("local_missing",), ("mocap_missing",)}
-    assert sources[0].name == normal_rows[0]["session_id"]
+    assert len(fault_rows) == 1
+    assert fault_rows[0]["error_types"] == ["mocap_missing"]
     for repo, rows in (("owner/normal", normal_rows), ("owner/fault", fault_rows)):
         api = apis[repo]
         for row in rows:
             manifest = json.loads(api.files[row["manifest"]])
-            assert manifest["quality_status"] == row["quality_status"]
-            assert manifest["error_types"] == row["error_types"]
-            assert manifest["local_integrity"] == row["local_integrity"]
+            assert manifest.get("quality_status") == row.get("quality_status")
+            assert manifest.get("error_types") == row.get("error_types")
             assert all("_reports" not in item["packaged_as"] for item in manifest["files"])
         assert api.uploads
-    report_csv = next((root / "_reports").glob("batch_upload_*/sessions.csv"))
-    report_text = report_csv.read_text(encoding="utf-8")
-    assert "fault" in report_text and "normal" in report_text and "verified" in report_text
     before = {repo: len(api.uploads) for repo, api in apis.items()}
     list(web_app.bulk_upload_clean_modelscope_sessions(str(root), 8, False, upload_date="20261010"))
     assert {repo: len(api.uploads) for repo, api in apis.items()} == before
@@ -190,9 +189,13 @@ def test_fault_without_mocap_or_video_is_archived_with_unknown_duration(tmp_path
         raise publisher.ModelScopePublisherError("No reference video")
 
     monkeypatch.setattr(publisher, "measure_session_duration_s", unavailable)
-    output = list(web_app.bulk_upload_clean_modelscope_sessions(str(tmp_path / "raw"), 8, False))[-1]
+    integrity = session_integrity.audit_session(source, progress=lambda _: None)
+    staged = publisher.stage_session(source, "P01", quality_target="fault", integrity_report=integrity, progress=None)
+    settings = fault_publishing.fault_settings()
+    publisher.upload_staged_dataset(publisher.load_staged_dataset(staged.dataset_root), None,
+                                    settings=settings, api=apis["owner/fault"], progress=None)
     api = apis["owner/fault"]
-    assert api.files["metadata.jsonl"], output
+    assert api.files["metadata.jsonl"]
     row = json.loads(api.files["metadata.jsonl"])
     assert row["duration_s"] is None
     assert row["duration_status"] == "unavailable"
@@ -206,12 +209,12 @@ def test_fault_without_mocap_or_video_is_archived_with_unknown_duration(tmp_path
 def test_active_source_and_inconclusive_inspection_never_upload(tmp_path, monkeypatch):
     source = full_session(tmp_path, monkeypatch)
     (source / "robocap_segment1_imu_left.db-wal").write_bytes(b"unmerged changes")
-    monkeypatch.setattr(publisher, "connect_modelscope", lambda *args: pytest.fail("Not safe to upload"))
-    output = list(web_app.bulk_upload_clean_modelscope_sessions(str(source), 8, False))[-1]
-    assert "数据库未关闭" in output
+    from robocap_rerun_tools.session_quality import unstable_source
+    report = session_integrity.audit_session(source, progress=lambda _: None)
+    assert unstable_source(report)
     (source / "robocap_segment1_imu_left.db-wal").unlink()
-    output = list(web_app.bulk_upload_clean_modelscope_sessions(str(source), 8, False))[-1]
-    assert "关键检查未完成" in output
+    report = session_integrity.audit_session(source, progress=lambda _: None)
+    assert assess_quality(source, report)["quality_status"] == "unchecked"
 
 
 def test_ambiguous_mocap_directories_preserve_both_exports_and_rigid_names(tmp_path, monkeypatch):
@@ -221,7 +224,8 @@ def test_ambiguous_mocap_directories_preserve_both_exports_and_rigid_names(tmp_p
     (duplicate / "Body0.csv").write_bytes(b"second capture")
     (duplicate / "BigBox0.csv").write_bytes(b"object capture")
     fake_repositories(tmp_path, monkeypatch)
-    staged = publisher.stage_session(source, "P01", quality_target="fault", progress=None)
+    integrity = session_integrity.audit_session(source, progress=lambda _: None)
+    staged = publisher.stage_session(source, "P01", quality_target="fault", integrity_report=integrity, progress=None)
     row = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
     manifest = json.loads(staged.manifest_path.read_text(encoding="utf-8"))
     assert "local_ambiguous" in row["error_types"]
@@ -237,7 +241,8 @@ def test_partial_reference_video_coverage_does_not_undercount_session_duration(t
     for path in source.glob("robocap_segment2_video_*.mp4"):
         path.unlink()
     fake_repositories(tmp_path, monkeypatch)
-    staged = publisher.stage_session(source, "P01", quality_target="fault", progress=None)
+    integrity = session_integrity.audit_session(source, progress=lambda _: None)
+    staged = publisher.stage_session(source, "P01", quality_target="fault", integrity_report=integrity, progress=None)
     row = json.loads(staged.metadata_path.read_text(encoding="utf-8"))
     assert row["duration_s"] is None  # Not the measurable segment1-only duration.
     assert "whole-Session duration is unknown" in row["duration_error"]

@@ -963,12 +963,13 @@ Original Mocap filenames and `mocap_rigid_names` remain unchanged.
 The `mocap_rigid_names` field retains all
 entity labels (for example `Body0`, `Tracker0`, `BigBox0`), deduplicated across formats. No objects
 or extra HH bodies are inferred. Backfills retain existing Session paths and remote-only files,
-merge manifests, and verify uploaded bytes. Local structural/content failures are recorded before
-normal batch uploads; confirmed structural/content/frame errors are routed to the fault dataset.
-Every Segment requires `audio_segmentN.wav` with readable, nonempty PCM/float sample data.
-Both metadata and manifests record `quality_status` (`passed` or `error`), `error_types`,
-`quality_details` for per-Segment frame counts, `local_integrity` for file checks, and
-`inspection_issues` for checks that could not be completed. Fault recordings with unmeasurable
+merge manifests, and verify uploaded bytes. Upload preparation uses frame-count and timestamp
+reports; it does not automatically decode every video or run full source-content checks.
+Normal batches select matching frame counts; the separate fault uploader selects frame-count
+differences. Full structural/content inspection remains an independent operation.
+Fault metadata and manifests record `quality_status=error`, `error_types` and `quality_details`.
+Explicit full-inspection results may also include `local_integrity` and `inspection_issues`.
+Fault recordings with unmeasurable
 duration use `duration_s=null`, `duration_status=unavailable` and an explanatory `duration_error`.
 
 At upload time, `participants.jsonl` is read from the destination dataset and matched against
@@ -998,8 +999,8 @@ inspection report. Paths inside manifests and reports are dataset-relative.
 - Standard motion-capture exports under `mocap/`: Body0 in TRC/BVH/CSV, Tracker0 (hat) in
   TRC/CSV, all three formats for each detected extra Body, and TRC/CSV for each named object.
   HH imposes no fixed extra-body count. Action-specific requirements can add exact object names.
-  Other formats are optional and cannot replace missing standard exports. Normal batch uploads
-  check this standard; manual staging publishes only the explicitly selected files.
+  These export requirements are evaluated by independent full inspection, not the upload gate.
+  Staging publishes only the explicitly selected files.
 - Optional artifact: RRD files, only when explicitly selected.
 - Generated: `manifest.json` and `timestamp_anomaly_detail_table.html`.
 
@@ -1239,6 +1240,21 @@ def _validate_stage_locations(session_dir: Path, dataset_root: Path, target_dir:
         raise ValueError("Dataset target cannot be the source session directory.")
 
 
+def validate_upload_sources(paths: Sequence[Path], *, allow_empty: bool = False) -> None:
+    """Check selected files using filesystem metadata, without decoding or scanning payloads."""
+    from .file_integrity import DATABASE_SUFFIXES, pending_database_log
+
+    for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(f"Selected upload file is missing: {path}")
+        if not allow_empty and path.stat().st_size == 0:
+            raise ValueError(f"Selected upload file is empty: {path}")
+        if path.suffix.lower() in DATABASE_SUFFIXES:
+            pending = pending_database_log(path)
+            if pending:
+                raise ValueError(f"Database has an unmerged recording log: {path} ({pending})")
+
+
 def stage_session(
     session_dir: Path,
     primitive_id: str,
@@ -1285,18 +1301,11 @@ def stage_session(
     if quality_target not in {"normal", "fault"}:
         raise ValueError("Unknown publishing target")
     from .batch_completeness import fault_relative_path, fault_source_files
-    from .session_integrity import audit_session, saved_integrity, source_signature
+    from .session_integrity import source_signature
     from .session_quality import assess_quality, fault_report_document
 
     is_fault = quality_target == "fault"
-    if is_fault and integrity_report is None:
-        integrity_report = saved_integrity(source, segment)
-        if integrity_report is None or integrity_report.get("status") == "stale":
-            integrity_report = audit_session(
-                source, segment=segment, ffmpeg=ffmpeg, ffprobe=ffprobe,
-                progress=progress or (lambda _: None),
-            )
-    quality = None
+    quality = collect_fault_quality(source, segment) if is_fault and integrity_report is None else None
     if integrity_report is not None:
         if integrity_report.get("source_signature") != source_signature(source, segment=segment):
             raise ValueError("Source changed since integrity check; recheck before staging.")
@@ -1351,6 +1360,7 @@ def stage_session(
     )
     if not files:
         raise ModelScopePublisherError(f"No session files were discovered in {source}.")
+    validate_upload_sources([*files, *rerun_files], allow_empty=is_fault)
     intersection_plan: AlignedIntersectionPlan | None = None
     if aligned_intersection:
         if frame_ratio is None:
@@ -1373,7 +1383,7 @@ def stage_session(
     try:
         if is_fault:
             measured_segments = {ref.segment.lower() for ref in discover_segment_references(source)}
-            expected_segments = {segment.lower()} if segment else set(integrity_report.get("segments", []))
+            expected_segments = {segment.lower()} if segment else set((integrity_report or {}).get("segments", []))
             if expected_segments - measured_segments:
                 raise ModelScopePublisherError("Some Segments lack a reference video; whole-Session duration is unknown")
         duration_s = measure_session_duration_s(source, segment, ffprobe, intersection_plan)
@@ -1513,10 +1523,7 @@ def stage_session(
             "original_bytes": reference.report_path.stat().st_size,
             "packaged_bytes": report_target.stat().st_size, "compressed_video": False,
         })
-    from .upload_verification import file_digest
-
-    for record in file_records:
-        record["sha256"] = file_digest(target / record["packaged_as"])
+    # Transfer verification hashes staged bytes once, immediately before upload.
     rigid_names = manifest_mocap_names(file_records)
     total_bytes = sum(int(item["packaged_bytes"]) for item in file_records)
     manifest = {

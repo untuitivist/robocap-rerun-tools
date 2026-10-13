@@ -194,10 +194,10 @@ sessions share one uploader-local `YYYYMMDD` date and move to
 `EgoMotionActions/<date>/<primitive>/<session>/`; the exact start time remains in metadata and a
 failed transfer reuses the assigned date. Legacy `YYYYMMDD_HHMMSS` paths remain readable.
 `EgoMotionActions/Demo/` is reserved for migrated legacy examples.
-The Statistics tab checks and automatically routes Sessions to normal or fault repositories.
-After local structural/content/WAV and frame checks, it reads the destination `metadata.jsonl`.
-It compares local file paths, sizes and SHA-256
-with remote manifests and files; downloads are needed when remote hashes are unavailable.
+The Statistics tab uploads Sessions with matching frame counts to the normal repository.
+The separate fault upload selects frame-count differences. Preparation uses frame/timestamp
+reports and lightweight file existence, empty-file and unmerged database-log checks.
+It checks remote manifests and file sizes without hashing every local source before skipping.
 The upload date field is initialized to the current UTC+08:00 `YYYYMMDD` and remains editable. Batch
 upload auto-matches each timestamped Session by converting its UTC name to UTC+08:00; the field is
 the fallback for names without timestamps. Batches never mix dates. Existing
@@ -205,10 +205,9 @@ the fallback for names without timestamps. Batches never mix dates. Existing
 default only when their manifest, required report, declared files, counts, and byte sizes all match.
 Incomplete entries are re-uploaded for repair. Clearing the skip option uploads complete entries again
 too. Backfills preserve the existing remote date/path, remote-only files and unknown metadata.
-Actual object labels are recorded in `mocap_rigid_names`. Local failures and upload outcomes are
-saved under `_reports/batch_upload_<time>/`. Normal Sessions must satisfy the exact frame-count relation.
-Confirmed file/frame defects go to the fault repository with error types and file reasons in metadata.
-Inconclusive or active sources pause upload. Normal uploads use curated Mocap files; fault uploads
+Actual object labels are recorded in `mocap_rigid_names`; `objects` contains scan categories.
+Full-content quality inspection remains separate from upload. No automatic quality routing runs.
+Normal uploads use curated Mocap files; fault uploads
 retain all existing capture files, without RRD. Preparation and validation use isolated staging roots
 for each repository. Batch size defaults to 10; size 1 uploads one
 Session at a time, and a size at least equal to the candidate count uploads all candidates together.
@@ -338,14 +337,14 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 准备阶段写入本地 `_prepared/<动作>/<session>/`。上传开始时，全部待上传 Session 共用上传电脑本地
 日期 `YYYYMMDD`，并移动到 `EgoMotionActions/<日期>/<动作>/<session>/`；完整开始时间仍保存在元数据
 中，传输失败后重试会复用该日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。
-"统计"页提供批量检查并分流上传。先检查结构、内容、WAV 和帧数，再读取目标库 `metadata.jsonl`，对比本地实际
-文件与远端 manifest 的路径、字节数及已记录 SHA-256；旧清单漏掉的刚体会触发补传。上传日期框默认填入东八区当天的
+"统计"页按帧数检查报告筛选正常批量上传，错误库入口按差帧筛选，不自动完整检查或分流。
+准备时保留所选文件存在、非空和数据库未合并日志检查；跳过已有项只核对远端清单与字节数。
+上传日期框默认填入东八区当天的
 `YYYYMMDD`，允许手工修改。批量上传默认把 Session 名中的 UTC 时间转为东八区日期；无时间戳时
 回退到日期框，不同日期不会混入同一批次。默认开启"跳过远端已有且
-完整的 Session"；本地新增或变更的文件不会被跳过。勾选重做全部报告时全部处理。补传沿用原远端日期目录，
+完整的 Session"；不再逐个读取本地文件计算哈希来决定跳过。勾选重做全部报告时全部处理。补传沿用原远端日期目录，
 合并并保留远端独有文件（必要时下载校验）、其他元数据。对象名称写入 `mocap_rigid_names`。
-通过检查的进正常库；确认缺文件、空文件、损坏、部分轨迹缺失或差帧的进错误库，metadata 写明原因。
-关键检查未完成且无确认错误的暂停；正在变化的源文件先停止录制再检查。明细及日志在 `_reports/batch_upload_<时间>/`。
+完整质量检查保留在独立检查功能中；上传后仍校验传输结果并修复失败文件。
 正常 Session 必须满足精确帧数关系，使用默认 Mocap 文件；错误库保留全部现有采集文件，且
 不带 RRD。批次大小默认 10；填 1 时逐个上传，大于等于候选总数时全量作为一批。当前批上传时后台
 准备下一批，远端写入仍严格串行。原始文件优先使用同卷 NTFS 硬链接，失败时复制。上传首次失败后
@@ -422,18 +421,15 @@ LANGUAGE_PACKS = {
         ),
         "statistics_recovery_output": "Mocap recovery output",
         "statistics_batch_help": (
-            "Batch upload first checks all local data, then compares remote metadata/manifests "
-            "with local file paths, sizes and SHA-256, including newly exported objects. The "
+            "Batch upload reads remote metadata, then checks each matching Session's manifest, "
+            "declared files, counts, and byte sizes without downloading large capture files. The "
             "editable date is initialized to today's UTC+08:00 `YYYYMMDD`. Auto-match converts each "
             "timestamped Session name from UTC to UTC+08:00; the field is the fallback, and different "
             "dates use separate batches. Only complete existing Sessions are skipped by default; "
             "incomplete Sessions are "
             "re-uploaded for repair. Clear the skip option to re-upload complete Sessions too and "
-            "merge matching metadata rows. Backfills preserve the original remote path and "
-            "remote-only files. Local completeness issues are saved under `_reports/batch_upload_<time>/`. "
-            "Passed Sessions go to the normal dataset; confirmed file/frame errors go to the fault "
-            "dataset with error metadata. Each Segment requires WAV audio. Inconclusive or active "
-            "sources pause upload. Batches never mix repositories. Batch size `1` "
+            "replace matching metadata rows. A different date leaves the old remote directory "
+            "untouched. Each selected Session must satisfy `n:ratio*(n+1):n+1`. Batch size `1` "
             "uploads one Session per commit; a size at least equal to the candidate count uploads all "
             "candidates together; the default is `10`. While one batch uploads, the next is prepared "
             "in the background. Remote uploads remain serial. Raw files use NTFS hard links when "
@@ -602,14 +598,12 @@ LANGUAGE_PACKS = {
         "statistics_recovery_confirm_replace": "确认删除/替换预览中的现有 mocap* 文件夹和失效检查报告",
         "statistics_recovery_output": "Mocap 补回输出",
         "statistics_batch_help": (
-            "批量上传先完整检查本地，再比对远端 metadata.jsonl、manifest 与本地实际文件、大小和 SHA-256。"
-            "远端缺少哈希时下载校验；新增刚体会触发补传。日期框默认填入东八区当天的 `YYYYMMDD`，"
+            "批量上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
+            "文件数量和字节数；不会为此下载大型采集文件。日期框默认填入东八区当天的 `YYYYMMDD`，"
             "允许修改。自动匹配会把 Session 名中的 UTC 时间换算为东八区日期；无时间戳时使用日期框，"
             "不同日期分开成批。默认只跳过远端已有且完整的 Session；远端"
-            "不完整项会补传修复。重做全部报告会处理所有项。补传保留原远端日期目录、远端独有文件和其他元数据。"
-            "每段必需 WAV 音频。检查通过的进正常库；确认缺失、空文件、损坏或差帧的进错误库。"
-            "metadata 写明错误类型和具体文件；检查未完成且无确认错误或正在录制的暂停上传。"
-            "两库分别成批，问题及上传结果保存在 `_reports/batch_upload_<时间>/`。批次大小为 "
+            "不完整项会重新上传修复。取消勾选后，完整项也会重新上传并替换同键元数据。改用其他"
+            "日期不会删除旧远端目录。选中的 Session 必须满足 `n:ratio*(n+1):n+1`。批次大小为 "
             "`1` 时逐个提交，大于等于候选总数时全量一次提交，默认 `10`。当前批次上传时会在后台"
             "准备下一批，但远端上传严格串行。原始文件优先使用 NTFS 硬链接，失败时逐字节复制。"
             "批次上传失败会重试 3 次，共 4 次仍失败则跳过该批并继续。默认选择 BVH/CSV/TRC/MP4 "
@@ -3186,21 +3180,25 @@ def bulk_upload_clean_modelscope_sessions(
     batch_size: object = 10,
     upload_workers: object = "auto",
     auto_match_upload_date: bool = False,
-    quality_target: str = "auto",
+    quality_target: str = "normal",
 ) -> Iterator[str]:
     from robocap_rerun_tools.fault_publishing import (
+        collect_fault_quality,
         fault_settings,
         validate_fault_staging,
     )
 
-    if quality_target not in {"auto", "normal", "fault"}:
+    if quality_target not in {"normal", "fault"}:
         raise ValueError("Unknown publishing target")
+    is_fault = quality_target == "fault"
+    from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
         discover_segment_references,
+        session_has_clean_frame_counts,
+        summarize_session,
     )
     from robocap_rerun_tools.modelscope_publisher import (
         ModelScopePublisherError,
-        RemoteSessionIntegrityReport,
         audit_remote_sessions,
         connect_modelscope,
         load_staged_dataset,
@@ -3208,15 +3206,6 @@ def bulk_upload_clean_modelscope_sessions(
         upload_staged_dataset,
         validate_session_id,
     )
-
-    from .batch_completeness import (
-        inspect_local_batch,
-        inspection_is_current,
-        local_upload_inventory,
-        write_batch_report,
-    )
-    from .session_integrity import discover_sessions, source_signature
-    from .session_quality import assess_quality, unstable_source
 
     root = dataset_root_path(dataset_root)
     selected_upload_date = resolve_modelscope_upload_date(upload_date)
@@ -3253,28 +3242,9 @@ def bulk_upload_clean_modelscope_sessions(
 
     is_chinese = language == "中文"
     history: deque[str] = deque(maxlen=STREAM_LOG_MAX_LINES)
-    run_id = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
-    report_dir = root / "_reports" / f"batch_upload_{run_id}"
-    report_dir.mkdir(parents=True, exist_ok=True)
-    local_reports = {}
-    decisions = {}
-    session_targets = {}
-    session_qualities = {}
-    selected_mocaps = {}
-    scan_errors = []
-
-    def save_results():
-        enriched = {
-            session: {**decision, "target": session_targets.get(session, ""),
-                      "error_types": session_qualities.get(session, {}).get("error_types", [])}
-            for session, decision in decisions.items()
-        }
-        write_batch_report(report_dir, local_reports, enriched, scan_errors)
 
     def add(message: str) -> None:
         history.extend(line for line in message.splitlines() if line.strip())
-        with (report_dir / "run.log").open("a", encoding="utf-8") as stream:
-            stream.write(message + "\n")
 
     def render(current: str = "") -> str:
         value = "\n".join(history)
@@ -3294,16 +3264,11 @@ def bulk_upload_clean_modelscope_sessions(
                 result = stop.value
                 if not isinstance(result, StreamCommandResult):
                     raise TypeError(f"CLI stream returned no result for {args[0]}.")
-                with (report_dir / "run.log").open("a", encoding="utf-8") as log:
-                    log.write(result.output + "\n")
                 add(f"{label}: {'done' if result.returncode == 0 else 'failed'}")
                 return result
             yield render(snapshot)
 
     sessions = discover_session_directories(root)
-    broad_sessions, scan_errors = discover_sessions([root], root / "_reports", log=add)
-    sessions = sorted(set(sessions) | set(broad_sessions))
-    add(f"完整检查与上传记录：{report_dir / 'report.html'}")
     add(f"统计根目录：{root}" if is_chinese else f"Statistics root: {root}")
     add(
         (
@@ -3323,37 +3288,8 @@ def bulk_upload_clean_modelscope_sessions(
     add(f"识别到 Session：{len(sessions)}" if is_chinese else f"Detected sessions: {len(sessions)}")
     if not sessions:
         add("未发现 Session。" if is_chinese else "No sessions were discovered.")
-        save_results()
         yield render()
         return
-
-    local_events: queue.Queue[object] = queue.Queue()
-    local_finished = object()
-    local_outcome = {}
-
-    def check_local():
-        try:
-            local_outcome["reports"] = inspect_local_batch(sessions, report_dir, local_events.put)
-        except Exception as exc:  # noqa: BLE001 - surface worker failures, never wait forever
-            local_outcome["error"] = exc
-        finally:
-            local_events.put(local_finished)
-
-    local_thread = threading.Thread(target=check_local, daemon=True)
-    local_thread.start()
-    while True:
-        event = local_events.get()
-        if event is local_finished:
-            break
-        add(str(event))
-        yield render()
-    local_thread.join()
-    if "error" in local_outcome:
-        add(f"Local completeness check failed; upload stopped: {local_outcome['error']}")
-        yield render()
-        return
-    local_reports = local_outcome["reports"]
-    save_results()
 
     identified: list[tuple[Path, str, str]] = []
     excluded: list[str] = []
@@ -3366,33 +3302,16 @@ def bulk_upload_clean_modelscope_sessions(
         primitive = infer_batch_modelscope_primitive(root, session)
         if primitive is None:
             excluded.append(f"{session}: action primitive is ambiguous or missing")
-            decisions[session] = {"upload_status": "excluded", "detail": excluded[-1]}
-            save_results()
             yield render()
             continue
         try:
             session_id = validate_session_id(session.name)
         except ValueError as exc:
             excluded.append(f"{session}: invalid Session ID ({exc})")
-            decisions[session] = {"upload_status": "excluded", "detail": excluded[-1]}
-            save_results()
             yield render()
             continue
         identified.append((session, primitive, session_id))
         yield render()
-
-    duplicates = {}
-    for session, primitive, session_id in identified:
-        duplicates.setdefault((primitive, session_id), []).append(session)
-    duplicates = {key: paths for key, paths in duplicates.items() if len(paths) > 1}
-    if duplicates:
-        for key, paths in duplicates.items():
-            add(f"Duplicate local identity {key}: {paths}; upload stopped")
-            for session in paths:
-                decisions[session] = {"upload_status": "duplicate_identity", "detail": str(paths)}
-        save_results()
-        yield render()
-        return
 
     if not identified:
         for reason in excluded:
@@ -3405,76 +3324,17 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
 
-    # Classify before contacting either repository: remote presence never overrides local defects.
-    references = [ref for session, _, _ in identified for ref in discover_segment_references(session)]
-    missing = [ref for ref in references if not inspection_is_current(ref, ratio)]
-    report_mode = inspection_report_mode(fill_missing_reports, rebuild_all_reports)
-    reports_to_generate = (references if report_mode == "all"
-                           else missing if report_mode == "missing" else [])
-    failed_inspections = set()
-    for index, reference in enumerate(reports_to_generate, start=1):
-        label = f"[{index}/{len(reports_to_generate)}] inspect {reference.session_dir.name}/{reference.segment}"
-        result = yield from command_step(
-            ["inspect", str(reference.session_dir), "--segment", reference.segment,
-             "--mocap-ratio", str(ratio)], label,
-        )
-        if result.returncode != 0:
-            failed_inspections.add(reference.session_dir)
-            add("帧数检查未完成；保留本地错误，不能按正常数据上传。" if is_chinese
-                else "Frame inspection failed; retain source defects, never classify as clean.")
-
-    eligible = []
-    for session, primitive, session_id in identified:
-        quality = assess_quality(session, local_reports[session], ratio=ratio)
-        session_qualities[session] = quality
-        if unstable_source(local_reports[session]):
-            reason = "源文件仍在变化或数据库未关闭；停止录制后重新检查"
-        elif quality["quality_status"] == "unchecked" or (
-            session in failed_inspections and quality["quality_status"] != "error"
-        ):
-            reason = "关键检查未完成；不能视为通过，也不冒充已确认的数据错误"
-        else:
-            target = "fault" if quality["quality_status"] == "error" else "normal"
-            session_targets[session] = target
-            reason = "" if quality_target in {"auto", target} else "不属于本次选择的数据集"
-        if not reason:
-            try:
-                mocap = default_modelscope_mocap_files(session) if target == "normal" else []
-                if target == "normal" and not mocap:
-                    raise ValueError("No default-selected Mocap files")
-                selected_mocaps[session] = mocap
-            except (OSError, ValueError, ModelScopePublisherError) as exc:
-                reason = str(exc)
-        if reason:
-            excluded.append(f"{session}: {reason}")
-            decisions[session] = {"upload_status": "excluded", "detail": reason}
-        else:
-            eligible.append((session, primitive, session_id))
-            decisions[session] = {"upload_status": "classified", "detail": ", ".join(quality["error_types"])}
-            add(f"{primitive}/{session_id} -> {target}: {quality['error_types'] or 'passed'}")
-    identified = eligible
-    save_results()
-    if not identified:
-        for reason in excluded:
-            add(f"- {reason}")
-        add("没有通过分流条件的 Session。" if is_chinese else "No eligible Sessions.")
-        yield render()
-        return
-
     add("检查 ModelScope 身份。" if is_chinese else "Check ModelScope authentication.")
-    connections = {}
     try:
-        for target in sorted({session_targets[session] for session, _, _ in identified}):
-            connections[target] = connect_modelscope(fault_settings()) if target == "fault" else connect_modelscope()
-            add(f"{target} -> {connections[target].settings.repo_id}")
+        connection = connect_modelscope(fault_settings()) if is_fault else connect_modelscope()
     except (OSError, ValueError, ModelScopePublisherError) as exc:
         add(f"ModelScope authentication failed: {exc}")
         yield render()
         return
     add(
-        f"ModelScope 身份：{next(iter(connections.values())).username}"
+        f"ModelScope 身份：{connection.username}"
         if is_chinese
-        else f"ModelScope identity: {next(iter(connections.values())).username}"
+        else f"ModelScope identity: {connection.username}"
     )
     yield render()
 
@@ -3496,35 +3356,26 @@ def bulk_upload_clean_modelscope_sessions(
 
     def audit_worker() -> None:
         try:
-            local_files = {}
-            unavailable = {}
-            for session, primitive, session_id in identified:
-                try:
-                    local_files[(primitive, session_id)] = local_upload_inventory(
-                        session, selected_mocaps[session], audit_progress,
-                        quality_target=session_targets[session],
-                    )
-                    if local_reports[session].get("source_signature") != source_signature(session):
-                        raise ValueError(f"Source changed since integrity check: {session}")
-                except (OSError, ValueError, ModelScopePublisherError) as exc:
-                    unavailable[session] = str(exc)
-            audit_outcome["unavailable"] = unavailable
-            statuses, indexed = [], 0
-            for target, connection in connections.items():
-                members = [item for item in identified if session_targets[item[0]] == target
-                           and item[0] not in unavailable]
-                if not members:
-                    continue
-                result = audit_remote_sessions(
-                    [(primitive, session_id) for _, primitive, session_id in members],
-                    settings=connection.settings, api=connection.api, progress=audit_progress,
-                    local_files={ (p, s): local_files[(p, s)] for _, p, s in members},
-                    expected_quality={ (p, s): session_qualities[path] for path, p, s in members},
-                )
-                statuses.extend(result.sessions)
-                indexed += result.indexed_session_count
-            audit_outcome["result"] = RemoteSessionIntegrityReport(indexed, tuple(statuses))
-        except Exception as exc:  # noqa: BLE001 - worker failures must wake the caller
+            quality_options = {}
+            if is_fault:
+                expected_quality = {}
+                if not rebuild_all_reports:
+                    for source, primitive, session_id in identified:
+                        try:
+                            expected_quality[(primitive, session_id)] = collect_fault_quality(
+                                source
+                            )
+                        except (OSError, ValueError, TypeError):
+                            continue
+                quality_options["expected_quality"] = expected_quality
+            audit_outcome["result"] = audit_remote_sessions(
+                ((primitive, session_id) for _, primitive, session_id in identified),
+                settings=connection.settings,
+                api=connection.api,
+                progress=audit_progress,
+                **quality_options,
+            )
+        except (OSError, ValueError, ModelScopePublisherError) as exc:
             audit_outcome["error"] = exc
         finally:
             audit_events.put(audit_finished)
@@ -3549,12 +3400,6 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
     remote_audit = audit_outcome["result"]
-    for session, reason in audit_outcome.get("unavailable", {}).items():
-        decisions[session] = {"upload_status": "source_unavailable", "detail": reason}
-        excluded.append(f"{session}: {reason}")
-        add(f"- {session}: {reason}")
-    identified = [item for item in identified if item[0] not in audit_outcome.get("unavailable", {})]
-    save_results()
 
     remote_statuses = {status.key: status for status in remote_audit.sessions}
     remote_keys = frozenset(remote_statuses)
@@ -3588,7 +3433,6 @@ def bulk_upload_clean_modelscope_sessions(
     )
     for session, primitive, session_id in remote_skipped:
         add(f"= {primitive}/{session_id}: {session} [remote complete]")
-        decisions[session] = {"upload_status": "unchanged", "detail": "本地检查完成；远端清单、大小及记录哈希一致"}
     for session, primitive, session_id in remote_incomplete:
         status = remote_statuses[(primitive, session_id)]
         reason = "; ".join(status.issues)
@@ -3598,18 +3442,74 @@ def bulk_upload_clean_modelscope_sessions(
             else f"! {primitive}/{session_id}: remote incomplete; will re-upload: {reason}"
         )
     yield render()
-    save_results()
     if not pending:
         add(
-            "本地完整性检查已完成，所有可识别 Session 与远端清单一致；无需上传。"
+            "所有可识别 Session 在远端均完整；未补检查、未暂存、未上传。"
             if is_chinese
             else (
-                "Local checks completed; all identifiable Sessions match remote inventories; no upload needed."
+                "All identifiable Sessions are complete remotely; no inspection, staging, "
+                "or upload was run."
             )
         )
         yield render()
         return
 
+    duplicate_keys: dict[tuple[str, str], list[Path]] = {}
+    for session, primitive, session_id in pending:
+        duplicate_keys.setdefault((primitive, session_id), []).append(session)
+    duplicates = {key: paths for key, paths in duplicate_keys.items() if len(paths) > 1}
+    if duplicates:
+        add(
+            "批量上传已停止：未上传数据中动作名称和 Session ID 组合重复。"
+            if is_chinese
+            else (
+                "Batch upload stopped: duplicate action/session ID combinations "
+                "among not-yet-uploaded data."
+            )
+        )
+        for (primitive, session_id), paths in sorted(duplicates.items()):
+            add(f"- {primitive}/{session_id}: {', '.join(str(path) for path in paths)}")
+        yield render()
+        return
+
+    references = [
+        reference for session, _, _ in pending for reference in discover_segment_references(session)
+    ]
+    missing = [reference for reference in references if not reference.report_path.is_file()]
+    report_mode = inspection_report_mode(fill_missing_reports, rebuild_all_reports)
+    reports_to_generate = (
+        references if report_mode == "all" else missing if report_mode == "missing" else []
+    )
+    for index, reference in enumerate(reports_to_generate, start=1):
+        if is_chinese:
+            action = "重做检查" if report_mode == "all" else "补做检查"
+        else:
+            action = "Rebuild inspection" if report_mode == "all" else "Create inspection"
+        separator = "：" if is_chinese else ": "
+        label = (
+            f"[{index}/{len(reports_to_generate)}] {action}{separator}"
+            f"{reference.session_dir.name}/{reference.segment}"
+        )
+        result = yield from command_step(
+            [
+                "inspect",
+                str(reference.session_dir),
+                "--segment",
+                reference.segment,
+                "--mocap-ratio",
+                str(ratio),
+                "--upload-check",
+            ],
+            label,
+        )
+        if result.returncode != 0:
+            add(
+                "检查失败；该 Session 将被排除。"
+                if is_chinese
+                else "Inspection failed; this Session will be excluded."
+            )
+
+    ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
     candidates: list[BatchUploadCandidate] = []
     for index, (session, primitive, session_id) in enumerate(pending, start=1):
         add(
@@ -3617,7 +3517,28 @@ def bulk_upload_clean_modelscope_sessions(
             if is_chinese
             else f"[{index}/{len(pending)}] Filter: {session.name}"
         )
-        mocap_files = selected_mocaps[session]
+        statistic = summarize_session(root, session, ffprobe)
+        if is_fault:
+            try:
+                collect_fault_quality(session)
+            except (OSError, ValueError, TypeError) as exc:
+                excluded.append(f"{session}: {exc}")
+                yield render()
+                continue
+        elif not session_has_clean_frame_counts(statistic):
+            excluded.append(f"{session}: unchecked or frame-count difference")
+            yield render()
+            continue
+        try:
+            mocap_files = default_modelscope_mocap_files(session)
+        except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
+            excluded.append(f"{session}: {exc}")
+            yield render()
+            continue
+        if not mocap_files:
+            excluded.append(f"{session}: no default-selected BVH/CSV/TRC/MP4 Mocap file")
+            yield render()
+            continue
         key = (primitive, session_id)
         is_replacement = key in remote_keys
         session_date, date_is_automatic = resolve_session_upload_date(
@@ -3634,10 +3555,8 @@ def bulk_upload_clean_modelscope_sessions(
                 is_replacement=is_replacement,
                 upload_date=session_date,
                 upload_date_is_automatic=date_is_automatic,
-                quality_target=session_targets[session],
             )
         )
-        decisions[session] = {"upload_status": "pending", "detail": "补传/更新" if is_replacement else "新增"}
         yield render()
 
     replacement_count = sum(1 for item in candidates if item.is_replacement)
@@ -3664,11 +3583,6 @@ def bulk_upload_clean_modelscope_sessions(
         )
     for reason in excluded:
         add(f"- {reason}")
-    for session, _, _ in pending:
-        if session not in decisions:
-            decisions[session] = {"upload_status": "excluded", "detail": next(
-                (reason for reason in excluded if reason.startswith(f"{session}:")), "未通过筛选")}
-    save_results()
     yield render()
     if not candidates:
         add(
@@ -3680,13 +3594,13 @@ def bulk_upload_clean_modelscope_sessions(
         return
 
     batches = group_batch_upload_candidates(candidates, resolved_batch_size)
+    run_id = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")
     event_queue: queue.Queue[str] = queue.Queue()
 
     def task_progress(scope: str):
         return lambda message: event_queue.put(f"[{scope}] {message}")
 
     def prepare_batch(batch_index: int, items: list[BatchUploadCandidate]):
-        is_fault = items[0].quality_target == "fault"
         staged_root = root / "_modelscope_dataset" / "batches" / run_id / f"batch_{batch_index:04d}"
         if is_fault:
             staged_root = (
@@ -3706,20 +3620,14 @@ def bulk_upload_clean_modelscope_sessions(
             scope = f"prepare {batch_index}/{len(batches)} {item_index}/{len(items)}"
             event_queue.put(f"[{scope}] {primitive}/{session_id} -> {staged_root}")
             try:
-                if local_reports[session].get("source_signature") != source_signature(session):
-                    raise ValueError(f"Source changed since integrity check: {session}")
                 stage_session(
                     session,
                     primitive,
                     dataset_root=staged_root,
                     mocap_files=item.mocap_files,
                     progress=task_progress(scope),
-                    quality_target=item.quality_target,
-                    integrity_report=local_reports[session],
-                    inspection_mocap_ratio=ratio,
+                    **({"quality_target": "fault"} if is_fault else {}),
                 )
-                if local_reports[session].get("source_signature") != source_signature(session):
-                    raise ValueError(f"Source changed during staging: {session}")
                 prepared.append(item)
             except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
                 failures.append(f"{primitive}/{session_id}: {exc}")
@@ -3749,16 +3657,14 @@ def bulk_upload_clean_modelscope_sessions(
         items: list[BatchUploadCandidate],
     ):
         batch_upload_date = items[0].upload_date
-        target = items[0].quality_target
-        connection = connections[target]
-        if any(item.upload_date != batch_upload_date or item.quality_target != target for item in items):
-            return ValueError(f"Upload batch {batch_index} contains multiple dates or repositories.")
+        if any(item.upload_date != batch_upload_date for item in items):
+            return ValueError(f"Upload batch {batch_index} contains multiple upload dates.")
         attempts = SEQUENTIAL_UPLOAD_RETRIES + 1
         for attempt in range(1, attempts + 1):
             scope = f"upload {batch_index}/{len(batches)} attempt {attempt}/{attempts}"
             event_queue.put(
                 f"[{scope}] {len(items)} Session(s), date={batch_upload_date}, "
-                f"workers={workers_label}, target={target} ({connection.settings.repo_id})"
+                f"workers={workers_label}"
             )
             try:
                 upload_staged_dataset(
@@ -3824,10 +3730,6 @@ def bulk_upload_clean_modelscope_sessions(
             failed_items += len(prepare_failures)
             for failure in prepare_failures:
                 add(f"- preparation failed: {failure}")
-            for item in batches[batch_index - 1]:
-                if item not in prepared:
-                    decisions[item.session] = {"upload_status": "prepare_failed", "detail": "; ".join(prepare_failures)}
-            save_results()
 
             next_future = None
             if batch_index < len(batches):
@@ -3848,8 +3750,6 @@ def bulk_upload_clean_modelscope_sessions(
                             f"{len(prepared)} Session(s): {upload_error}"
                         )
                     )
-                    for item in prepared:
-                        decisions[item.session] = {"upload_status": "upload_failed", "detail": str(upload_error)}
                 else:
                     completed_replacements += sum(1 for item in prepared if item.is_replacement)
                     completed_new += sum(1 for item in prepared if not item.is_replacement)
@@ -3861,9 +3761,6 @@ def bulk_upload_clean_modelscope_sessions(
                             f"{len(prepared)} Session(s)."
                         )
                     )
-                    for item in prepared:
-                        decisions[item.session] = {"upload_status": "verified", "detail": "上传并校验通过"}
-                save_results()
             if next_future is not None:
                 prepared_future = next_future
             yield render()

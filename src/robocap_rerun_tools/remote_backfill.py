@@ -32,7 +32,10 @@ def reconcile_staged_sessions(staged, remote_entries, *, api, repository, revisi
         directory = staged.dataset_root / remote_path
         manifest_path = directory / "manifest.json"
         local = json.loads(manifest_path.read_text(encoding="utf-8"))
-        remote_files = publisher._list_remote_session_files(api, repository, revision, remote_path)
+        remote_hashes = {}
+        remote_files = publisher._list_remote_session_files(
+            api, repository, revision, remote_path, digests=remote_hashes,
+        )
         manifest_key = f"{remote_path}/manifest.json"
         remote = {}
         if remote_files.get(manifest_key, 0):
@@ -102,16 +105,18 @@ def reconcile_staged_sessions(staged, remote_entries, *, api, repository, revisi
                 )
             # Establish exact retained bytes before uploading, even for old manifests
             # without hashes. Only files absent locally require this download.
-            downloaded = publisher._remote_read_with_retries(
-                lambda path=path: api.download_file(
-                    repository, "dataset", path, revision=revision, force=True
+            digest = remote_hashes.get(path)
+            if digest is None:
+                downloaded = publisher._remote_read_with_retries(
+                    lambda path=path: api.download_file(
+                        repository, "dataset", path, revision=revision, force=True
+                    )
                 )
-            )
-            downloaded = Path(downloaded)
-            digest = file_digest(downloaded)
-            if downloaded.stat().st_size != expected or (
-                record.get("sha256") and record["sha256"] != digest
-            ):
+                downloaded = Path(downloaded)
+                if downloaded.stat().st_size != expected:
+                    raise publisher.ModelScopePublisherError(f"Remote-only file size mismatch: {path}")
+                digest = file_digest(downloaded)
+            if record.get("sha256") and record["sha256"] != digest:
                 raise publisher.ModelScopePublisherError(f"Remote-only file hash mismatch: {path}")
             record["sha256"] = digest
             record["retained_remote"] = True

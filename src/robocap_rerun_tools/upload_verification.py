@@ -32,9 +32,11 @@ def prepare_inventory(staged, progress, *, retained=None):
     retained = retained or {}
     paths = {staged.readme_path}
     declared_hashes = {}
+    manifests = {}
     for session_path in staged.session_paths:
         directory = staged.dataset_root / session_path
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        manifests[directory / "manifest.json"] = manifest
         for record in manifest["files"]:
             relative = publisher._manifest_relative_path(record["packaged_as"], "packaged_as")
             path = directory / relative
@@ -62,6 +64,19 @@ def prepare_inventory(staged, progress, *, retained=None):
         if path in declared_hashes and declared_hashes[path] != digest:
             raise UploadVerificationError(f"Staged hash differs from manifest: {path}")
         inventory[relative] = {"size": before.st_size, "sha256": digest}
+    for path, manifest in manifests.items():
+        changed = False
+        for record in manifest["files"]:
+            relative = (path.parent / record["packaged_as"]).relative_to(staged.dataset_root).as_posix()
+            digest = inventory[relative]["sha256"]
+            if record.get("sha256") != digest:
+                record["sha256"] = digest
+                changed = True
+        if changed:
+            path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            inventory[path.relative_to(staged.dataset_root).as_posix()] = {
+                "size": path.stat().st_size, "sha256": file_digest(path),
+            }
     return inventory
 
 

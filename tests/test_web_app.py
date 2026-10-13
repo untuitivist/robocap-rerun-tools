@@ -406,7 +406,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
 
     inspect_commands = [command for command in commands if command[0] == "inspect"]
     assert inspect_commands == []
-    assert set(stub_batch_checks) == {uploaded, problem, clean_one, clean_two}
+    assert stub_batch_checks == []  # Upload does not run the independent full-content audit.
     assert [(call[0], call[1]) for call in staged_calls] == [
         (clean_two.resolve(), "A04"),
         (clean_one.resolve(), "P03"),
@@ -423,7 +423,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     assert "已上传跳过：1" in output
     assert "P01/session-uploaded" in output
     assert "P03/session-clean-one: 远端不完整，将重新上传" in output
-    assert "session-problem: 不属于本次选择的数据集" in output
+    assert "session-problem: unchecked or frame-count difference" in output
     assert "批次 2 上传或校验未通过，跳过 1 个 Session" in output
     assert "批量处理完成：新增 1；替换 0；失败跳过 1；已上传跳过 1；本地排除 1" in output
 
@@ -596,7 +596,7 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
     )
 
     assert len(commands) == (1 if rebuild else 0)
-    assert stub_batch_checks == [session]
+    assert stub_batch_checks == []
     assert len(stage_calls) == 1
     assert stage_calls[0][0:2] == (session.resolve(), "P01")
     assert len(upload_calls) == 1

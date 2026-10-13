@@ -267,22 +267,16 @@ def test_local_issues_are_durable_and_unknown_requirements_do_not_block(tmp_path
     assert blocks_normal_upload({"errors": 0, "checks": [{"state": "changed"}]})
 
 
-def test_batch_records_incomplete_source_without_contacting_remote(tmp_path, monkeypatch):
+def test_independent_inspection_records_incomplete_source(tmp_path, monkeypatch):
     from test_session_integrity import full_session
 
-    from robocap_rerun_tools import web_app
+    from robocap_rerun_tools.session_integrity import audit_session, save_integrity
 
     source = full_session(tmp_path / "raw", monkeypatch)
     body = next(source.glob("mocap*/Body0.csv"))
     body.write_bytes(b"")
-    monkeypatch.setattr(
-        publisher, "connect_modelscope", lambda: pytest.fail("Must not upload incomplete data")
-    )
-    output = list(web_app.bulk_upload_clean_modelscope_sessions(
-        str(source), 8, False, "中文", quality_target="normal"
-    ))[-1]
-    assert "不属于本次选择的数据集" in output
-    report = next((source / "_reports").glob("batch_upload_*/issues.csv"))
-    assert "Body0.csv" in report.read_text(encoding="utf-8")
-    assert "zero_byte" in report.read_text(encoding="utf-8")
+    report = audit_session(source, progress=lambda _: None)
+    save_integrity(source, report)
+    assert any(row["path"].endswith("Body0.csv") and row["state"] == "zero_byte"
+               for row in report["checks"])
     assert integrity_summary(source)[0] == "failed"

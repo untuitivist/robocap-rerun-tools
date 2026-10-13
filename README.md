@@ -478,7 +478,10 @@ robocap-rerun modelscope-auth
 ```
 
 Prepare one session. The staging root is automatically `<session parent>/_modelscope_dataset`; this
-regenerates the inspection HTML, copies full-session video byte-for-byte, removes local absolute
+uses frame/timestamp inspection without automatic full video decoding or content scanning.
+Lightweight selected-file existence, empty-file and pending database-log checks remain, as do
+remote manifest/size checks and post-upload verification/repair. Full inspection is independent.
+Staging copies full-session video byte-for-byte, removes local absolute
 paths from the copied report, and updates the dataset-level metadata. ModelScope staging rejects
 lossy proxy compression. Frame-aligned intersection staging uses lossless video encoding only when
 frame-accurate cropping requires it. Every new metadata row and Session manifest

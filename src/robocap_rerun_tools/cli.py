@@ -1774,7 +1774,44 @@ def command_export(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_inspect_upload(args: argparse.Namespace) -> int:
+    files = inspection_files(args.session_dir, args.segment)
+    ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
+    total_steps = len(files) + 1
+    print(f"Inspection discovered {len(files)} source files.")
+    summaries = []
+    for index, path in enumerate(files, start=1):
+        try:
+            label = path.relative_to(args.session_dir)
+        except ValueError:
+            label = path
+        print(f"[{index}/{total_steps}] inspect {label}")
+        summaries.extend(summarize_path(path, ffprobe))
+    out_dir = args.output or inspection_output_dir(args.session_dir, args.segment)
+    fps_records = [
+        record
+        for item in summaries
+        if (record := fps_record_from_summary(item, args.session_dir)) is not None
+    ]
+    ratio_estimate = estimate_frame_ratio(fps_records, "timestamp anomaly inspection")
+    from .timestamp_anomaly import write_timestamp_anomaly_report
+
+    print(f"[{total_steps}/{total_steps}] write timestamp anomaly report")
+    anomaly_report = write_timestamp_anomaly_report(
+        args.session_dir,
+        args.segment,
+        summaries,
+        out_dir,
+        ratio_estimate,
+        args.mocap_ratio,
+    )
+    print(f"Wrote timestamp anomaly inspection to {anomaly_report}")
+    return 0
+
+
 def command_inspect(args: argparse.Namespace) -> int:
+    if getattr(args, "upload_check", False):
+        return command_inspect_upload(args)
     out_dir = args.output or inspection_output_dir(args.session_dir, args.segment)
     anomaly_report, _ = inspect_session_report(
         args.session_dir, args.segment, out_dir, args.ffprobe, args.ffmpeg,
@@ -1909,7 +1946,7 @@ def command_package_data(args: argparse.Namespace) -> int:
 def refresh_modelscope_inspection(args: argparse.Namespace) -> None:
     if not args.refresh_inspection or args.dry_run:
         return
-    command_inspect(
+    command_inspect_upload(
         argparse.Namespace(
             session_dir=args.session_dir,
             segment=args.segment,
@@ -1928,21 +1965,8 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
     )
 
     try:
-        try:
-            refresh_modelscope_inspection(args)
-        except (OSError, ValueError) as exc:
-            if getattr(args, "quality_target", "normal") != "fault":
-                raise
-            print(f"Frame inspection unavailable; source errors will still be recorded: {exc}")
+        refresh_modelscope_inspection(args)
         resolved_ffprobe = resolve_ffprobe(args.ffprobe, args.ffmpeg)
-        from .session_integrity import audit_session, saved_integrity
-
-        integrity = saved_integrity(args.session_dir, args.segment)
-        if integrity is None or integrity.get("status") == "stale":
-            integrity = audit_session(
-                args.session_dir, segment=args.segment, ffmpeg=args.ffmpeg,
-                ffprobe=resolved_ffprobe,
-            )
         resolved_ratio: float | None = None
         ratio_estimate = None
         if args.aligned_intersection:
@@ -1980,8 +2004,6 @@ def command_modelscope_stage(args: argparse.Namespace) -> int:
             reference_video_label=args.reference_video,
             dry_run=args.dry_run,
             quality_target=getattr(args, "quality_target", "normal"),
-            inspection_mocap_ratio=getattr(args, "inspection_mocap_ratio", 8),
-            integrity_report=integrity,
         )
     except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
         print(f"ModelScope staging failed: {exc}", file=sys.stderr)
@@ -2107,6 +2129,8 @@ def build_parser() -> argparse.ArgumentParser:
             "4 means 120 FPS and 4*(n+1)."
         ),
     )
+    inspect_parser.add_argument("--upload-check", action="store_true",
+                                help="Use frame/timestamp checks for upload preparation.")
     inspect_parser.set_defaults(func=command_inspect)
 
     offset_parser = sub.add_parser(
