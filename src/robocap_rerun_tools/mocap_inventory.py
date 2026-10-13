@@ -39,20 +39,20 @@ SCAN_CATEGORIES = (
 )
 
 
-def object_instance_name(name: str) -> str:
-    """Normalize spelling/separators; retain explicit instance numbers, default to zero."""
+def object_category_name(name: str) -> str:
+    """Normalize scan categories, dropping only the trailing instance number."""
     match = re.fullmatch(r"([A-Za-z][A-Za-z _-]*?)(\d*)", name.strip())
     if match is None:
         raise ValueError(f"Invalid object instance name: {name!r}")
     words = re.split(r"[ _-]+", match[1].strip())
     category = "".join(word[0].upper() + word[1:] for word in words)
     category = next((known for known in SCAN_CATEGORIES if known.casefold() == category.casefold()), category)
-    return category + (match[2] or "0")
+    return category
 
 
 def object_names(names: Iterable[str]) -> list[str]:
-    """Keep actual prop instances, excluding people, head trackers and unnamed tracks."""
+    """Publish unique scan categories, excluding people, trackers and unnamed tracks."""
     return sorted(
-        {object_instance_name(name) for name in names if name_category(name.strip()) == "object_candidate"},
+        {object_category_name(name) for name in names if name_category(name.strip()) == "object_candidate"},
         key=str.casefold,
     )

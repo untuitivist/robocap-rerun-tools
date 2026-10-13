@@ -955,11 +955,10 @@ and matching manifests in one commit without moving Session directories or uploa
 again.
 
 The dataset index and Session manifest also contain `mocap_rigid_names`: the actual exported
-entity names. `objects` contains only actual prop instance names, for example `["BigBox0", "BigBox1"]`.
-Scan bundles are stored under `3dobjs/`; `3dobjs/index.json` maps each object name to its bundle.
-Several numbered instances may share one scan. Instances are never renumbered or inferred.
-Scan categories use PascalCase without spaces or bracket lists (`OpenBox.objcap`). Object names
-use PascalCase plus an instance number (`OpenBox0`); unnumbered objects default to instance 0.
+entity names. `objects` contains deduplicated prop scan categories, for example `["BigBox", "Box"]`.
+Trailing instance numbers are removed: `Box0`, `Box1` and `Box6` all map to `Box`.
+Scan bundles are stored under `3dobjs/`; `3dobjs/index.json` maps each category to its bundle.
+Scan categories use PascalCase without spaces, bracket lists or instance numbers (`OpenBox.objcap`).
 Original Mocap filenames and `mocap_rigid_names` remain unchanged.
 The `mocap_rigid_names` field retains all
 entity labels (for example `Body0`, `Tracker0`, `BigBox0`), deduplicated across formats. No objects
