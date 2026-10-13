@@ -222,6 +222,7 @@ def test_stage_session_uses_prepared_hierarchy_and_portable_report(
             "device_ids": {"main": None, "left": None, "right": None},
             "file_count": 3,
             "mocap_rigid_names": ["motion"],
+            "objects": ["motion"],
             "packaged_bytes": staged.total_bytes,
         }
     ]

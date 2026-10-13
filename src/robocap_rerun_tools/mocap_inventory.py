@@ -29,3 +29,11 @@ def manifest_mocap_names(records) -> list[str]:
         if "/" in record["packaged_as"]
         and record["packaged_as"].partition("/")[0].casefold().startswith("mocap")
     )
+
+
+def object_names(names: Iterable[str]) -> list[str]:
+    """Keep actual prop instances, excluding people, head trackers and unnamed tracks."""
+    return sorted(
+        {name for name in names if name_category(name) == "object_candidate"},
+        key=str.casefold,
+    )

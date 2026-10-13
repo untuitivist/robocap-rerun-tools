@@ -33,7 +33,7 @@ from .dataset_intersection import (
     stage_aligned_file,
 )
 from .dataset_statistics import discover_segment_references, probe_video_duration
-from .mocap_inventory import manifest_mocap_names
+from .mocap_inventory import manifest_mocap_names, object_names
 from .mocap_metadata import (
     COMPACT_ACTION_ID_PATTERN,
     MocapCaptureMetadata,
@@ -955,6 +955,10 @@ and matching manifests in one commit without moving Session directories or uploa
 again.
 
 The dataset index and Session manifest also contain `mocap_rigid_names`: the actual exported
+entity names. `objects` contains only actual prop instance names, for example `["BigBox0", "BigBox1"]`.
+Scan bundles are stored under `3dobjs/`; `3dobjs/index.json` maps each object name to its bundle.
+Several numbered instances may share one scan. Instances are never renumbered or inferred.
+The `mocap_rigid_names` field retains all
 entity labels (for example `Body0`, `Tracker0`, `BigBox0`), deduplicated across formats. No objects
 or extra HH bodies are inferred. Backfills retain existing Session paths and remote-only files,
 merge manifests, and verify uploaded bytes. Local structural/content failures are recorded before
@@ -1524,6 +1528,7 @@ def stage_session(
         "duration_s": duration_s,
         "device_ids": device_ids,
         "mocap_rigid_names": rigid_names,
+        "objects": object_names(rigid_names),
         "options": {
             "raw_video": raw_video,
             "proxy_height": proxy_height,
@@ -1564,6 +1569,7 @@ def stage_session(
         "device_ids": device_ids,
         "file_count": len(file_records),
         "mocap_rigid_names": rigid_names,
+        "objects": object_names(rigid_names),
         "packaged_bytes": total_bytes,
     }
     if mocap_capture is not None:
