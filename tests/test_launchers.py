@@ -84,3 +84,27 @@ def test_uv_installer_outcomes(command: str, code: int, message: str) -> None:
     assert message in result.stdout
     if code:
         assert "VPN/proxy" in result.stdout
+
+
+@pytest.mark.parametrize(("command", "code", "message"), [
+    ("exit 0", 0, "uv installer completed"),
+    ("exit 7", 1, "installation failed"),
+    ("sleep 60", 1, "installation timed out"),
+])
+def test_shell_uv_installer_outcomes(command: str, code: int, message: str) -> None:
+    shell = shutil.which("sh")
+    if not shell and os.name == "nt" and shutil.which("git"):
+        candidate = Path(shutil.which("git")).parent.parent / "bin" / "sh.exe"
+        if candidate.is_file():
+            shell = str(candidate)
+    if not shell:
+        pytest.skip("POSIX shell required")
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [shell, "scripts/install_uv.sh", "1", command], cwd=root,
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == code, result.stdout + result.stderr
+    assert message in result.stdout
+    if code:
+        assert "VPN/proxy" in result.stdout

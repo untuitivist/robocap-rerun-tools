@@ -30,9 +30,16 @@ fi
 unset ROBOCAP_LAUNCHER_UPDATED
 
 if ! command -v uv >/dev/null 2>&1; then
-  echo "uv was not found on PATH."
-  echo "Install uv first, then run ./start_web.sh again."
-  exit 1
+  PATH="${UV_INSTALL_DIR:-${XDG_BIN_HOME:-$HOME/.local/bin}}:$PATH"
+  export PATH
+fi
+if ! command -v uv >/dev/null 2>&1; then
+  echo "uv was not found. Installing uv automatically..."
+  sh "$REPO_DIR/scripts/install_uv.sh" || exit 1
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "ERROR: uv is still not on PATH. Open a new terminal and run ./start_web.sh again."
+    exit 1
+  fi
 fi
 
 echo "============================================================"

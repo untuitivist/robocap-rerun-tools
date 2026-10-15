@@ -172,6 +172,8 @@ start_web.bat
 ```
 
 On Windows, missing `uv` is installed automatically using the official PowerShell installer.
+Linux also installs missing `uv` automatically using the official shell installer;
+this requires curl or wget and the coreutils timeout command.
 Installation has a 120-second timeout; failure prints a VPN/proxy retry hint and exits.
 Successful installation continues in the same terminal.
 

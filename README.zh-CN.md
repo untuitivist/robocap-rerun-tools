@@ -225,6 +225,7 @@ uv run robocap-rerun --help
 ```
 
 Windows 启动脚本检测不到 `uv` 时，会自动运行官方 PowerShell 安装脚本。
+Linux 启动脚本也会自动安装缺失的 `uv`，需要 `curl` 或 `wget`，以及 coreutils 的 `timeout` 命令。
 安装最多等待 120 秒；失败或超时会提示开启代理后重试并退出，成功后继续启动。
 
 启动脚本的 Git 网络更新最多等待 30 秒，禁用交互认证；更新失败或超时会警告并继续使用本地代码启动。
