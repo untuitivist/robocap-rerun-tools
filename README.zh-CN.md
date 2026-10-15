@@ -192,7 +192,7 @@ cd robocap-rerun-tools
 start_web.bat
 ```
 
-`start_web.bat` 会自动执行 `uv sync --extra web`：创建 `.venv`，按需下载兼容的 Python 3.11+，
+`start_web.bat` 会自动执行 `uv sync --python 3.12 --extra web`：创建 `.venv`，按需下载 Python 3.12，
 安装全部 Python 依赖，并打开 `http://127.0.0.1:7860`。首次同步还会下载约 87 MiB、同时包含
 FFmpeg 和 FFprobe 的 `ffmpeg-binaries-compat` wheel。因此不需要单独安装 Python/FFmpeg，
 也不需要管理员权限、激活虚拟环境或修改系统 `PATH`。
@@ -210,7 +210,9 @@ cd robocap-rerun-tools
 ./start_web.sh
 ```
 
-`start_web.sh` 与 Windows 启动器一样会执行 `uv sync --extra web`，随后使用
+`.python-version` 同样将直接运行 uv 时的默认 Python 固定为 3.12，避免自动选择较新版本后触发依赖源码编译。
+
+`start_web.sh` 与 Windows 启动器一样会执行 `uv sync --python 3.12 --extra web`，随后使用
 `.venv/bin/robocap-rerun` 启动 Web，并保持前台运行以打印日志。只有确认环境已经同步时才使用
 `ROBOCAP_SKIP_SYNC=1 ./start_web.sh`。通过 Git clone 会保留可执行权限；如果使用不保留权限的源码
 压缩包，首次运行前执行一次 `chmod +x start_web.sh`。

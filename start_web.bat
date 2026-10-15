@@ -65,7 +65,7 @@ echo ============================================================
 
 if /i not "%ROBOCAP_SKIP_SYNC%"=="1" (
   echo Synchronizing Python, Web, FFmpeg, and FFprobe dependencies with uv...
-  uv sync --extra web
+  uv sync --python 3.12 --extra web
   if errorlevel 1 (
     echo uv sync failed.
     exit /b 1

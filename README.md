@@ -183,7 +183,8 @@ the launcher reloads and runs `uv sync --extra web`. Missing Git, connection fai
 print a warning and continue startup using local code. Set `ROBOCAP_SKIP_UPDATE=1` to bypass updates.
 Initial setup without a local `.venv` Python also skips updates and proceeds to dependency setup;
 local changes are never automatically stashed, discarded, or merged. Run from a Git clone with
-Git available on `PATH`. The dependency sync creates `.venv`, downloads a compatible Python 3.11+
+Git available on `PATH`. The launchers explicitly select Python 3.12, also pinned in `.python-version`
+for direct uv commands. The dependency sync creates `.venv`, downloads Python 3.12
 interpreter when needed, installs all Python dependencies, and opens the Web UI on an automatically
 selected available localhost port. Each launcher instance selects its own port, so multiple Web UIs
 can run at the same time. The actual URL is printed in that instance's console and opened in the

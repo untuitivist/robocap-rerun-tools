@@ -57,7 +57,7 @@ echo "============================================================"
 
 if [ "${ROBOCAP_SKIP_SYNC:-0}" != "1" ]; then
   echo "Synchronizing Python, Web, FFmpeg, and FFprobe dependencies with uv..."
-  if ! uv sync --extra web; then
+  if ! uv sync --python 3.12 --extra web; then
     echo "uv sync failed."
     exit 1
   fi
