@@ -171,10 +171,11 @@ cd robocap-rerun-tools
 start_web.bat
 ```
 
-`start_web.bat` first runs `git pull --ff-only` against the current branch's configured upstream,
-then reloads the launcher and runs `uv sync --extra web`. If Git is unavailable or the update
-fails (including connection errors or timeouts reported by Git), it prints a warning and continues
-startup using local code;
+The launchers first fetch updates with a 30-second network timeout and interactive authentication
+disabled, then fast-forward the current branch to its configured upstream. After a successful update,
+the launcher reloads and runs `uv sync --extra web`. Missing Git, connection failures, or timeouts
+print a warning and continue startup using local code. Set `ROBOCAP_SKIP_UPDATE=1` to bypass updates.
+Initial setup without a local `.venv` Python also skips updates and proceeds to dependency setup;
 local changes are never automatically stashed, discarded, or merged. Run from a Git clone with
 Git available on `PATH`. The dependency sync creates `.venv`, downloads a compatible Python 3.11+
 interpreter when needed, installs all Python dependencies, and opens the Web UI on an automatically

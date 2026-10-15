@@ -12,12 +12,13 @@ export NO_PROXY no_proxy
 
 cd "$REPO_DIR" || exit 1
 
-if [ "${ROBOCAP_LAUNCHER_UPDATED:-0}" != "1" ]; then
+if [ "${ROBOCAP_LAUNCHER_UPDATED:-0}" != "1" ] && [ "${ROBOCAP_SKIP_UPDATE:-0}" != "1" ]; then
   if ! command -v git >/dev/null 2>&1; then
     echo "WARNING: Git was not found. Skipping update and starting with local code."
+  elif [ ! -x "$PYTHON_EXE" ]; then
+    echo "WARNING: Local Python is not ready. Skipping update for initial setup."
   else
-    echo "Checking for code updates with git pull --ff-only..."
-    if git -c merge.autostash=false -c rebase.autostash=false pull --ff-only --no-rebase; then
+    if "$PYTHON_EXE" "$REPO_DIR/scripts/startup_update.py"; then
       # Reload the launcher in case the pull updated this file.
       export ROBOCAP_LAUNCHER_UPDATED=1
       exec sh "$REPO_DIR/start_web.sh"

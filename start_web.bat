@@ -10,13 +10,17 @@ set "no_proxy=%NO_PROXY%"
 cd /d "%REPO_DIR%"
 
 if "%ROBOCAP_LAUNCHER_UPDATED%"=="1" goto updated
+if "%ROBOCAP_SKIP_UPDATE%"=="1" goto updated
 where git >nul 2>&1
 if errorlevel 1 (
   echo WARNING: Git was not found. Skipping update and starting with local code.
   goto updated
 )
-echo Checking for code updates with git pull --ff-only...
-git -c merge.autostash=false -c rebase.autostash=false pull --ff-only --no-rebase
+if not exist "%REPO_DIR%.venv\Scripts\python.exe" (
+  echo WARNING: Local Python is not ready. Skipping update for initial setup.
+  goto updated
+)
+"%REPO_DIR%.venv\Scripts\python.exe" "%REPO_DIR%scripts\startup_update.py"
 if errorlevel 1 (
   echo WARNING: Git update failed. Skipping update and starting with local code.
   goto updated
