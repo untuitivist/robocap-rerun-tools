@@ -63,3 +63,24 @@ def test_no_upstream_returns_failure_without_network(tmp_path: Path) -> None:
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 1
     assert "No configured upstream" in result.stdout
+
+
+@pytest.mark.parametrize(("command", "code", "message"), [
+    ("exit 0", 0, "uv installer completed"),
+    ("exit 7", 1, "installation failed"),
+    ("Start-Sleep -Seconds 60", 1, "installation timed out"),
+])
+def test_uv_installer_outcomes(command: str, code: int, message: str) -> None:
+    shell = shutil.which("powershell")
+    if os.name != "nt" or not shell:
+        pytest.skip("Windows PowerShell required")
+    helper = Path(__file__).resolve().parents[1] / "scripts" / "install_uv.ps1"
+    result = subprocess.run(
+        [shell, "-NoProfile", "-ExecutionPolicy", "ByPass", "-File", str(helper),
+         "-TimeoutSeconds", "2", "-InstallerCommand", command],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == code, result.stdout + result.stderr
+    assert message in result.stdout
+    if code:
+        assert "VPN/proxy" in result.stdout

@@ -34,12 +34,24 @@ exit /b %ERRORLEVEL%
 set "ROBOCAP_LAUNCHER_UPDATED="
 
 where uv >nul 2>&1
+if not errorlevel 1 goto uv_ready
+rem Also recognize an existing install not yet visible in this CMD's PATH.
+set "PATH=%USERPROFILE%\.local\bin;%UV_INSTALL_DIR%;%PATH%"
+where uv >nul 2>&1
+if not errorlevel 1 goto uv_ready
+echo uv was not found. Installing uv automatically...
+powershell -NoProfile -ExecutionPolicy ByPass -File "%REPO_DIR%scripts\install_uv.ps1"
 if errorlevel 1 (
-  echo uv was not found on PATH.
-  echo Install uv first, then run start_web.bat again.
+  echo ERROR: uv could not be installed. Enable your VPN/proxy and retry.
+  exit /b 1
+)
+where uv >nul 2>&1
+if errorlevel 1 (
+  echo ERROR: uv is still not on PATH. Open a new CMD window and run start_web.bat again.
   exit /b 1
 )
 
+:uv_ready
 echo ============================================================
 echo Robocap Rerun Tools web launcher
 echo Repo: %CD%

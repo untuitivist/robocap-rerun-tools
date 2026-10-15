@@ -171,6 +171,10 @@ cd robocap-rerun-tools
 start_web.bat
 ```
 
+On Windows, missing `uv` is installed automatically using the official PowerShell installer.
+Installation has a 120-second timeout; failure prints a VPN/proxy retry hint and exits.
+Successful installation continues in the same terminal.
+
 The launchers first fetch updates with a 30-second network timeout and interactive authentication
 disabled, then fast-forward the current branch to its configured upstream. After a successful update,
 the launcher reloads and runs `uv sync --extra web`. Missing Git, connection failures, or timeouts
