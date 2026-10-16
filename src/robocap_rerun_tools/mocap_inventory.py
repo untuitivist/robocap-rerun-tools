@@ -65,3 +65,11 @@ def object_instance_name(name: str) -> str:
     category = object_category_name(name)
     suffix = re.search(r"\d+$", name.strip())
     return category + (suffix[0] if suffix else "0")
+
+
+def reconcile_task_objects(expected: Iterable[str], exported: Iterable[str]) -> list[str]:
+    """Use matching exported instances; retain task selections if none match."""
+    selected = object_names(expected)
+    actual = set(object_names(exported))
+    matched = [name for name in selected if name in actual]
+    return matched or selected

@@ -958,7 +958,9 @@ The dataset index and Session manifest also contain `mocap_rigid_names`: the act
 entity names. `objects` contains deduplicated prop instances, for example `["LittleBox0", "LittleBox1", "BigBox0"]`.
 Instance numbers are preserved. Legacy `Box` names normalize to `LittleBox`; `BigBox` stays separate.
 Feishu backfills use the session-task-list selections matched by action ID and collection Session
-index; empty or ambiguous matches are not used to infer objects. Local uploads derive instances
+index. When task instances match exported Mocap instances, only that intersection is published;
+if none match, the task selections are retained. Empty or ambiguous task matches are not inferred.
+Local uploads derive instances
 from exported Mocap names, using suffix `0` for legacy unnumbered names.
 Scan bundles are stored under `3dobjs/`; `3dobjs/index.json` maps each category to its bundle.
 Scan categories use PascalCase without spaces, bracket lists or instance numbers (`OpenBox.objcap`).

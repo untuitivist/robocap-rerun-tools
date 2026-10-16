@@ -1,4 +1,4 @@
-from robocap_rerun_tools.mocap_inventory import object_names
+from robocap_rerun_tools.mocap_inventory import object_names, reconcile_task_objects
 
 
 def test_instances_are_retained_and_duplicates_removed():
@@ -22,3 +22,18 @@ def test_box_alias_does_not_change_other_box_categories():
     assert object_names(["Box0", "LittleBox0", "little box1", "BigBox1", "OpenBox2"]) == [
         "BigBox1", "LittleBox0", "LittleBox1", "OpenBox2",
     ]
+
+
+def test_task_instances_are_restricted_to_matching_exports():
+    assert reconcile_task_objects(
+        [f"Box{i}" for i in range(1, 7)],
+        ["Body0", "Tracker0"] + [f"LittleBox{i}" for i in range(1, 5)],
+    ) == [f"LittleBox{i}" for i in range(1, 5)]
+
+
+def test_task_fallback_when_no_instance_matches():
+    expected = ["LittleBox1", "LittleBox2"]
+    assert reconcile_task_objects(expected, []) == expected
+    assert reconcile_task_objects(expected, ["Body0", "BigBox1"]) == expected
+    assert reconcile_task_objects(expected, ["LittleBox7"]) == expected
+    assert reconcile_task_objects([], ["LittleBox1"]) == []
