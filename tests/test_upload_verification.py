@@ -97,6 +97,10 @@ def run(upload):
         max_workers=2,
         token="secret",
         progress=None,
+        publish_metadata=lambda: api.files.update({"metadata.jsonl": publisher._metadata_document(
+            publisher.merge_metadata_entries(
+                publisher._read_metadata_document(api.files["metadata.jsonl"].decode(), "remote"), entries
+            )).encode()}),
     )
     return json.loads((staged.dataset_root / verification.REPORT_NAME).read_text(encoding="utf-8"))
 
@@ -155,7 +159,7 @@ def test_metadata_repair_preserves_other_sessions(upload):
     rows = [json.loads(line) for line in api.files["metadata.jsonl"].decode().splitlines()]
     assert other in rows
     assert upload[1][0] in rows
-    assert api.uploads[0]["allow_patterns"] == ["metadata.jsonl"]
+    assert not api.uploads  # Metadata repair never falls back to upload_folder.
 
 
 def test_changed_source_is_not_uploaded_as_repair(upload):

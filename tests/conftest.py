@@ -2,6 +2,30 @@ import pytest
 
 
 @pytest.fixture
+def fake_metadata_transport(monkeypatch, tmp_path):
+    """Keep publisher tests offline while executing real index/manifest merge logic."""
+    import glob
+
+    from robocap_rerun_tools import metadata_commit
+
+    def commit(build, *, api, repository, revision, **kwargs):
+        changes = build(revision, lambda path: True)
+        root = tmp_path / "metadata-transaction"
+        root.mkdir(exist_ok=True)
+        for path, data in changes.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        if changes:
+            api.upload_folder(repository, "dataset", root, revision=revision,
+                              allow_patterns=[glob.escape(p) for p in changes])
+        return "test-commit"
+
+    monkeypatch.setattr(metadata_commit, "require_git", lambda: None)
+    monkeypatch.setattr(metadata_commit, "_publish_changes", commit)
+
+
+@pytest.fixture
 def stub_batch_checks(monkeypatch):
     """Isolate batch scheduling tests from media decoding of their placeholder files."""
     from robocap_rerun_tools import batch_completeness

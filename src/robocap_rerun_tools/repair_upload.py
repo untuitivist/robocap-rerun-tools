@@ -276,6 +276,9 @@ def remote_file_path(requested: str, records: dict) -> str:
 
 
 def repair_one(api, settings, request, source, files, output, log):
+    from .metadata_commit import require_git, publish_session_metadata
+
+    require_git()
     destination = request["session_path"]
     manifest_remote = destination + "/manifest.json"
     downloaded = api.download_file(
@@ -365,7 +368,6 @@ def repair_one(api, settings, request, source, files, output, log):
             )
             allow = [destination + "/" + p for p in replacements] + [
                 manifest_remote,
-                "metadata.jsonl",
             ]
             log(
                 f"UPLOAD {destination}: {len(replacements)} replacement files, attempt {attempt + 1}/4"
@@ -400,6 +402,10 @@ def repair_one(api, settings, request, source, files, output, log):
             )
             if saved.get("repair") != manifest["repair"]:
                 raise ValueError("Remote manifest verification failed")
+            publish_session_metadata(
+                [enriched], api=api, repository=settings.repo_id, revision="master",
+                settings=settings, progress=log,
+            )
             latest = [
                 json.loads(line)
                 for line in _download_remote_metadata(api, settings.repo_id, "master").splitlines()

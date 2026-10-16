@@ -1178,7 +1178,7 @@ def test_windows_update_script_preflights_before_stopping_and_fast_forward_pull(
 def test_windows_launcher_syncs_uv_managed_web_and_media_dependencies() -> None:
     script = (web_app.PROJECT_ROOT / "start_web.bat").read_text(encoding="utf-8")
 
-    assert "uv sync --extra web" in script
+    assert "uv sync --python 3.12 --extra web" in script
     assert "uv pip install" not in script
     assert "ffmpeg" in script.lower()
     assert "ffprobe" in script.lower()

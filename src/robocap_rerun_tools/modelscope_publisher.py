@@ -1065,10 +1065,12 @@ to local `_prepared/<primitive_id>/<session_id>/`; the upload operation assigns 
 local-time batch ID to new sessions and moves them into their final `EgoMotionActions/` paths before
 uploading. Existing sessions keep their remote date/path during backfill. `_prepared/` is never uploaded.
 
-Before updating `metadata.jsonl`, the uploader downloads the current remote index and merges it with
-the local rows by `(primitive_id, session_id)`. Updated fields replace matching values; unknown remote
-fields, unrelated batches and `Demo` records remain indexed. The combined manifest retains remote-only
-files, and both uploaded files and metadata are verified after transfer.
+Session files are uploaded and verified first. Then Git merges `metadata.jsonl` against the latest
+remote revision by `(primitive_id, session_id)` and pushes without force. A concurrent commit causes
+a fresh merge and retry, retaining unrelated rows and unknown fields. Git and Git LFS are required.
+All uploading computers must use this version; older uploaders can still overwrite the shared index.
+Different Sessions can upload in parallel; concurrent writes to the same Session are not supported.
+Existing README.md is preserved; a missing card is initialized in the protected metadata commit.
 """
     )
 
@@ -2539,16 +2541,12 @@ def update_remote_mocap_metadata(
                 progress(
                     f"Commit {len(changed)} Session manifest(s) and {METADATA_NAME}."
                 )
-            api.upload_folder(
-                repository,
-                "dataset",
-                upload_root,
-                path_in_repo="",
-                revision=target_revision,
-                commit_message=f"Update Mocap capture metadata for {len(changed)} session(s)",
-                max_workers=max_workers,
-                use_cache=use_cache,
-                disable_tqdm=False,
+            from .metadata_commit import publish_capture_metadata
+
+            publish_capture_metadata(
+                {key: normalized_updates[key] for key in changed}, api=api,
+                repository=repository, revision=target_revision, settings=resolved,
+                progress=progress,
             )
     except ModelScopePublisherError:
         raise
@@ -2610,7 +2608,10 @@ def upload_staged_dataset(
         raise ValueError("Visibility must be private, internal, or public.")
     if max_workers is not None and max_workers < 1:
         raise ValueError("max_workers must be positive.")
+    from .metadata_commit import require_git, publish_session_metadata
+
     try:
+        require_git()
         api = api or _hub_api(resolved)
         username = username or _username(api.whoami())
         exists = api.repo_exists(repository, "dataset")
@@ -2646,7 +2647,6 @@ def upload_staged_dataset(
         allow_patterns = [f"{glob.escape(path)}/**" for path in staged.session_paths]
         if (staged.dataset_root / CALIBRATION_DIR_NAME).is_dir():
             allow_patterns.append(f"{CALIBRATION_DIR_NAME}/**")
-        allow_patterns.extend([DATASET_README_NAME, METADATA_NAME])
         folder_commit_message = commit_message or (
             f"Upload batch {batch_id} with {len(staged.session_paths)} indexed session(s)"
             if batch_id is not None
@@ -2671,16 +2671,12 @@ def upload_staged_dataset(
             staged.dataset_root, local_entries, remote_entries, catalog, progress,
         )
         _write_metadata_entries(staged.dataset_root, local_entries)
-        merged_metadata = _metadata_document(
-            merge_metadata_entries(remote_entries, local_entries)
-        )
         local_metadata = staged.metadata_path.read_text(encoding="utf-8")
         if progress is not None:
             progress(
-                f"Preparing atomic upload: retained {len(remote_entries)} remote row(s), "
-                f"merged {len(local_entries)} local row(s) into {METADATA_NAME}."
+                f"Uploading {len(local_entries)} Session(s); shared metadata will be merged "
+                "with conflict protection after file verification."
             )
-        staged.metadata_path.write_text(merged_metadata, encoding="utf-8", newline="\n")
         try:
             from .upload_verification import prepare_inventory, verify_and_repair
 
@@ -2700,8 +2696,21 @@ def upload_staged_dataset(
             verify_and_repair(
                 staged, local_entries, inventory, api=api, repository=repository,
                 revision=target_revision, max_workers=max_workers, token=resolved.token,
-                progress=progress,
+                progress=progress, check_metadata=False,
             )
+            metadata_revision = publish_session_metadata(
+                local_entries, api=api, repository=repository, revision=target_revision,
+                settings=resolved, progress=progress, initial_readme=staged.readme_path,
+            )
+            from .upload_verification import REPORT_NAME as verification_report_name
+
+            report_path = staged.dataset_root / verification_report_name
+            if report_path.is_file():
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                report.update(status="verified", metadata_revision=metadata_revision)
+                report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            if progress:
+                progress(f"Shared metadata published safely: {metadata_revision}")
         finally:
             staged.metadata_path.write_text(local_metadata, encoding="utf-8", newline="\n")
         if isinstance(commit_result, list) and len(commit_result) > 1 and progress is not None:

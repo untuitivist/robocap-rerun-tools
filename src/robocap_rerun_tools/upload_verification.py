@@ -30,7 +30,7 @@ def file_digest(path: Path) -> str:
 
 def prepare_inventory(staged, progress, *, retained=None):
     retained = retained or {}
-    paths = {staged.readme_path}
+    paths = set()
     declared_hashes = {}
     manifests = {}
     for session_path in staged.session_paths:
@@ -119,7 +119,8 @@ def _remote_inventory(api, repository, revision, staged):
 
 
 def verify_and_repair(
-    staged, entries, inventory, *, api, repository, revision, max_workers, token, progress
+    staged, entries, inventory, *, api, repository, revision, max_workers, token, progress,
+    check_metadata=True, publish_metadata=None,
 ):
     report_path = staged.dataset_root / REPORT_NAME
     report = {
@@ -145,7 +146,8 @@ def verify_and_repair(
     for attempt in range(REPAIR_RETRIES + 1):
         issues = {}
         log(
-            f"[upload verification {attempt + 1}/{REPAIR_RETRIES + 1}] Checking {len(inventory)} files and metadata"
+            f"[upload verification {attempt + 1}/{REPAIR_RETRIES + 1}] Checking {len(inventory)} files"
+            + (" and metadata" if check_metadata else " before metadata publication")
         )
         try:
             remote = _remote_inventory(api, repository, revision, staged)
@@ -175,9 +177,11 @@ def verify_and_repair(
                 log(
                     f"[upload verification {number}/{len(inventory)}] {path}: {issues.get(path, 'OK')}"
                 )
-            document = publisher._download_remote_metadata(api, repository, revision)
-            remote_entries = publisher._read_metadata_document(document, "remote metadata")
-            for entry in entries:
+            remote_entries = []
+            if check_metadata:
+                document = publisher._download_remote_metadata(api, repository, revision)
+                remote_entries = publisher._read_metadata_document(document, "remote metadata")
+            for entry in entries if check_metadata else ():
                 matches = [
                     row
                     for row in remote_entries
@@ -204,11 +208,12 @@ def verify_and_repair(
             record["repair_error"] = pending_upload_error
             pending_upload_error = None
         report["rounds"].append(record)
-        report["status"] = "verified" if not issues else "repair_required"
+        report["status"] = ("verified" if check_metadata else "files_verified") if not issues else "repair_required"
         save()
         if not issues:
+            label = "Upload verified" if check_metadata else "Files verified; metadata publication pending"
             log(
-                f"Upload verified: {len(entries)} Session(s), {len(inventory)} files; report: {report_path}"
+                f"{label}: {len(entries)} Session(s), {len(inventory)} files; report: {report_path}"
             )
             return
         unrepairable = [path for path in issues if inventory.get(path, {}).get("remote_only")]
@@ -238,14 +243,12 @@ def verify_and_repair(
                 )
         try:
             if publisher.METADATA_NAME in issues:
-                # Re-read before repair so new, unrelated remote rows are retained.
-                latest = publisher._read_metadata_document(
-                    publisher._download_remote_metadata(api, repository, revision),
-                    "remote metadata",
-                )
-                publisher._write_metadata_entries(
-                    staged.dataset_root, publisher.merge_metadata_entries(latest, entries)
-                )
+                if publish_metadata is None:
+                    raise RuntimeError("Metadata repair requires a conflict-safe publisher.")
+                publish_metadata()
+                failed_paths.remove(publisher.METADATA_NAME)
+            if not failed_paths:
+                continue
             api.upload_folder(
                 repository,
                 "dataset",

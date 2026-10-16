@@ -289,7 +289,8 @@ start_web.bat
 - 内置中文文档
 
 检查/统计与 ModelScope 发布使用相互独立的 Web 任务队列和输出窗口，因此长时间上传时仍可继续
-检查或统计。所有 ModelScope 写操作保持串行，避免远端 `metadata.jsonl` 发生写入竞争。并行任务仍会
+检查或统计。当前 Web 实例的 ModelScope 写操作保持串行；不同电脑上传不同 Session 时，共享索引
+通过 Git 非强制推送及冲突重试保护。并行任务仍会
 共享磁盘带宽；暂存无法使用 NTFS 硬链接而需要复制文件时，分析速度可能有所下降。
 
 页面顶部先填写包含多条录制数据的数据集根目录，再点击“扫描 Session”。扫描器兼容 Session
@@ -525,10 +526,11 @@ robocap-rerun modelscope-upload Z:\DATASETS\Frodobots\nokov\_modelscope_dataset
 `upload_batch_created_at`。工具会在传输前原子更新 `manifest.json` 与 `metadata.jsonl`；传输失败后
 重试会复用原日期。旧 `YYYYMMDD_HHMMSS` 路径仍可读取但不再生成。`_prepared/` 不会上传。
 `EgoMotionActions/Demo/` 只存放从旧版无批次结构迁移的示例。
-上传前，工具会下载并合并远端 `metadata.jsonl`，保留无关批次与 Demo 行；本地相同
-`(primitive_id, session_id)` 的行覆盖远端旧行。Session 文件、Dataset Card 和合并索引进入同一次
-`upload_folder`。ModelScope 通常对不超过 100 个文件的批次做一次原子提交；超过 SDK 单次提交容量时
-可能自动拆分，实时日志会打印实际提交数。
+不同电脑可以并行上传不同 Session：大文件仍走 SDK，文件校验通过后，再读取最新 Git 版本合并
+`metadata.jsonl` 并非强制推送。遇到其他电脑抢先提交时，重新读取、合并、重试，最多八次，
+无需重传视频。每台电脑必须安装 Git 和 Git LFS，并全部更新工具；旧版本仍可能覆盖索引。
+不支持同时修改同一个 Session。已有 README.md 不再被普通上传覆盖。
+索引提交失败时会报错，远端已上传文件可在重试时复用；批量修改动捕元数据也采用相同的提交保护。
 
 上传默认使用 `.env` 中的 `MODELSCOPE_REPO_ID`；只有临时覆盖时才传
 `--repo-id owner/another-dataset`。仅 CLI 在明确需要时支持

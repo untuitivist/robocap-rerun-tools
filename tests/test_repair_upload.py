@@ -6,6 +6,8 @@ import pytest
 
 from robocap_rerun_tools import repair_upload as repair
 
+pytestmark = pytest.mark.usefixtures("fake_metadata_transport")
+
 
 def request_csv(path, bad_file="robocap_segment1_video_right_front.mp4"):
     with path.open("w", encoding="utf-8", newline="") as out:
@@ -155,21 +157,26 @@ def test_repair_preserves_remote_path_and_updates_only_selected_files(tmp_path, 
             self.legacy = self
 
         def download_file(self, *args, **kwargs):
+            if args[2] == "metadata.jsonl":
+                target = tmp_path / "remote-index.jsonl"
+                target.write_text(state["metadata"], encoding="utf-8")
+                return target
             return remote_manifest
 
         def upload_folder(self, repo, kind, root, **kwargs):
             state["calls"] += 1
             if state["calls"] == 1:
                 raise OSError("transient failure")
+            if kwargs["allow_patterns"] == ["metadata.jsonl"]:
+                state["metadata"] = (root / "metadata.jsonl").read_text(encoding="utf-8")
+                return
             assert set(kwargs["allow_patterns"]) == {
                 destination + "/" + name,
                 destination + "/manifest.json",
-                "metadata.jsonl",
             }
             assert not kwargs["sync_remote_repo"] and not kwargs["use_cache"]
             assert (root / destination / name).read_bytes() == b"original"
             remote_manifest.write_bytes((root / destination / "manifest.json").read_bytes())
-            state["metadata"] = (root / "metadata.jsonl").read_text(encoding="utf-8")
 
         def list_dataset_files_paginated(self, *args, **kwargs):
             return [{"Path": destination + "/" + name, "Size": 8}]
@@ -184,7 +191,7 @@ def test_repair_preserves_remote_path_and_updates_only_selected_files(tmp_path, 
         tmp_path / "out",
         lambda _: None,
     )
-    assert state["calls"] == 2 and result[name]["bytes"] == 8
+    assert state["calls"] == 3 and result[name]["bytes"] == 8
     rows = [json.loads(x) for x in state["metadata"].splitlines()]
     assert unrelated in rows
     updated = next(r for r in rows if r["session_id"] == "take1")

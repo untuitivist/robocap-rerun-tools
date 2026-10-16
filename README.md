@@ -571,11 +571,13 @@ atomically before transfer. If transfer fails, retrying reuses the assigned date
 `YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. `_prepared/` is excluded from
 upload.
 `EgoMotionActions/Demo/` is reserved for recordings migrated from the legacy non-batched layout.
-The uploader downloads and merges the existing remote `metadata.jsonl` before upload, so unrelated
-batches and Demo rows are retained. Local `(primitive_id, session_id)` rows replace matching remote
-rows. Session files, the Dataset Card, and the merged index are passed to the same `upload_folder`
-operation. ModelScope normally commits batches of at most 100 files atomically; if a selected batch
-exceeds the SDK's single-commit capacity, the SDK may split it and the live log reports the count.
+Different computers can upload different Sessions concurrently. Session files use the SDK and are
+verified first; the shared index is then merged against the latest Git revision and pushed without
+force. Concurrent changes trigger a fresh merge and retry (up to eight attempts), without reuploading
+videos. Git and Git LFS must be installed on every uploader, and all uploaders must be updated:
+old versions can still overwrite the index. Same-Session concurrent uploads are not supported.
+Existing README.md is preserved. If metadata publication fails, the operation reports failure;
+files remain remotely available for a retry. Metadata-only capture corrections use the same protection.
 
 The command uses `MODELSCOPE_REPO_ID` from `.env`. Pass `--repo-id owner/another-dataset` only to
 override the saved repository for one upload.

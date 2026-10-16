@@ -16,6 +16,8 @@ from robocap_rerun_tools.dataset_intersection import (
 )
 from robocap_rerun_tools.mocap_metadata import build_mocap_capture_metadata
 
+pytestmark = pytest.mark.usefixtures("fake_metadata_transport")
+
 
 def test_link_or_copy_file_prefers_hardlink(tmp_path: Path) -> None:
     source = tmp_path / "source.bin"
@@ -961,7 +963,9 @@ def test_upload_integrates_verification_and_restores_local_index(tmp_path, persi
     def upload_with_loss(repo, kind, root, **kwargs):
         original_upload(repo, kind, root, **kwargs)
         if persistent or len(api.uploads) == 1:
-            api.files.pop("README.md", None)
+            for path in list(api.files):
+                if path.endswith("/motion.trc"):
+                    api.files.pop(path)
 
     api.upload_folder = upload_with_loss
     settings = publisher.ModelScopeSettings("test", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/data")
@@ -977,7 +981,7 @@ def test_upload_integrates_verification_and_restores_local_index(tmp_path, persi
     else:
         result = upload()
         assert result.session_count == 1
-        assert len(api.uploads) == 2
+        assert len(api.uploads) == 3  # Initial files, repair, then safe metadata commit.
     local = publisher._read_metadata(staged.metadata_path)
     assert len(local) == 1
     assert local[0]["session_id"] == staged.session_id
@@ -1019,8 +1023,14 @@ def test_upload_staged_session_uploads_every_indexed_session(
         def create_repo(self, *args, **kwargs):
             calls.append(("create_repo", args, kwargs))
 
+        def download_file(self, *args, **kwargs):
+            from modelscope_hub.errors import NotExistError
+            raise NotExistError("no metadata yet")
+
         def upload_folder(self, *args, **kwargs):
             calls.append(("upload_folder", args, kwargs))
+            if publisher.METADATA_NAME not in kwargs["allow_patterns"]:
+                return
             uploaded_metadata.extend(
                 json.loads(line)
                 for line in (Path(args[2]) / publisher.METADATA_NAME)
@@ -1057,14 +1067,13 @@ def test_upload_staged_session_uploads_every_indexed_session(
         "EgoMotionActions/20260828/P01/20260803_081935_session39/**",
         "EgoMotionActions/20260828/Walk [[]v2]/second_session/**",
         "raw_calibration/**",
-        "README.md",
-        "metadata.jsonl",
     ]
     assert calls[2][2]["disable_tqdm"] is False
     assert calls[2][2]["commit_message"] == (
         "Upload batch 20260828 with 2 indexed session(s)"
     )
-    assert len(calls) == 3
+    assert len(calls) == 4
+    assert calls[3][2]["allow_patterns"] == ["metadata.jsonl"]
     assert len(uploaded_metadata) == 2
     assert {entry["duration_s"] for entry in uploaded_metadata} == {12.5}
     final_session = (
@@ -1084,6 +1093,55 @@ def test_upload_staged_session_uploads_every_indexed_session(
         entry["session_path"].startswith("EgoMotionActions/20260828/")
         for entry in metadata
     )
+
+
+def test_upload_merges_rows_added_during_file_transfer(tmp_path):
+    from test_upload_verification import RemoteApi
+
+    staged = stage_fixture(tmp_path)
+    api = RemoteApi(tmp_path)
+    api.whoami = lambda: SimpleNamespace(username="owner")
+    api.repo_exists = lambda *args: True
+    api.files["metadata.jsonl"] = b""
+    api.files["README.md"] = b"custom card"
+    original_upload = api.upload_folder
+    other = {"primitive_id": "P99", "session_id": "other", "custom": "preserve"}
+
+    def upload(repo, kind, root, **kwargs):
+        original_upload(repo, kind, root, **kwargs)
+        if len(api.uploads) == 1:
+            assert "metadata.jsonl" not in kwargs["allow_patterns"]
+            assert "README.md" not in kwargs["allow_patterns"]
+            api.files["metadata.jsonl"] = (json.dumps(other) + "\n").encode()
+
+    api.upload_folder = upload
+    settings = publisher.ModelScopeSettings("test", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/data")
+    publisher.upload_staged_session(staged, None, api=api, settings=settings, progress=None)
+    rows = [json.loads(line) for line in api.files["metadata.jsonl"].splitlines()]
+    assert other in rows and len(rows) == 2
+    assert api.files["README.md"] == b"custom card"
+
+
+def test_metadata_commit_failure_does_not_report_upload_success(tmp_path, monkeypatch):
+    from test_upload_verification import RemoteApi
+    from robocap_rerun_tools import metadata_commit, upload_verification
+
+    staged = stage_fixture(tmp_path)
+    api = RemoteApi(tmp_path)
+    api.whoami = lambda: SimpleNamespace(username="owner")
+    api.repo_exists = lambda *args: True
+    api.files["metadata.jsonl"] = b""
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("metadata push failed")
+
+    monkeypatch.setattr(metadata_commit, "_publish_changes", fail)
+    settings = publisher.ModelScopeSettings("test", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/data")
+    with pytest.raises(publisher.ModelScopePublisherError, match="metadata push failed"):
+        publisher.upload_staged_session(staged, None, api=api, settings=settings, progress=None)
+    report = json.loads((staged.dataset_root / upload_verification.REPORT_NAME).read_text())
+    assert report["status"] == "files_verified"
+    assert api.files["metadata.jsonl"] == b""
 
 
 @pytest.mark.usefixtures("isolated_upload_verifier")
@@ -1114,6 +1172,8 @@ def test_upload_refreshes_participants_in_index_and_manifest(tmp_path: Path) -> 
 
         def upload_folder(self, repo, kind, root, **kwargs):
             row = json.loads((root / "metadata.jsonl").read_text(encoding="utf-8"))
+            if kwargs["allow_patterns"] == ["metadata.jsonl"]:
+                return
             uploaded_manifest = json.loads((root / row["manifest"]).read_text(encoding="utf-8"))
             for key in ("participant_gender", "participant_height_cm", "participant_weight_kg"):
                 assert row[key] == uploaded_manifest[key]
@@ -1172,7 +1232,8 @@ def test_upload_retry_reuses_existing_batch(tmp_path: Path, monkeypatch: pytest.
     )
 
     assert first.batch_id == second.batch_id == "20260828"
-    assert upload_calls[0]["allow_patterns"] == upload_calls[1]["allow_patterns"]
+    assert upload_calls[0]["allow_patterns"] == upload_calls[2]["allow_patterns"]
+    assert upload_calls[1]["allow_patterns"] == ["metadata.jsonl"]
 
 
 @pytest.mark.usefixtures("isolated_upload_verifier")
@@ -1226,7 +1287,7 @@ def test_failed_file_transfer_retry_reuses_finalized_batch(
     )
 
     assert retry.batch_id == "20260828"
-    assert folder_attempts == 2
+    assert folder_attempts == 3  # Failed files, retried files, metadata publication.
 
 
 def test_merge_metadata_retains_demo_and_overrides_matching_remote_session() -> None:
@@ -1431,7 +1492,7 @@ def test_update_remote_mocap_metadata_updates_index_and_manifest_in_one_upload(
             for path in root.rglob("*"):
                 if path.is_file():
                     uploaded[path.relative_to(root).as_posix()] = path.read_text(encoding="utf-8")
-            assert kwargs["commit_message"] == "Update Mocap capture metadata for 1 session(s)"
+            assert "metadata.jsonl" in kwargs["allow_patterns"]
 
     monkeypatch.setattr(publisher, "_hub_api", lambda _settings: FakeApi())
     settings = publisher.ModelScopeSettings(

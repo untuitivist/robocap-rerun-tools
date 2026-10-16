@@ -13,6 +13,8 @@ from robocap_rerun_tools.batch_completeness import (
     write_batch_report,
 )
 from robocap_rerun_tools.mocap_inventory import mocap_names
+
+pytestmark = pytest.mark.usefixtures("fake_metadata_transport")
 from robocap_rerun_tools.session_integrity import (
     INTEGRITY_VERSION,
     integrity_summary,
