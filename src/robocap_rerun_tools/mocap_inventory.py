@@ -51,8 +51,15 @@ def object_category_name(name: str) -> str:
 
 
 def object_names(names: Iterable[str]) -> list[str]:
-    """Publish unique scan categories, excluding people, trackers and unnamed tracks."""
+    """Publish prop instances, excluding people, trackers and unnamed tracks."""
     return sorted(
-        {object_category_name(name) for name in names if name_category(name.strip()) == "object_candidate"},
+        {object_instance_name(name) for name in names if name_category(name.strip()) == "object_candidate"},
         key=str.casefold,
     )
+
+
+def object_instance_name(name: str) -> str:
+    """Retain explicit instance suffixes; use zero for legacy unnumbered names."""
+    category = object_category_name(name)
+    suffix = re.search(r"\d+$", name.strip())
+    return category + (suffix[0] if suffix else "0")
