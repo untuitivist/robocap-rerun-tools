@@ -13,6 +13,12 @@ def test_scan_names_and_instances_share_pascal_case():
 
 
 def test_categories_are_distinct_and_normalization_is_idempotent():
-    expected = ["BigBox3", "Box0002", "Box1", "Box6", "StrongeBox1234"]
+    expected = ["BigBox3", "LittleBox0002", "LittleBox1", "LittleBox6", "StrongeBox1234"]
     assert object_names(["Box1", "Box6", "box0002", "BigBox3", "StrongeBox1234"]) == expected
     assert object_names(expected) == expected
+
+
+def test_box_alias_does_not_change_other_box_categories():
+    assert object_names(["Box0", "LittleBox0", "little box1", "BigBox1", "OpenBox2"]) == [
+        "BigBox1", "LittleBox0", "LittleBox1", "OpenBox2",
+    ]

@@ -33,7 +33,7 @@ def manifest_mocap_names(records) -> list[str]:
 
 
 SCAN_CATEGORIES = (
-    "ArmlessChair", "BigBox", "Box", "CcBlue", "CcGreen", "CcOrange", "CcRed",
+    "ArmlessChair", "BigBox", "LittleBox", "CcBlue", "CcGreen", "CcOrange", "CcRed",
     "CcYellow", "Cushion", "HighStep", "LowStep", "OpenBox", "PlatformTrolly",
     "Ramp", "StrongeBox", "Tray",
 )
@@ -46,6 +46,8 @@ def object_category_name(name: str) -> str:
         raise ValueError(f"Invalid object instance name: {name!r}")
     words = re.split(r"[ _-]+", match[1].strip())
     category = "".join(word[0].upper() + word[1:] for word in words)
+    if category.casefold() == "box":
+        category = "LittleBox"
     category = next((known for known in SCAN_CATEGORIES if known.casefold() == category.casefold()), category)
     return category
 

@@ -955,8 +955,8 @@ and matching manifests in one commit without moving Session directories or uploa
 again.
 
 The dataset index and Session manifest also contain `mocap_rigid_names`: the actual exported
-entity names. `objects` contains deduplicated prop instances, for example `["Box0", "Box1", "BigBox0"]`.
-Instance numbers are preserved: `Box0`, `Box1` and `Box6` remain distinct objects.
+entity names. `objects` contains deduplicated prop instances, for example `["LittleBox0", "LittleBox1", "BigBox0"]`.
+Instance numbers are preserved. Legacy `Box` names normalize to `LittleBox`; `BigBox` stays separate.
 Feishu backfills use the session-task-list selections matched by action ID and collection Session
 index; empty or ambiguous matches are not used to infer objects. Local uploads derive instances
 from exported Mocap names, using suffix `0` for legacy unnumbered names.
