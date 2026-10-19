@@ -968,7 +968,7 @@ def test_upload_integrates_verification_and_restores_local_index(tmp_path, persi
                     api.files.pop(path)
 
     api.upload_folder = upload_with_loss
-    settings = publisher.ModelScopeSettings("test", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/data")
+    settings = publisher.ModelScopeSettings("test", "https://modelscope.cn", tmp_path / ".env", ".env", "owner/data", "site_02")
 
     def upload():
         return publisher.upload_staged_session(staged, None, api=api, settings=settings,
@@ -985,6 +985,9 @@ def test_upload_integrates_verification_and_restores_local_index(tmp_path, persi
     local = publisher._read_metadata(staged.metadata_path)
     assert len(local) == 1
     assert local[0]["session_id"] == staged.session_id
+    assert local[0]["collection_site"]["id"] == "site_02"
+    manifest = json.loads(api.files[local[0]["manifest"]])
+    assert manifest["collection_site"] == local[0]["collection_site"]
     remote = [json.loads(line) for line in api.files["metadata.jsonl"].decode().splitlines()]
     assert other in remote
 

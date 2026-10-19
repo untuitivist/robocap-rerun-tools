@@ -477,7 +477,15 @@ ignored by Git and excluded from every data package:
 MODELSCOPE_API_TOKEN=
 MODELSCOPE_ENDPOINT=https://modelscope.cn
 MODELSCOPE_REPO_ID=owner/egomocap
+ROBOCAP_COLLECTION_SITE=
 ```
+
+Set `ROBOCAP_COLLECTION_SITE=site_01` for the white-wall room or `site_02` for the
+green-screen room. Single and batch uploads write `collection_site` to both
+`metadata.jsonl` and each Session's `manifest.json`. One setting applies to the whole
+upload; upload different rooms separately. Empty keeps existing assignments and warns
+for new unassigned Sessions. Process environment overrides `.env`; restart the tool
+after changing the setting. Skipped remote Sessions are not updated.
 
 The saved token is never added to a CLI argument or printed. Verify it with:
 

@@ -485,7 +485,14 @@ Web 的 ModelScope 页会扫描 Session 直属的唯一 `mocap*` 目录，并像
 MODELSCOPE_API_TOKEN=
 MODELSCOPE_ENDPOINT=https://modelscope.cn
 MODELSCOPE_REPO_ID=owner/egomocap
+ROBOCAP_COLLECTION_SITE=
 ```
+
+场景配置：白墙场景填 `ROBOCAP_COLLECTION_SITE=site_01`，绿幕场景填
+`ROBOCAP_COLLECTION_SITE=site_02`，二选一。普通与批量上传会同步写入
+`metadata.jsonl` 和每个 Session 的 `manifest.json` 中的 `collection_site`。
+配置适用于整次上传，不同场景请分批上传；留空保留已有场景，新 Session 缺少场景会打印提示。
+进程环境变量优先于 `.env`，修改后请重启工具。跳过的远端 Session 不会更新。
 
 `.env` 已被 Git 忽略，也会被所有数据打包流程排除。Token 不会进入命令行参数或日志。检查身份：
 

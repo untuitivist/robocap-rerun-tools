@@ -53,6 +53,7 @@ DEFAULT_ENDPOINT = "https://modelscope.cn"
 TOKEN_KEY = "MODELSCOPE_API_TOKEN"
 ENDPOINT_KEY = "MODELSCOPE_ENDPOINT"
 REPO_ID_KEY = "MODELSCOPE_REPO_ID"
+COLLECTION_SITE_KEY = "ROBOCAP_COLLECTION_SITE"
 REPORT_NAME = "timestamp_anomaly_detail_table.html"
 METADATA_NAME = "metadata.jsonl"
 DATASET_README_NAME = "README.md"
@@ -94,6 +95,7 @@ class ModelScopeSettings:
     env_path: Path
     token_source: str
     repo_id: str | None = None
+    collection_site: str | None = None
 
 
 @dataclass(frozen=True)
@@ -386,7 +388,8 @@ def ensure_env_file(env_path: Path = DEFAULT_ENV_PATH) -> Path:
             f"{TOKEN_KEY}=\n"
             f"{ENDPOINT_KEY}={DEFAULT_ENDPOINT}\n"
             f"{REPO_ID_KEY}=\n"
-            "MODELSCOPE_ERROR_REPO_ID=untuitivist/EgoMotionActions-fault\n",
+            "MODELSCOPE_ERROR_REPO_ID=untuitivist/EgoMotionActions-fault\n"
+            f"{COLLECTION_SITE_KEY}=\n",
             encoding="utf-8",
             newline="\n",
         )
@@ -396,6 +399,7 @@ def ensure_env_file(env_path: Path = DEFAULT_ENV_PATH) -> Path:
             TOKEN_KEY: "",
             ENDPOINT_KEY: DEFAULT_ENDPOINT,
             REPO_ID_KEY: "",
+            COLLECTION_SITE_KEY: "",
             "MODELSCOPE_ERROR_REPO_ID": "untuitivist/EgoMotionActions-fault",
         }
         for key, value in defaults.items():
@@ -428,7 +432,10 @@ def load_modelscope_settings(
         if file_token
         else "missing"
     )
-    return ModelScopeSettings(token, endpoint, path, token_source, repo_id)
+    site = str(process_values.get(COLLECTION_SITE_KEY) or file_values.get(COLLECTION_SITE_KEY) or "").strip()
+    if site and not re.fullmatch(r"site_\d+", site):
+        raise ValueError(f"{COLLECTION_SITE_KEY} must be a site ID such as site_01 or site_02.")
+    return ModelScopeSettings(token, endpoint, path, token_source, repo_id, site or None)
 
 
 def save_modelscope_settings(
@@ -2669,6 +2676,19 @@ def upload_staged_dataset(
             )
         local_entries = enrich_staged_participants(
             staged.dataset_root, local_entries, remote_entries, catalog, progress,
+        )
+        from .collection_site import enrich_staged_sites
+
+        site_catalog = "collection_sites.json"
+        if fault_target:
+            normal_repository = load_modelscope_settings(resolved.env_path).repo_id
+            if normal_repository:
+                site_catalog = f"{resolved.endpoint}/datasets/{normal_repository}/resolve/master/collection_sites.json"
+            else:
+                site_catalog = None
+        local_entries = enrich_staged_sites(
+            staged.dataset_root, local_entries, remote_entries,
+            resolved.collection_site, catalog=site_catalog, progress=progress,
         )
         _write_metadata_entries(staged.dataset_root, local_entries)
         local_metadata = staged.metadata_path.read_text(encoding="utf-8")
