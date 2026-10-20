@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import re
 import shutil
@@ -284,7 +285,7 @@ def _copy_candidate_directory(
     shutil.copytree(source, destination, copy_function=copy_file)
 
 
-def copy_recovery_match(
+def move_recovery_match(
     match: RecoveryMatch,
     progress: RecoveryProgress | None = None,
 ) -> Path:
@@ -296,6 +297,7 @@ def copy_recovery_match(
     backups: list[tuple[Path, Path]] = []
     report_backups: list[tuple[Path, Path]] = []
     copy_started = False
+    copied_across_volumes = False
     try:
         for directory in existing:
             backup = directory.parent / (
@@ -307,8 +309,14 @@ def copy_recovery_match(
             backup = report.parent / f".{report.name}.robocap-recovery-backup-{uuid.uuid4().hex}"
             report.rename(backup)
             report_backups.append((report, backup))
-        copy_started = True
-        _copy_candidate_directory(match.candidate.path, destination, progress)
+        try:
+            match.candidate.path.rename(destination)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV and getattr(exc, "winerror", None) != 17:
+                raise
+            copy_started = True
+            _copy_candidate_directory(match.candidate.path, destination, progress)
+            copied_across_volumes = True
     except BaseException:
         if copy_started and destination.exists():
             shutil.rmtree(destination)
@@ -317,6 +325,16 @@ def copy_recovery_match(
         for directory, backup in reversed(backups):
             backup.rename(directory)
         raise
+    # Source cleanup is outside rollback: a partial cleanup must never destroy
+    # the complete destination. Keep backups too if cleanup fails.
+    if copied_across_volumes:
+        try:
+            shutil.rmtree(match.candidate.path)
+        except OSError as exc:
+            raise OSError(
+                f"Destination is complete at {destination}, but source cleanup failed at "
+                f"{match.candidate.path}. Destination and old backups were retained."
+            ) from exc
     for _, backup in report_backups:
         backup.unlink()
     for _, backup in backups:

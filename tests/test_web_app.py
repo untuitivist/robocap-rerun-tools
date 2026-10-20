@@ -68,7 +68,7 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert "统计根目录" in config
     assert "待匹配 Mocap 根目录" in config
     assert "预览 Mocap 匹配" in config
-    assert "复制匹配的 Mocap 文件夹" in config
+    assert "移动匹配的 Mocap 文件夹" in config
     assert "确认删除/替换预览中的现有 mocap* 文件夹和失效检查报告" in config
     assert "Mocap 补回输出" in config
     assert "批量检查并分流上传" in config
