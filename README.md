@@ -480,8 +480,8 @@ MODELSCOPE_REPO_ID=owner/egomocap
 ROBOCAP_COLLECTION_SITE=
 ```
 
-Set `ROBOCAP_COLLECTION_SITE=site_01` for the white-wall room or `site_02` for the
-green-screen room. Single and batch uploads write `collection_site` to both
+Set `ROBOCAP_COLLECTION_SITE=site_01` for the green-screen room or `site_02` for the
+white-wall room. Single and batch uploads write `collection_site` to both
 `metadata.jsonl` and each Session's `manifest.json`. One setting applies to the whole
 upload; upload different rooms separately. Empty keeps existing assignments and warns
 for new unassigned Sessions. Process environment overrides `.env`; restart the tool
