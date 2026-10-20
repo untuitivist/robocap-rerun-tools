@@ -1,8 +1,5 @@
-import errno
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-
-import pytest
 
 from robocap_rerun_tools import mocap_recovery as recovery
 
@@ -18,7 +15,7 @@ def _session(root: Path, name: str) -> Path:
     return session
 
 
-def test_recovery_plan_matches_nearest_candidates_and_moves_source(
+def test_recovery_plan_matches_nearest_candidates_and_copies_without_removing_source(
     tmp_path: Path, monkeypatch
 ) -> None:
     dataset_root = tmp_path / "dataset"
@@ -81,7 +78,7 @@ def test_recovery_plan_matches_nearest_candidates_and_moves_source(
     assert plan.unmatched_candidates == ()
     assert plan.candidates_without_motion == (invalid.resolve(),)
 
-    destinations = [recovery.move_recovery_match(match) for match in plan.matches]
+    destinations = [recovery.copy_recovery_match(match) for match in plan.matches]
 
     assert destinations == [
         missing / "mocap-first",
@@ -94,8 +91,8 @@ def test_recovery_plan_matches_nearest_candidates_and_moves_source(
     assert (empty / "Mocap-second" / "nested" / "body.CSV").read_text(
         encoding="utf-8"
     ) == "second"
-    assert not first.exists()
-    assert not second.exists()
+    assert (first / "body.trc").is_file()
+    assert (second / "nested" / "body.CSV").is_file()
     assert not (ambiguous / "mocap-a").exists()
     assert not (ambiguous / "mocap-b").exists()
     assert (ambiguous / "mocap-unused" / "body.bvh").is_file()
@@ -119,7 +116,7 @@ def test_recovery_copy_replaces_existing_directory_with_different_name(tmp_path:
         0.0,
     )
 
-    copied = recovery.move_recovery_match(match)
+    copied = recovery.copy_recovery_match(match)
 
     assert copied == tmp_path / "session" / "mocap-candidate"
     assert not destination.exists()
@@ -194,7 +191,7 @@ def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -
     )
 
     events: list[tuple[str, int, int | None, str]] = []
-    copied = recovery.move_recovery_match(
+    copied = recovery.copy_recovery_match(
         match,
         lambda stage, current, total, detail: events.append(
             (stage, current, total, detail)
@@ -207,8 +204,8 @@ def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -
     assert (copied / "new.csv").read_text(encoding="utf-8") == "new"
     assert not report.exists()
     copy_events = [event for event in events if event[0] == "copy_bytes"]
-    assert not copy_events  # Same-volume rename does not copy bytes.
-    assert not candidate.exists()
+    assert copy_events[0][1:3] == (0, 3)
+    assert copy_events[-1][1:3] == (3, 3)
 
 
 def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
@@ -242,67 +239,17 @@ def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
         raise OSError("copy failed")
 
     monkeypatch.setattr(recovery.shutil, "copytree", fail_copy)
-    original_rename = Path.rename
-
-    def cross_volume(path, target):
-        if path == candidate:
-            raise OSError(errno.EXDEV, "different volume")
-        return original_rename(path, target)
-
-    monkeypatch.setattr(Path, "rename", cross_volume)
 
     try:
-        recovery.move_recovery_match(match)
+        recovery.copy_recovery_match(match)
     except OSError as exc:
         assert str(exc) == "copy failed"
     else:
-        raise AssertionError("move_recovery_match should propagate copy failure")
+        raise AssertionError("copy_recovery_match should propagate copy failure")
     assert (first / "a.trc").read_text(encoding="utf-8") == "a"
     assert (second / "b.bvh").read_text(encoding="utf-8") == "b"
     assert not (session / "mocap-new").exists()
     assert report.read_text(encoding="utf-8") == "stale"
-    assert (candidate / "new.csv").read_text(encoding="utf-8") == "new"
-
-
-@pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_cross_volume_move_copies_before_source_cleanup(tmp_path, monkeypatch, cleanup_fails):
-    source = tmp_path / "exports" / "mocap-new"
-    source.mkdir(parents=True)
-    (source / "body.trc").write_bytes(b"motion")
-    session = tmp_path / "session"
-    session.mkdir()
-    timestamp = _utc_datetime("20260914_100000")
-    match = recovery.RecoveryMatch(
-        recovery.RecoveryTarget(session, timestamp, ()),
-        recovery.MocapCandidate(source, timestamp), 0,
-    )
-    original_rename = Path.rename
-
-    def cross_volume(path, target):
-        if path == source:
-            raise OSError(errno.EXDEV, "different volume")
-        return original_rename(path, target)
-
-    monkeypatch.setattr(Path, "rename", cross_volume)
-    events = []
-    if cleanup_fails:
-        original_rmtree = recovery.shutil.rmtree
-
-        def fail_cleanup(path, *args, **kwargs):
-            if path == source:
-                raise PermissionError("locked source")
-            return original_rmtree(path, *args, **kwargs)
-
-        monkeypatch.setattr(recovery.shutil, "rmtree", fail_cleanup)
-        with pytest.raises(OSError, match="Destination is complete"):
-            recovery.move_recovery_match(match)
-        assert (source / "body.trc").read_bytes() == b"motion"
-        assert (session / "mocap-new" / "body.trc").read_bytes() == b"motion"
-        return
-    destination = recovery.move_recovery_match(match, lambda *event: events.append(event))
-    assert not source.exists()
-    assert (destination / "body.trc").read_bytes() == b"motion"
-    assert events[-1][1:3] == (6, 6)
 
 
 def test_session_utc_matches_creation_time_in_utc_plus_8(tmp_path: Path, monkeypatch) -> None:
