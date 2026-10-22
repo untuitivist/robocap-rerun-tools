@@ -512,7 +512,7 @@ def test_batch_creates_logs_reports_and_preserves_sources(tmp_path, monkeypatch)
         if p.is_file()
     }
     output = tmp_path / "reports"
-    assert batch.main(["--root", str(directory), "--output", str(output)]) == 0
+    assert batch.main(["--root", str(directory), "--output", str(output)]) == 1
     after = {
         p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in directory.rglob("*")
@@ -524,13 +524,17 @@ def test_batch_creates_logs_reports_and_preserves_sources(tmp_path, monkeypatch)
         "run.log",
         "sessions.csv",
         "issues.csv",
+        "quality_issues.csv",
         "summary.json",
         "scan_errors.csv",
     ):
         payload = (output / name).read_bytes()
         assert not payload.startswith(b"\xef\xbb\xbf")
         payload.decode("utf-8")
-    assert json.loads((output / "summary.json").read_text(encoding="utf-8"))["all_passed"]
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    assert summary["states"] == {"passed": 1}
+    assert summary["quality_states"] == {"unchecked": 1}
+    assert not summary["all_passed"]
     with pytest.raises(SystemExit):
         batch.main(["--root", str(directory), "--output", str(output)])
 

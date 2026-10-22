@@ -101,11 +101,13 @@ third-person video remains `n+1` in both modes.
 The Statistics tab can create only missing inspection reports or rebuild every report in its current
 scope. `Rebuild all inspection reports` takes precedence when both options are enabled, and the same
 choice applies to automatic normal/fault batch upload.
+Overall quality statistics also include timestamp, trajectory and file-content issues, separately
+from the four frame-count categories. Old inspection reports require rebuilding before a clean verdict.
 It also scans compact Mocap directory metadata into an editable table. Selected rows can update the
 remote `metadata.jsonl` and matching Session manifests in one commit without uploading videos.
 The separate `Statistics Report` tab creates a portable dataset inventory. It preserves every
 Session and file path relative to the selected dataset root, records duration, parsed Mocap naming
-metadata, inspection results, and file details, then writes a standalone offline HTML report, four
+metadata, inspection results, and file details, then writes a standalone offline HTML report, five
 UTF-8 CSV tables, and a ZIP under `_reports/`. Existing `_reports/` content is never scanned back
 into a later report.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
@@ -276,6 +278,8 @@ frame_index 异常及其上下行。
 
 “统计”页既可只补做缺失的检查报告，也可重做当前范围内的全部报告。两个选项同时开启时，
 "全部重做检查报告"优先；批量检查并分流上传时使用同一选择。
+综合质量统计保留四种差帧分类，并列出时间戳、轨迹和文件内容问题；同一 Session 可命中多类，
+每类去重计数。帧数一致不等于数据正常，旧报告需重新生成后才能作出完整结论。
 该页还会把紧凑 Mocap 目录名解析为可编辑表格；勾选后的行可一次提交更新远端
 `metadata.jsonl` 与对应 Session manifest，不会重新上传视频。
 
@@ -352,7 +356,8 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 
 独立的“统计报告”页会生成可转发的数据集清单。所有 Session 和文件都记录相对于所选数据集根目录的
 完整路径，同时统计时长、Mocap 命名元数据、检查结果与文件明细。输出位于 `_reports/`，包含单文件
-离线 HTML、四张 UTF-8 CSV 和一个 ZIP；已有 `_reports/` 内容不会被下一次报告重新统计。
+离线 HTML、五张 UTF-8 CSV 和一个 ZIP；其中 `inspection_issues.csv` 保留问题分类、文件和依据。
+已有 `_reports/` 内容不会被下一次报告重新统计。
 不会回滚。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。

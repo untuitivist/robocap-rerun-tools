@@ -282,7 +282,10 @@ The separate **Statistics Report** tab creates a shareable inventory under
   inspection payload fields.
 - `files.csv`: every file's complete dataset-relative and Session-relative path, category, size,
   extension, and UTC+8 modification time.
-- A sibling `statistics_report_<YYYYMMDD_HHMMSS>.zip` containing all five files above.
+- `inspection_issues.csv`: multi-label quality issues with Session, Segment, file, category,
+  severity, counts, and evidence. Session/Segment tables also include `quality_status` and codes;
+  `inspection_status` remains the independent frame-count verdict.
+- A sibling `statistics_report_<YYYYMMDD_HHMMSS>.zip` containing all six files above.
 
 Paths are relative to the selected dataset root, so equal basenames in different subdirectories
 remain distinguishable. Existing `_reports/` directories are excluded from later scans.
@@ -330,20 +333,34 @@ reports can be created serially with the selected 8/4 Mocap ratio before aggrega
 `Rebuild all inspection reports` to rerun inspection for every Segment in the current scope even
 when its HTML already exists; this takes precedence over the missing-only option and also applies to
 batched clean-Session upload. The result
-separates unchecked, frame-count-difference, and error-free duration, then shows total duration, a
+separates unchecked, frame-count-difference, and frame-count-matching duration, then shows total duration, a
 `{Session: duration}` map, and a per-Session frame-anomaly list for each action. The anomaly list
-distinguishes normal, Mocap extra/missing frames, and third-person extra/missing frames; categories
+distinguishes matching counts, Mocap extra/missing frames, and third-person extra/missing frames; categories
 from multiple Segments are combined. The three duration categories are mutually exclusive and sum
 to total duration. Unchecked covers missing/unreadable/invalid reports; frame-count difference covers
-counts that do not satisfy `n:ratio*(n+1):(n+1)`; error-free covers valid reports whose counts match.
+counts that do not satisfy `n:ratio*(n+1):(n+1)`; matching covers valid reports whose counts match.
 Timestamp diff findings, inferred dropped frames,
-missing timestamps, and frame-index issues are ignored for this statistic.
+missing timestamps, and frame-index issues do not change this frame-only duration breakdown.
 
-The dataset summary also reports Session counts for total, error-free, with-errors,
-and unchecked. With-errors includes unchecked, so error-free plus with-errors equals total;
-unchecked remains a diagnostic subset. A separate error-type count shows how many Sessions have
-unchecked, Mocap extra/missing, or third-person extra/missing results, while the per-Session mapping
-continues to identify the affected recordings.
+The overall quality summary is independent of frame counts: `passed`, confirmed `error`,
+`review` (sampling intervals requiring interpretation), and `unchecked` partition Sessions.
+It retains the four frame-count categories and adds missing/invalid timestamps, duplicate/reversed
+timestamps, abnormal sampling intervals, frame-index faults, partial trajectories, empty data,
+missing files, format/row/column errors, invalid contents, and ambiguous mappings. Read failures,
+unfinished checks, stale sources, and legacy reports are explicitly unverified. A Session with
+both a confirmed defect and incomplete checks is counted under `error` and retains both labels.
+Each issue category counts a Session once; affected durations use each Segment's reference video
+once per category. Categories overlap and must not be summed as total Sessions or total duration.
+The original frame-only duration breakdown remains available and is labelled as such.
+
+NOKOV CSV/XRS with an omitted Frame# header uses the actual Timestamp data column. TRC checks
+the recorded Timestamp when present and otherwise its relative Time (which may start at zero).
+Verified redundant Body labels and real Tracker RCalc markers remain compatibility notes, not
+format defects. Real missing coordinates and malformed rows remain errors. The single-Session
+HTML, Statistics tab, portable statistics HTML/CSV/ZIP, and batch inspection all use these categories.
+Batch inspection adds `quality_issues.csv`, per-category Session counts, and an overall quality
+verdict; file-only success is insufficient for `all_passed`. Rebuild old reports using
+`Rebuild all inspection reports`; integrity version 4 invalidates the older content-check cache.
 
 Unchecked Sessions are classified by their current source state: no direct `mocap*` directory, no
 TRC/BVH/CSV recursively under a discovered `mocap*` directory, or motion files present without a

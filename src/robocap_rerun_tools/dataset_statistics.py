@@ -8,6 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .cli import ffprobe_video, ratio_to_float
+from .inspection_issues import (
+    FRAME_ANOMALY_ORDER,
+    ISSUE_LABELS,
+    classify_frame_count_anomalies,
+    classify_inspection,
+    issue_record,
+    quality_status,
+)
 from .mocap_metadata import COMPACT_ACTION_ID_PATTERN, parse_mocap_capture_directory
 from .session_layout import discover_mocap_directories
 
@@ -19,12 +27,6 @@ ROBOCAP_VIDEO_PATTERN = re.compile(
     r"^robocap_(?P<segment>.+?)_video_(?P<camera>.+)\.mp4$", re.IGNORECASE
 )
 UNASSIGNED_PRIMITIVE = "UNASSIGNED"
-FRAME_ANOMALY_ORDER = (
-    "mocap_extra",
-    "mocap_missing",
-    "third_person_extra",
-    "third_person_missing",
-)
 MOCAP_INSPECTION_SUFFIXES = frozenset({".trc", ".bvh", ".csv"})
 UNCHECKED_REASON_ORDER = (
     "missing_mocap_directory",
@@ -50,6 +52,8 @@ class SegmentStatistic:
     status: str
     detail: str = ""
     frame_anomalies: tuple[str, ...] = ()
+    quality_issues: tuple[dict, ...] = ()
+    quality_status: str = "unchecked"
 
 
 @dataclass(frozen=True)
@@ -63,6 +67,8 @@ class SessionStatistic:
     errors: tuple[str, ...]
     integrity_status: str = "unchecked"
     integrity_issues: tuple[str, ...] = ()
+    quality_issues: tuple[dict, ...] = ()
+    quality_status: str = "unchecked"
 
     @property
     def duration_s(self) -> float:
@@ -222,45 +228,6 @@ def load_report_payload(path: Path) -> dict[str, object]:
     return payload
 
 
-def _finite_number(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
-
-
-def _nonnegative_integer(value: object) -> int | None:
-    number = _finite_number(value)
-    if number is None or number < 0 or not number.is_integer():
-        return None
-    return int(number)
-
-
-def classify_frame_count_anomalies(payload: dict[str, object]) -> tuple[str, ...] | None:
-    reference_frames = _nonnegative_integer(payload.get("referenceFrames"))
-    mocap_frames = _nonnegative_integer(payload.get("mocapFrames"))
-    third_frames = _nonnegative_integer(payload.get("thirdFrames"))
-    ratio = _nonnegative_integer(payload.get("ratio"))
-    if None in (reference_frames, mocap_frames, third_frames) or ratio not in {4, 8}:
-        return None
-
-    expected_mocap_frames = ratio * (reference_frames + 1)
-    expected_third_frames = reference_frames + 1
-    anomalies: list[str] = []
-    if mocap_frames > expected_mocap_frames:
-        anomalies.append("mocap_extra")
-    elif mocap_frames < expected_mocap_frames:
-        anomalies.append("mocap_missing")
-    if third_frames > expected_third_frames:
-        anomalies.append("third_person_extra")
-    elif third_frames < expected_third_frames:
-        anomalies.append("third_person_missing")
-    return tuple(anomalies)
-
-
 def report_has_frame_count_difference(payload: dict[str, object]) -> bool:
     anomalies = classify_frame_count_anomalies(payload)
     return anomalies is None or bool(anomalies)
@@ -273,6 +240,8 @@ def summarize_session(
 ) -> SessionStatistic:
     segments: list[SegmentStatistic] = []
     errors: list[str] = []
+    issues: list[dict] = []
+    signatures = {}
     duration_by_status = {
         "unchecked": 0.0,
         "frame_difference": 0.0,
@@ -282,6 +251,7 @@ def summarize_session(
     references = discover_segment_references(session_dir)
     if not references:
         errors.append("no direct robocap_<segment>_video_<camera>.mp4 reference video")
+        issues.append(issue_record("inspection_incomplete", detail=errors[-1], severity="unchecked"))
 
     for reference in references:
         duration_s, duration_error = probe_video_duration(reference.video_path, ffprobe)
@@ -289,6 +259,7 @@ def summarize_session(
             errors.append(f"{reference.video_path.name}: {duration_error}")
 
         frame_anomalies: tuple[str, ...] = ()
+        segment_issues = []
         if not reference.report_path.is_file():
             status = "unchecked"
             detail = "inspection report is missing"
@@ -299,6 +270,26 @@ def summarize_session(
                 status = "unchecked"
                 detail = f"inspection report is unreadable: {exc}"
             else:
+                segment_issues = classify_inspection(payload)["issues"]
+                integrity = payload.get("integrity") or {}
+                if not isinstance(integrity, dict):
+                    integrity = {}
+                if integrity.get("source_signature"):
+                    from .session_integrity import source_signature
+
+                    for scope in (None, reference.segment):
+                        if scope not in signatures:
+                            signatures[scope] = source_signature(session_dir, segment=scope)
+                    if integrity["source_signature"] not in {
+                        signatures[None], signatures[reference.segment],
+                    }:
+                        segment_issues.append(issue_record(
+                            "inspection_stale", detail="源文件与报告签名不一致", severity="unchecked",
+                        ))
+                else:
+                    segment_issues.append(issue_record(
+                        "inspection_incomplete", detail="报告缺少源文件签名", severity="unchecked",
+                    ))
                 classified = classify_frame_count_anomalies(payload)
                 if classified is None:
                     status = "unchecked"
@@ -315,6 +306,11 @@ def summarize_session(
             duration_by_status[status] += duration_s
         if detail and status == "unchecked":
             errors.append(f"{reference.segment}: {detail}")
+            segment_issues.append(issue_record(
+                "inspection_incomplete", path=str(reference.report_path), detail=detail,
+                severity="unchecked",
+            ))
+        issues.extend({**row, "segment": reference.segment} for row in segment_issues)
         segments.append(
             SegmentStatistic(
                 segment=reference.segment,
@@ -324,6 +320,8 @@ def summarize_session(
                 status=status,
                 detail=detail,
                 frame_anomalies=frame_anomalies,
+                quality_issues=tuple(segment_issues),
+                quality_status=quality_status(segment_issues),
             )
         )
 
@@ -340,6 +338,8 @@ def summarize_session(
         errors=tuple(errors),
         integrity_status=integrity_status,
         integrity_issues=integrity_issues,
+        quality_issues=tuple(issues),
+        quality_status=quality_status(issues),
     )
 
 
@@ -437,7 +437,7 @@ def session_frame_anomaly_labels(
         reason = session_unchecked_reason(session)
         values.insert(0, unchecked_reason_labels(language)[reason])
     if not values:
-        values.append("正常" if is_chinese else "normal")
+        values.append("帧数一致" if is_chinese else "frame-count matching")
     return tuple(values)
 
 
@@ -450,9 +450,9 @@ def duration_summary(
 ) -> dict[str, str]:
     total_duration_s = unchecked_duration_s + frame_difference_duration_s + clean_duration_s
     labels = (
-        ("全部", "无误", "有错误", "未检查")
+        ("全部", "帧数一致", "差帧或未检查", "未检查")
         if language == "中文"
-        else ("total", "error-free", "with errors", "unchecked")
+        else ("total", "frame-count matching", "mismatch or unchecked", "unchecked")
     )
     return {
         labels[0]: format_duration(total_duration_s),
@@ -475,9 +475,9 @@ def session_count_summary(
     )
     total_count = len(sessions)
     labels = (
-        ("全部", "无误", "有错误", "未检查")
+        ("全部", "帧数一致", "差帧或未检查", "未检查")
         if is_chinese
-        else ("total", "error-free", "with errors", "unchecked")
+        else ("total", "frame-count matching", "mismatch or unchecked", "unchecked")
     )
     return {
         labels[0]: total_count,
@@ -499,7 +499,7 @@ def session_anomaly_count_summary(
         if is_chinese
         else ("mocap extra", "mocap missing", "third-person extra", "third-person missing")
     )
-    normal_label = "正常" if is_chinese else "normal"
+    normal_label = "帧数一致" if is_chinese else "frame-count matching"
     counts: Counter[str] = Counter({label: 0 for label in error_labels})
     for session in sessions:
         counts.update(
@@ -535,6 +535,57 @@ def session_anomaly_duration_summary(
     return {labels[code]: format_duration(durations[code]) for code in labels}
 
 
+def quality_count_summary(sessions):
+    counts = Counter(session.quality_status for session in sessions)
+    return {"total": len(sessions), **{
+        state: counts[state] for state in ("passed", "error", "review", "unchecked")
+    }}
+
+
+def quality_type_summary(sessions):
+    rows = []
+    for code, (group, label) in ISSUE_LABELS.items():
+        affected = [session for session in sessions
+                    if any(issue["code"] == code for issue in session.quality_issues)]
+        if not affected:
+            continue
+        duration = sum(
+            segment.duration_s or 0.0
+            for session in affected for segment in session.segments
+            if any(issue["code"] == code for issue in segment.quality_issues)
+        )
+        severity = next(issue["severity"] for issue in affected[0].quality_issues
+                        if issue["code"] == code)
+        rows.append({"code": code, "group": group, "label": label, "severity": severity,
+                     "sessions": len(affected), "duration_s": duration})
+    return rows
+
+
+def render_quality_markdown(sessions, dataset_root):
+    names = {"passed": "正常", "error": "确认异常", "review": "待确认", "unchecked": "未完成"}
+    counts = quality_count_summary(sessions)
+    lines = ["## 综合质量统计", "", "；".join(
+        f"{label}：{counts[code]}" for code, label in (("total", "全部"), *names.items())
+    ), "", "| 大类 | 问题 | 状态 | 受影响 Session | 受影响时长 |", "|---|---|---|---:|---:|"]
+    states = {"error": "错误", "warning": "待确认", "unchecked": "未完成", "info": "说明"}
+    for row in quality_type_summary(sessions):
+        lines.append(f"| {row['group']} | {row['label']} | {states[row['severity']]} | "
+                     f"{row['sessions']} | {format_duration(row['duration_s'])} |")
+    lines += ["", ("同一 Session 可命中多类；每类按 Session 去重，分类数量与时长不能相加。"
+              "旧报告、未完成检查不算正常；兼容表头仅作说明，采样间隔异常单列待确认。"),
+              "", "| Session | 综合结论 | 问题及文件依据 |", "|---|---|---|"]
+    for session in sessions:
+        details = dict.fromkeys(
+            f"{issue['label']}：{issue['path'] or issue.get('segment', 'Session')} {issue['detail']}"
+            for issue in session.quality_issues
+        )
+        lines.append("| " + " | ".join(_markdown_cell(value) for value in (
+            session.session_dir.relative_to(dataset_root).as_posix(),
+            names[session.quality_status], "; ".join(details),
+        )) + " |")
+    return "\n".join(lines)
+
+
 def render_statistics_markdown(
     dataset_root: Path,
     primitives: tuple[PrimitiveStatistic, ...],
@@ -563,13 +614,13 @@ def render_statistics_markdown(
     )
     if is_chinese:
         lines = [
-            "## 数据集时长统计",
+            "## 帧数与时长统计（独立于综合质量）",
             "",
             f"- 根目录：`{dataset_root}`",
             f"- Session：**{session_count}**",
             f"- 未检查时长：**{format_duration(unchecked_duration_s)}**",
             f"- 差帧时长：**{format_duration(frame_difference_duration_s)}**",
-            f"- 无误时长：**{format_duration(clean_duration_s)}**",
+            f"- 帧数一致时长：**{format_duration(clean_duration_s)}**",
             f"- 总时长：**{format_duration(total_duration_s)}**",
             (
                 "- 时长统计：`"
@@ -577,17 +628,17 @@ def render_statistics_markdown(
                 + "`"
             ),
             (
-                "- Session 统计：`"
+                "- 帧数分类 Session 统计：`"
                 + json.dumps(overall_session_counts, ensure_ascii=False, separators=(", ", ": "))
                 + "`"
             ),
             (
-                "- 错误类型 Session 统计：`"
+                "- 帧数分类明细 Session 统计：`"
                 + json.dumps(overall_anomaly_counts, ensure_ascii=False, separators=(", ", ": "))
                 + "`"
             ),
             (
-                "- 错误类型时长统计：`"
+                "- 帧数分类明细时长统计：`"
                 + json.dumps(
                     overall_anomaly_durations, ensure_ascii=False, separators=(", ", ": ")
                 )
@@ -595,7 +646,7 @@ def render_statistics_markdown(
             ),
             "",
             (
-                "| 动作基元 | 未检查时长 | 差帧时长 | 无误时长 | 总时长 | 无误比率 | "
+                "| 动作基元 | 未检查时长 | 差帧时长 | 帧数一致时长 | 总时长 | 帧数一致比率 | "
                 "{Session: Session 时长} | "
                 "{Session: [异常s](未检查原因, mocap多帧, mocap少帧, "
                 "第三人称多帧, 第三人称少帧)} |"
@@ -604,7 +655,7 @@ def render_statistics_markdown(
         ]
     else:
         lines = [
-            "## Dataset duration statistics",
+            "## Frame counts and duration (separate from overall quality)",
             "",
             f"- Root: `{dataset_root}`",
             f"- Sessions: **{session_count}**",
@@ -613,7 +664,7 @@ def render_statistics_markdown(
                 "- Frame-count-difference duration: "
                 f"**{format_duration(frame_difference_duration_s)}**"
             ),
-            f"- Error-free duration: **{format_duration(clean_duration_s)}**",
+            f"- Frame-count matching duration: **{format_duration(clean_duration_s)}**",
             f"- Total duration: **{format_duration(total_duration_s)}**",
             (
                 "- Duration summary: `"
@@ -621,17 +672,17 @@ def render_statistics_markdown(
                 + "`"
             ),
             (
-                "- Session counts: `"
+                "- Frame-count Session counts: `"
                 + json.dumps(overall_session_counts, ensure_ascii=False, separators=(", ", ": "))
                 + "`"
             ),
             (
-                "- Error-type Session counts: `"
+                "- Frame-category Session counts: `"
                 + json.dumps(overall_anomaly_counts, ensure_ascii=False, separators=(", ", ": "))
                 + "`"
             ),
             (
-                "- Error-type duration summary: `"
+                "- Frame-category duration summary: `"
                 + json.dumps(
                     overall_anomaly_durations, ensure_ascii=False, separators=(", ", ": ")
                 )
@@ -640,7 +691,7 @@ def render_statistics_markdown(
             "",
             (
                 "| Primitive | Unchecked duration | Frame-count-difference duration | "
-                "Error-free duration | Total duration | Error-free ratio | "
+                "Frame-count matching duration | Total duration | Matching ratio | "
                 "{Session: duration} | "
                 "{Session: [anomalies](unchecked reason, mocap extra, mocap missing, "
                 "third-person extra, third-person missing)} |"
@@ -703,8 +754,8 @@ def render_statistics_markdown(
                 "",
                 (
                     "三类时长互斥且覆盖全部可计时时长：未检查包含缺少、无法读取或帧数字段无效的"
-                    "检查报告；差帧包含帧数不满足 n:ratio*(n+1):(n+1) 的 Segment；无误包含"
-                    "检查报告有效且帧数关系一致的 Segment。因此未检查时长 + 差帧时长 + 无误时长 "
+                    "检查报告；差帧包含帧数不满足 n:ratio*(n+1):(n+1) 的 Segment；帧数一致包含"
+                    "检查报告有效且帧数关系一致的 Segment。因此未检查时长 + 差帧时长 + 帧数一致时长 "
                     "= 总时长。时间戳 diff、推算丢帧、缺失时间戳和 frame_index 等其他问题不改变"
                     "这项帧数分类。每个 Segment 只使用一条 Robocap "
                     "参考视频计时。异常列表按每个 Segment 的实际帧数与期望帧数比较后，在 Session "
@@ -722,9 +773,9 @@ def render_statistics_markdown(
                 (
                     "The three duration categories are mutually exclusive and cover all measurable "
                     "duration. Unchecked means a missing, unreadable, or invalid inspection report; "
-                    "frame-count difference means n:ratio*(n+1):(n+1) is not satisfied; error-free "
+                    "frame-count difference means n:ratio*(n+1):(n+1) is not satisfied; frame-count matching "
                     "means a valid report with matching frame counts. Therefore unchecked + "
-                    "frame-count difference + error-free = total. Other timestamp, inferred-drop, "
+                    "frame-count difference + frame-count matching = total. Other timestamp, inferred-drop, "
                     "and frame-index findings do not change this frame-count classification. Each "
                     "segment is timed from one Robocap reference video. The "
                     "anomaly list compares actual and expected frame counts per Segment, then "
@@ -745,4 +796,4 @@ def render_statistics_markdown(
             session.session_dir.relative_to(dataset_root).as_posix(), session.integrity_status,
             "; ".join(session.integrity_issues),
         )) + " |")
-    return "\n".join(lines)
+    return render_quality_markdown(all_sessions, dataset_root) + "\n\n" + "\n".join(lines)

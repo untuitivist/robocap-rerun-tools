@@ -128,6 +128,7 @@ def test_complete_report_preserves_full_relative_paths_and_metadata(
     assert names == {
         f"{result.output_dir.name}/files.csv",
         f"{result.output_dir.name}/inspections.csv",
+        f"{result.output_dir.name}/inspection_issues.csv",
         f"{result.output_dir.name}/segments.csv",
         f"{result.output_dir.name}/sessions.csv",
         f"{result.output_dir.name}/statistics_report.html",

@@ -41,7 +41,7 @@ SESSION_NAME = re.compile(r"^\d{8}_\d{6}_session\d+$", re.IGNORECASE)
 SEGMENT_NAME = re.compile(r"^segment\d+$", re.IGNORECASE)
 STREAM_SEGMENT = re.compile(r"^(?:robocap_|robowrist_|audio_)(segment\d+)(?:_|\.wav$)", re.IGNORECASE)
 WRIST_DIRECTORY = re.compile(r"^robowrist_(.+)_(left|right)$", re.IGNORECASE)
-INTEGRITY_VERSION = 3
+INTEGRITY_VERSION = 4
 
 
 def is_link(path: Path):
