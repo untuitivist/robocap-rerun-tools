@@ -316,3 +316,80 @@ def test_full_list_has_no_silent_legacy_session_loss():
     # Real historical name has seven digits; parsing is by exact folder identity,
     # not by interpreting or correcting the clock string.
     assert repair.SESSION_PATH.fullmatch("20260912/D51/20260912_0120933_session28")
+
+
+def test_metadata_only_copy_skips_remote_but_does_not_claim_remote_is_bad(tmp_path):
+    source = tmp_path / SESSION
+    source.mkdir()
+    (source / "manifest.json").write_text(json.dumps(manifest()), encoding="utf-8")
+    api = SimpleNamespace(download_file=lambda *a, **k: pytest.fail("metadata-only network call"))
+    rows, files = repair.process_session(
+        request({"A": {}, "G": {}}),
+        [source],
+        api,
+        SimpleNamespace(),
+        tmp_path,
+        None,
+        None,
+        True,
+        lambda _: None,
+    )
+    assert not files
+    result = {r["group"]: r for r in rows}
+    assert result["A"]["status"] == "目录内缺原文件"
+    assert "未复核远端" in result["A"]["detail"]
+    assert result["G"]["status"] == "需人工确认"
+
+
+def test_previously_resolved_issue_is_still_checked_without_local_payload(tmp_path, monkeypatch):
+    from robocap_rerun_tools import upload_verification
+
+    source = tmp_path / SESSION
+    source.mkdir()
+    doc = manifest()
+    doc["files"] = [doc["files"][3]]
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(doc), encoding="utf-8")
+    remote = tmp_path / "remote.db"
+    remote.write_bytes(b"healthy")
+    filename = "robowrist_left1_left/robowrist_segment1_imu_left.db"
+    monkeypatch.setattr(
+        upload_verification,
+        "_remote_inventory",
+        lambda *a: {DESTINATION + "/" + filename: (7, "sha")},
+    )
+    monkeypatch.setattr(repair, "validate_candidate", lambda *a, **k: {"eligible": True})
+    calls = []
+
+    def download(repo, kind, path, **kwargs):
+        calls.append(path)
+        return manifest_path if path.endswith("manifest.json") else remote
+
+    rows, _ = repair.process_session(
+        request({"K": {"previously_resolved": True}}),
+        [source],
+        SimpleNamespace(download_file=download),
+        SimpleNamespace(repo_id="owner/data"),
+        tmp_path,
+        None,
+        None,
+        True,
+        lambda _: None,
+    )
+    assert rows[0]["status"] == repair.RESOLVED
+    assert calls == [DESTINATION + "/manifest.json", DESTINATION + "/" + filename]
+
+
+def test_reused_index_checks_identity_and_keeps_scan_errors(tmp_path):
+    source = tmp_path / SESSION
+    source.mkdir()
+    index = tmp_path / "sources.json"
+    index.write_text(json.dumps({SESSION: [str(source)]}), encoding="utf-8")
+    (tmp_path / "summary.json").write_text(json.dumps({"roots": [str(tmp_path)]}), encoding="utf-8")
+    (tmp_path / "scan_errors.csv").write_text("path,error\nold,denied\n", encoding="utf-8")
+    found, errors, roots = repair.load_sources_index(index, [request({"A": {}})])
+    assert found == {SESSION: [source]} and errors == [{"path": "old", "error": "denied"}]
+    assert roots == [tmp_path]
+    index.write_text(json.dumps({SESSION: [str(tmp_path)]}), encoding="utf-8")
+    with pytest.raises(ValueError, match="身份不符"):
+        repair.load_sources_index(index, [request({"A": {}})])

@@ -151,6 +151,40 @@ def manifest_records(manifest):
     return records
 
 
+def load_sources_index(index, requests):
+    """Reuse discovery only; payload contents are always checked again."""
+    document = json.loads(index.read_text(encoding="utf-8-sig"))
+    names = {r["session"] for r in requests}
+    found, errors = {}, []
+    if not isinstance(document, dict):
+        raise ValueError("搜索索引必须是 sources.json 对象")  # noqa: TRY004 - invalid CLI input
+    for name, paths in document.items():
+        if name not in names:
+            continue
+        if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths):
+            raise ValueError(f"搜索索引路径列表无效：{name}")
+        checked = []
+        for value in paths:
+            path = Path(value)
+            if not path.is_absolute() or path.name != name:
+                raise ValueError(f"搜索索引的 Session 文件夹身份不符：{value}")
+            if path.is_dir():
+                checked.append(path)
+            else:
+                errors.append({"path": value, "error": "索引目录当前不存在或不可访问"})
+        if checked:
+            found[name] = list(dict.fromkeys(checked))
+    roots = []
+    summary = index.with_name("summary.json")
+    if summary.is_file():
+        roots = [Path(p) for p in json.loads(summary.read_text(encoding="utf-8"))["roots"]]
+    previous_errors = index.with_name("scan_errors.csv")
+    if previous_errors.is_file():
+        with previous_errors.open(encoding="utf-8-sig", newline="") as stream:
+            errors.extend(dict(row) for row in csv.DictReader(stream))
+    return found, errors, roots
+
+
 def export_match(name, entity, suffix):
     return re.search(r"(?:^|[-_])" + entity + re.escape(suffix) + r"$", name, re.IGNORECASE)
 
@@ -535,6 +569,35 @@ def process_session(request, sources, api, settings, output, ffmpeg, ffprobe, ap
         paths, errors = source_files(source)
         local_inventory[source] = paths
         local_errors.extend(str(p) + ": " + error for p, error in errors)
+    # Metadata-only checkouts cannot supply capture data. Do not query 1,000s of
+    # remote manifests just to discover that there is no local payload to send.
+    # Any potentially relevant payload falls through to the latest remote manifest,
+    # including unknown names/layouts; cached manifests never authorize an upload.
+    extensions = {
+        "A": {".csv"},
+        "B": {".trc"},
+        "C": {".bvh"},
+        "D": {".csv", ".trc", ".bvh"},
+        "E": {".trc"},
+        "F": {".csv", ".trc"},
+        "I": {".db", ".mp4"},
+        "J": {".mp4"},
+        "K": {".db"},
+        "L": {".db"},
+    }
+    wanted = set().union(*(extensions[g] for g in automatic))
+    previously_resolved = any(d.get("previously_resolved") for d in request["groups"].values())
+    if not previously_resolved and not any(
+        p.suffix.lower() in wanted for paths in local_inventory.values() for p in paths
+    ):
+        for group in automatic:
+            rows[group].update(
+                status="目录内缺原文件",
+                detail="同名目录中没有本问题所需格式的实际原文件；本轮未复核远端，不代表无法恢复",
+            )
+            if local_errors:
+                rows[group]["detail"] += "；部分目录读取不完整：" + "；".join(local_errors)
+        return list(rows.values()), []
     remote_path = api.download_file(
         settings.repo_id, "dataset", destination + "/manifest.json", revision="master", force=True
     )
@@ -682,7 +745,7 @@ def process_session(request, sources, api, settings, output, ffmpeg, ffprobe, ap
     return list(rows.values()), files
 
 
-def write_reports(output, requests, found, rows, files, errors, roots, apply):
+def write_reports(output, requests, found, rows, files, errors, roots, apply, source_index=None):
     write_csv(
         output / "results.csv", rows, ["session_path", "group", "status", "detail", "sources"]
     )
@@ -702,6 +765,10 @@ def write_reports(output, requests, found, rows, files, errors, roots, apply):
         "statuses": dict(Counter(r["status"] for r in rows)),
         "scan_complete": not errors,
         "scan_errors": len(errors),
+        "sources_index": str(source_index) if source_index else None,
+        "uploaded_files": sum(bool(f.get("revision")) for f in files),
+        "newly_repaired_sessions": len({f["session_path"] for f in files if f.get("revision")}),
+        "already_good_files": sum(f["status"] == RESOLVED and not f.get("revision") for f in files),
     }
     for name, value in (
         ("results.json", rows),
@@ -758,6 +825,9 @@ def main(argv=None):
     parser.add_argument("--report", type=Path, required=True, help="Aaron 的问题 Markdown")
     parser.add_argument("--root", type=Path, action="append", default=[])
     parser.add_argument("--auto-roots", action="store_true", help="搜索当前电脑所有本地盘和映射盘")
+    parser.add_argument(
+        "--sources-index", type=Path, help="复用之前的 sources.json，仍重新检查原文件"
+    )
     parser.add_argument("--apply", action="store_true", help="找到有效原件后补传并校验远端")
     parser.add_argument("--scan-only", action="store_true", help="只搜索原件目录，不访问远端")
     parser.add_argument("--open-report", action="store_true")
@@ -769,7 +839,9 @@ def main(argv=None):
         / datetime.now(UTC).astimezone().strftime("%Y%m%d_%H%M%S_%f"),
     )
     args = parser.parse_args(argv)
-    roots = (automatic_roots() if args.auto_roots or not args.root else []) + args.root
+    roots = (
+        automatic_roots() if args.auto_roots or (not args.root and not args.sources_index) else []
+    ) + args.root
     roots = list(dict.fromkeys(p.expanduser().absolute() for p in roots))
     output = args.output.expanduser().absolute()
     if output.exists() or any(root.is_relative_to(output) for root in roots):
@@ -788,8 +860,21 @@ def main(argv=None):
             logfile.flush()
 
         log(f"问题 Session {len(requests)} 个；自动补传={args.apply}；结果目录：{output}")
-        found, errors = find_sources(roots, {r["session"] for r in requests}, output, log)
-        write_reports(output, requests, found, rows, files, errors, roots, args.apply)
+        found, errors, indexed_roots = {}, [], []
+        if args.sources_index:
+            log(f"复用搜索索引（不代表本次重新全盘搜索）：{args.sources_index}")
+            found, errors, indexed_roots = load_sources_index(args.sources_index, requests)
+        if roots:
+            searched, scan_errors = find_sources(
+                roots, {r["session"] for r in requests}, output, log
+            )
+            errors.extend(scan_errors)
+            for name, paths in searched.items():
+                found[name] = list(dict.fromkeys(found.get(name, []) + paths))
+        roots = list(dict.fromkeys(indexed_roots + roots))
+        write_reports(
+            output, requests, found, rows, files, errors, roots, args.apply, args.sources_index
+        )
         if args.scan_only:
             rows = [
                 {
@@ -869,8 +954,20 @@ def main(argv=None):
                         + "\n"
                     )
                 if number % 20 == 0:
-                    write_reports(output, requests, found, rows, files, errors, roots, args.apply)
-        summary = write_reports(output, requests, found, rows, files, errors, roots, args.apply)
+                    write_reports(
+                        output,
+                        requests,
+                        found,
+                        rows,
+                        files,
+                        errors,
+                        roots,
+                        args.apply,
+                        args.sources_index,
+                    )
+        summary = write_reports(
+            output, requests, found, rows, files, errors, roots, args.apply, args.sources_index
+        )
         log("处理结束：" + json.dumps(summary, ensure_ascii=False))
     if args.open_report:
         webbrowser.open((output / "report.html").as_uri())
