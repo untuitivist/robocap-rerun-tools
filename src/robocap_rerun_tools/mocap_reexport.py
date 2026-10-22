@@ -124,15 +124,15 @@ def read_report_plan():
             ):
                 raise ValueError(f"现场报告中的原始路径无效：{path}")
         state = (
-            "未找到原始导出目录"
+            "历史清单未记录源目录（未现场查找）"
             if not sources
             else "源目录重复，需确认"
             if len(sources) > 1
-            else "未找到本地原始 Session"
+            else "历史清单未记录目标 Session（未现场查找）"
             if not destinations
             else "Session 多份副本，需确认"
             if len(destinations) > 1
-            else "匹配唯一"
+            else "历史清单匹配唯一（未现场复查）"
         )
         rows.append(
             {
@@ -152,33 +152,63 @@ def read_report_plan():
     )
 
 
-def verify_report_paths(rows, log=print, *, timeout=30):
-    """Probe only listed paths before copying; do not recurse or guess replacements."""
-    checked, errors = {}, []
-    with DirectoryReader(timeout=timeout) as reader:
-        for row in rows:
-            if row["state"] != "匹配唯一":
-                continue
-            for path in [*row["sources"], *row["destinations"]]:
-                if path in checked:
-                    continue
-                log(f"仅复查报告路径：{path}")
-                try:
-                    result = reader.read(
-                        path,
-                        lambda p, elapsed: log(f"等待已知路径：{p}；{elapsed:.0f}/{timeout:g} 秒"),
-                    )
-                    checked[path] = result.get("error", "")
-                except (OSError, ValueError, TimeoutError) as exc:
-                    checked[path] = str(exc)
-                if checked[path]:
-                    errors.append({"path": path, "error": checked[path]})
+def report_search_roots(rows):
+    """Expand historical paths to their data roots without filesystem probes."""
+    candidates = set()
     for row in rows:
-        if row["state"] == "匹配唯一" and any(
-            checked[p] for p in [*row["sources"], *row["destinations"]]
-        ):
-            row["state"] = "报告路径当前不可访问，未复制"
-    return errors
+        for key, root_name in (("sources", "nokov"), ("destinations", "egomocapactionsdataset")):
+            for value in row[key]:
+                path = Path(value)
+                root = next(
+                    (parent for parent in path.parents if parent.name.casefold() == root_name),
+                    path.parent,
+                )
+                candidates.add(root)
+    roots = []
+    for root in sorted(candidates, key=lambda path: (len(path.parts), str(path).casefold())):
+        if not any(root.is_relative_to(parent) for parent in roots):
+            roots.append(root)
+    return roots
+
+
+def annotate_discovery(rows, discovery, history=()):
+    previous = {row["session"]: row for row in history}
+    for row in rows:
+        mode, complete = discovery["mode"], discovery["complete"]
+        if mode in {"snapshot", "inventory"}:
+            row["search_status"] = "未现场查找"
+            if mode == "inventory":
+                if not row["sources"]:
+                    row["state"] = "目录快照未记录源目录（未现场查找）"
+                elif not row["destinations"]:
+                    row["state"] = "目录快照未记录目标 Session（未现场查找）"
+                elif row["state"] == "匹配唯一":
+                    row["state"] = "目录快照匹配唯一（未现场复查）"
+        else:
+            row["search_status"] = "本次搜索范围已完成" if complete else "搜索未完成"
+            if not row["sources"]:
+                row["state"] = (
+                    "本次搜索范围内未找到原始导出目录"
+                    if complete else "搜索未完成，源目录尚未确认"
+                )
+            elif not row["destinations"] and row["state"] == "未找到本地原始 Session":
+                row["state"] = (
+                    "本次搜索范围内未找到原始 Session"
+                    if complete else "搜索未完成，目标 Session 尚未确认"
+                )
+            elif row["state"] == "匹配唯一" and not complete:
+                row["state"] = "搜索未完成，匹配唯一性待确认"
+        old = previous.get(row["session"])
+        changes = []
+        if old is not None:
+            for key, label in (("sources", "源目录"), ("destinations", "目标 Session")):
+                row[f"historical_{key}"] = old[key]
+                before = {os.path.normcase(path) for path in old[key]}
+                after = {os.path.normcase(path) for path in row[key]}
+                if before != after:
+                    changes.append(f"{label}更新：历史 {len(before)} 处，本次发现 {len(after)} 处")
+        row["mapping_note"] = "；".join(changes)
+    return rows
 
 
 def scan_directories(roots, log=print, *, timeout=30, progress_seconds=5, checkpoint=None):
@@ -224,17 +254,23 @@ def scan_directories(roots, log=print, *, timeout=30, progress_seconds=5, checkp
                         log(f"跳过：{current}：{record['error']}")
                         continue
                     count += 1
-                    directories.add(current)
+                    children = {
+                        current / name for name in record["directories"]
+                        if name.casefold() not in excluded
+                    }
+                    discovered = {current, *children}
+                    matched += sum(
+                        path.name.casefold() in wanted for path in discovered - directories
+                    )
+                    directories.update(discovered)
                     batch_files[current].update(record["files"])
                     errors.extend(record["errors"])
-                    matched += current.name.casefold() in wanted
-                    # All named export subtrees are payloads, not additional batches.
-                    # This also avoids repeatedly traversing same-name nested exports.
-                    if not re.match(r"^mocap-[a-z]+\d+-S\d+-", current.name, re.IGNORECASE):
+                    if not SESSION.fullmatch(current.name) and not current.name.casefold().startswith(
+                        "mocap-"
+                    ):
                         pending.extend(
-                            current / name
-                            for name in sorted(record["directories"], reverse=True)
-                            if name.casefold() not in excluded
+                            path for path in sorted(children, key=str, reverse=True)
+                            if not path.name.casefold().startswith("mocap-")
                         )
                     if time.monotonic() - last_progress >= progress_seconds:
                         progress(current)
@@ -339,7 +375,7 @@ def make_plan(targets, directories, batch_files):
     return rows
 
 
-def write_report(output, rows, errors, *, inventory=None, basis=None):
+def write_report(output, rows, errors, *, inventory=None, basis=None, discovery=None):
     batches = defaultdict(list)
     for row in rows:
         for batch in row["batches"]:
@@ -355,6 +391,8 @@ def write_report(output, rows, errors, *, inventory=None, basis=None):
         "destinations",
         "groups",
         "report_status",
+        "search_status",
+        "mapping_note",
     ]
     flat = [
         {**r, "groups": "; ".join(f"{g}: {title}" for g, title in r["groups"].items())}
@@ -368,6 +406,7 @@ def write_report(output, rows, errors, *, inventory=None, basis=None):
                 "schema_version": 1,
                 "inventory": str(inventory) if inventory else None,
                 "basis": basis,
+                "discovery": discovery,
                 "rows": rows,
                 "errors": errors,
             },
@@ -394,11 +433,18 @@ def write_report(output, rows, errors, *, inventory=None, basis=None):
         if inventory
         else "搜索失败或未开放的共享仍可能有原件，详见 scan_errors.csv。"
     )
-    if basis:
+    if discovery and discovery["mode"] not in {"snapshot", "inventory"}:
+        warning = (
+            "已重新搜索下列目录；录制名称与原问题来自 " + html.escape(basis or "内置清单")
+            + "。历史路径仅作对照，复制使用本次发现并验证的路径。"
+        )
+        if not discovery["complete"]:
+            warning += " 搜索未完成，不能确认不存在或匹配唯一；详见未完成路径。"
+    elif basis:
         warning = (
             "直接使用 "
             + html.escape(basis)
-            + "；本次未重新搜索 Session。路径是否仍可用，在复制前复查。"
+            + "；未现场查找，空映射不表示原件不存在；复制时会重新搜索。"
         )
     page = """<!doctype html><html lang='zh-CN'><meta charset='utf-8'>
 <title>动捕问题批次重导出清单</title><style>
@@ -420,6 +466,19 @@ td,th{border:1px solid #ccd4df;padding:7px;vertical-align:top;white-space:pre-wr
         batch_rows,
         {"batch": "批次大目录", "count": "问题 Session 数", "recordings": "本批次需重新导出的录制"},
     )
+    if discovery:
+        page += "<h2>本次搜索范围</h2>"
+        if discovery["roots"]:
+            page += "<ul>" + "".join(
+                f"<li>{html.escape(path)}</li>" for path in discovery["roots"]
+            ) + "</ul>"
+        else:
+            page += "<p>本次未现场搜索目录。</p>"
+        page += (
+            "<p>开始：" + html.escape(discovery.get("started_at") or "—")
+            + "；结束：" + html.escape(discovery.get("finished_at") or "未完成")
+            + "。搜索范围以此为准，不代表其他盘或目录中不存在原件。</p>"
+        )
     page += "<h2>逐 Session 对照（含找不到、重复和需人工判断）</h2>"
     page += render_table(
         flat,
@@ -435,6 +494,8 @@ td,th{border:1px solid #ccd4df;padding:7px;vertical-align:top;white-space:pre-wr
                     "目标 Session",
                     "原问题",
                     "现场报告状态",
+                    "搜索情况",
+                    "与历史映射对照",
                 ],
             )
         ),
@@ -673,8 +734,9 @@ def main(argv=None):
     parser.add_argument("--output", type=Path)
     parser.add_argument("--open-report", action="store_true")
     parser.add_argument(
-        "--rescan", action="store_true", help="维护者：重新搜索磁盘；默认复用现场报告"
+        "--rescan", action="store_true", help="维护者：扩展到本地盘和已知共享；默认仅刷新数据根目录"
     )
+    parser.add_argument("--snapshot-only", action="store_true", help="仅离线查看历史映射，不现场查找")
     parser.add_argument(
         "--scan-timeout",
         type=float,
@@ -686,6 +748,10 @@ def main(argv=None):
         parser.error("--scan-timeout 必须是正的有限秒数")
     if args.inventory and args.mode == "copy":
         parser.error("WizTree 只用于离线报告，复制必须复查实际文件")
+    if args.snapshot_only and (
+        args.mode != "report" or args.root or args.rescan or args.inventory
+    ):
+        parser.error("--snapshot-only 只能单独用于 report，不能复制或与搜索参数混用")
     output = (
         args.output
         or ARTIFACTS / (datetime.now(UTC).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6])
@@ -703,32 +769,46 @@ def main(argv=None):
             log(f"日志和阶段报告：{output}")
             targets = read_targets()
             errors, scan_errors, rows, basis = [], [], None, None
-            if args.inventory:
-                dirs, names, scan_errors = inventory_directories(args.inventory)
-            elif not args.root and not args.rescan:
+            history = []
+            discovery = {
+                "mode": "targeted", "roots": [], "complete": False,
+                "started_at": None, "finished_at": None,
+            }
+            if args.snapshot_only:
                 rows, basis = read_report_plan()
-                log(f"直接使用：{basis}")
-                log("不重新扫描 Session，不发现网络共享，不搜索其他盘。")
-                if args.mode == "copy":
-                    write_report(output, rows, [], basis=basis)
-                    try:
-                        scan_errors = verify_report_paths(rows, log, timeout=args.scan_timeout)
-                    except KeyboardInterrupt:
-                        scan_errors = [
-                            {"path": "复查", "error": "用户中止，未开始复制", "cancelled": True}
-                        ]
-                        log("已中止复查，保存报告；不会继续复制。")
+                discovery["mode"] = "snapshot"
+                log(f"仅查看历史清单，未现场查找：{basis}")
+            elif args.inventory:
+                dirs, names, scan_errors = inventory_directories(args.inventory)
+                discovery["mode"] = "inventory"
             else:
-                roots = args.root or automatic_roots()
-                if not args.root:
-                    from .share_discovery import discover_shares
+                if not args.root and not args.rescan:
+                    history, basis = read_report_plan()
+                    targets = history
+                    roots = report_search_roots(history)
+                    log(f"沿用问题清单，重新发现现场路径：{basis}")
+                    log("刷新已知 NOKOV 和原始 Session 数据根目录；跳过导出及分段数据子树。")
+                else:
+                    discovery["mode"] = "explicit"
+                    roots = args.root or automatic_roots()
+                    if not args.root:
+                        from .share_discovery import discover_shares
 
-                    shares, discoveries = discover_shares(log)
-                    errors = [r for r in discoveries if r.get("error")]
-                    roots = list(dict.fromkeys([*roots, *shares]))
+                        shares, discoveries = discover_shares(log)
+                        errors = [r for r in discoveries if r.get("error")]
+                        roots = list(dict.fromkeys([*roots, *shares]))
+                roots = [Path(root).expanduser().absolute() for root in roots]
+                discovery.update(
+                    roots=[str(root) for root in roots],
+                    started_at=datetime.now(UTC).isoformat(),
+                )
+                if not roots:
+                    errors.append({"path": "搜索根目录", "error": "清单没有数据根目录，请指定 --root"})
 
                 def checkpoint(dirs, names, partial_errors):
-                    partial_rows = make_plan(targets, dirs, names)
+                    partial_rows = annotate_discovery(
+                        make_plan(targets, dirs, names), discovery, history
+                    )
                     write_report(
                         output,
                         partial_rows,
@@ -740,18 +820,28 @@ def main(argv=None):
                                 "error": "扫描尚未完成，这是阶段报告",
                             },
                         ],
+                        basis=basis,
+                        discovery=discovery,
                     )
                     log(f"阶段报告已保存：{output / 'report.html'}")
 
+                checkpoint(set(), {}, [])
                 dirs, names, scan_errors = scan_directories(
                     roots, log, timeout=args.scan_timeout, checkpoint=checkpoint
+                )
+                discovery.update(
+                    complete=bool(roots) and not errors and not scan_errors,
+                    finished_at=datetime.now(UTC).isoformat(),
                 )
             errors.extend(scan_errors)
             if rows is None:
                 rows = make_plan(targets, dirs, names)
-            count = write_report(output, rows, errors, inventory=args.inventory, basis=basis)
+            rows = annotate_discovery(rows, discovery, history)
+            count = write_report(
+                output, rows, errors, inventory=args.inventory, basis=basis, discovery=discovery
+            )
             log(f"找到 {count} 个问题批次；报告：{output / 'report.html'}")
-            cancelled = any(e.get("cancelled") for e in scan_errors)
+            cancelled = any(error.get("cancelled") for error in errors)
             if args.mode == "copy" and not cancelled:
                 ARTIFACTS.mkdir(parents=True, exist_ok=True)
                 results = []

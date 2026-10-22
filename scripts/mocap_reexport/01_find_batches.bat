@@ -9,7 +9,8 @@ pushd "%~dp0..\.."
 if errorlevel 1 goto repo_error
 where uv >nul 2>&1
 if errorlevel 1 goto uv_error
-echo Default: using the supplied report. No Session rescan or source changes.
+echo Refreshing known NOKOV and raw Session roots from the supplied report.
+echo New batches and paths are discovered. Source data is not changed.
 echo Please keep this window open. Progress and errors are logged.
 uv run python -m robocap_rerun_tools.mocap_reexport report --open-report %*
 set "EXIT_CODE=%ERRORLEVEL%"

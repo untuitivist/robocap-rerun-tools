@@ -352,7 +352,7 @@ def test_nonpositive_scan_timeout_is_rejected():
     assert error.value.code == 2
 
 
-def test_default_report_uses_onsite_results_without_scanning_any_disk(tmp_path, monkeypatch):
+def test_snapshot_report_never_scans_or_claims_live_matching(tmp_path, monkeypatch):
     def unexpected_scan(*_args, **_kwargs):
         pytest.fail("Default report must not rediscover Sessions or probe onsite disks")
 
@@ -360,58 +360,172 @@ def test_default_report_uses_onsite_results_without_scanning_any_disk(tmp_path, 
     monkeypatch.setattr(tool, "scan_directories", unexpected_scan)
     monkeypatch.setattr(tool, "DirectoryReader", unexpected_scan)
     output = tmp_path / "report"
-    assert tool.main(["report", "--output", str(output)]) == 1
+    assert tool.main(["report", "--snapshot-only", "--output", str(output)]) == 1
     plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
     rows = plan["rows"]
     assert len(rows) == 74
     assert "20261022_213918_248704" in plan["basis"]
     assert sum(bool(r["sources"]) for r in rows) == 25
     assert sum(bool(r["destinations"]) for r in rows) == 20
-    assert sum(r["state"] == "匹配唯一" for r in rows) == 18
+    assert sum(r["state"] == "历史清单匹配唯一（未现场复查）" for r in rows) == 18
+    assert sum("未现场查找" in r["state"] for r in rows) == 56
     assert len({p for r in rows for p in r["batches"]}) == 4
     assert sum(len(r["groups"]) for r in rows) == 84
     assert all(".cache" not in p for r in rows for p in r["destinations"])
-    assert "本次未重新搜索 Session" in (output / "report.html").read_text(encoding="utf-8")
+    assert "未现场查找" in (output / "report.html").read_text(encoding="utf-8")
+    assert plan["discovery"]["mode"] == "snapshot"
 
 
-def test_report_copy_verifies_only_exact_paths_and_blocks_unavailable_paths(monkeypatch):
-    visited = []
-
-    class Reader:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            pass
-
-        def read(self, path, _waiting):
-            visited.append(path)
-            return {"error": "directory unavailable"} if path == "missing" else {}
-
-    monkeypatch.setattr(tool, "DirectoryReader", Reader)
-    rows = [
-        {"state": "匹配唯一", "sources": ["source"], "destinations": ["missing"]},
-        {"state": "未找到本地原始 Session", "sources": ["skip"], "destinations": []},
-    ]
-    errors = tool.verify_report_paths(rows, lambda _: None)
-    assert visited == ["source", "missing"]
-    assert len(errors) == 1 and rows[0]["state"] == "报告路径当前不可访问，未复制"
+def test_bundled_search_roots_cover_entire_capture_and_raw_trees():
+    rows, _basis = tool.read_report_plan()
+    assert {str(PureWindowsPath(path)) for path in tool.report_search_roots(rows)} == {
+        "F:\\桌面\\nokov", "F:\\桌面\\EgoMocapActionsDataset"
+    }
 
 
-def test_cancel_default_copy_saves_report_without_searching_or_writing_data(tmp_path, monkeypatch):
-    def cancel(*_args, **_kwargs):
-        raise KeyboardInterrupt
-
+def test_cancel_default_copy_saves_report_without_writing_data(tmp_path, monkeypatch):
     def unexpected_copy(*_args):
         pytest.fail("Cancelled path verification must not start copying")
 
-    monkeypatch.setattr(tool, "verify_report_paths", cancel)
+    monkeypatch.setattr(tool, "report_search_roots", lambda _rows: [tmp_path])
+    monkeypatch.setattr(
+        tool, "scan_directories",
+        lambda *a, **k: (set(), {}, [{"path": "扫描", "error": "用户中止", "cancelled": True}]),
+    )
     monkeypatch.setattr(tool, "copy_one", unexpected_copy)
     output = tmp_path / "report"
     assert tool.main(["copy", "--output", str(output)]) == 1
-    assert "未开始复制" in (output / "scan_errors.csv").read_text(encoding="utf-8")
+    assert "用户中止" in (output / "scan_errors.csv").read_text(encoding="utf-8")
     assert (output / "report.html").is_file()
     assert not (output / "copy_results.json").exists()
+
+
+def bind_history(monkeypatch, source, session, *, has_source=False):
+    row = {
+        **target(),
+        "sources": [str(source)] if has_source else [],
+        "destinations": [str(session)],
+        "state": "历史清单未记录源目录（未现场查找）",
+        "batches": [str(source.parent)] if has_source else [],
+        "manual_review": False,
+        "report_status": "目录内缺原文件",
+    }
+    monkeypatch.setattr(tool, "read_report_plan", lambda: ([row], "测试历史报告"))
+    monkeypatch.setattr(tool, "read_targets", lambda: [target()])
+
+    def unexpected_full_scan():
+        pytest.fail("Default discovery must stay within known capture and raw roots")
+
+    monkeypatch.setattr(tool, "automatic_roots", unexpected_full_scan)
+    return row
+
+
+def test_default_discovers_added_batch_and_target_before_copy(tmp_path, monkeypatch):
+    source = exports(tmp_path / "nokov" / "new-older-batch" / RECORDING)
+    session = tmp_path / "EgoMocapActionsDataset" / "new-day" / SESSION
+    session.mkdir(parents=True)
+    (session / "segment1").mkdir()
+    historical_source = tmp_path / "nokov" / "old-batch" / RECORDING
+    historical_session = tmp_path / "EgoMocapActionsDataset" / "old-day" / SESSION
+    bind_history(monkeypatch, historical_source, historical_session, has_source=True)
+    monkeypatch.setattr(tool, "ARTIFACTS", tmp_path / "artifacts")
+    output = tmp_path / "result"
+    assert tool.main(["copy", "--output", str(output)]) == 0
+    plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    row = plan["rows"][0]
+    assert row["sources"] == [str(source)] and row["destinations"] == [str(session)]
+    assert row["historical_sources"] == [str(historical_source)]
+    assert row["historical_destinations"] == [str(historical_session)]
+    assert plan["discovery"]["complete"] and plan["discovery"]["finished_at"]
+    assert plan["discovery"]["mode"] == "targeted"
+    assert row["mapping_note"]
+    copied = json.loads((output / "copy_results.json").read_text(encoding="utf-8"))
+    assert copied[0]["state"] == "已复制并校验"
+    assert (source / f"{RECORDING}-Body0.csv").read_bytes() == (
+        session / RECORDING / f"{RECORDING}-Body0.csv"
+    ).read_bytes()
+
+
+def test_default_finds_previously_unmapped_recording_from_known_root(tmp_path, monkeypatch):
+    source = exports(tmp_path / "nokov" / "new-batch" / RECORDING)
+    session = tmp_path / "raw" / SESSION
+    (session / RECORDING).mkdir(parents=True)
+    bind_history(monkeypatch, source, session)
+    monkeypatch.setattr(tool, "report_search_roots", lambda _rows: [tmp_path / "nokov", tmp_path / "raw"])
+    output = tmp_path / "report"
+    assert tool.main(["report", "--output", str(output)]) == 0
+    plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    assert plan["rows"][0]["sources"] == [str(source)]
+    assert plan["rows"][0]["historical_sources"] == []
+    assert "已重新搜索" in (output / "report.html").read_text(encoding="utf-8")
+
+
+def test_new_duplicate_source_blocks_copy_even_when_old_mapping_was_unique(tmp_path, monkeypatch):
+    _row, source, session = plan_for(tmp_path)
+    exports(source.parent.parent / "new-batch" / RECORDING)
+    bind_history(monkeypatch, source, session, has_source=True)
+    monkeypatch.setattr(tool, "ARTIFACTS", tmp_path / "artifacts")
+    output = tmp_path / "result"
+    assert tool.main(["copy", "--output", str(output)]) == 1
+    plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    assert len(plan["rows"][0]["sources"]) == 2
+    assert "重复" in plan["rows"][0]["state"]
+    assert (session / RECORDING / "old.txt").read_text() == "preserve"
+
+
+def test_partial_discovery_does_not_claim_absence_or_unique_copy(tmp_path, monkeypatch):
+    _row, source, session = plan_for(tmp_path)
+    dirs, names, _errors = tool.scan_directories([tmp_path], lambda _: None)
+    bind_history(monkeypatch, source, session, has_source=True)
+    monkeypatch.setattr(
+        tool, "scan_directories",
+        lambda *a, **k: (dirs, names, [{"path": str(tmp_path / "unreadable"), "error": "timeout"}]),
+    )
+    monkeypatch.setattr(tool, "ARTIFACTS", tmp_path / "artifacts")
+    output = tmp_path / "result"
+    assert tool.main(["copy", "--output", str(output)]) == 1
+    plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    assert not plan["discovery"]["complete"]
+    assert "搜索未完成" in plan["rows"][0]["state"]
+    assert (session / RECORDING / "old.txt").read_text() == "preserve"
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_missing_and_unsearched_sources_have_different_states(tmp_path, monkeypatch, unavailable):
+    source = tmp_path / "nokov" / "batch" / RECORDING
+    session = tmp_path / "EgoMocapActionsDataset" / SESSION
+    (session / RECORDING).mkdir(parents=True)
+    if not unavailable:
+        source.parent.mkdir(parents=True)
+    bind_history(monkeypatch, source, session, has_source=True)
+    output = tmp_path / "report"
+    assert tool.main(["report", "--output", str(output)]) == 1
+    plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    state = plan["rows"][0]["state"]
+    assert ("搜索未完成" if unavailable else "本次搜索范围内未找到") in state
+    assert not plan["rows"][0]["sources"]
+    assert plan["rows"][0]["historical_sources"] == [str(source)]
+
+
+def test_session_payload_directories_are_indexed_without_traversal(tmp_path, monkeypatch):
+    session = tmp_path / SESSION
+    (session / "segment1" / "large-payload").mkdir(parents=True)
+    (session / RECORDING / "nested-payload").mkdir(parents=True)
+    original = DirectoryReader.read
+    visited = []
+
+    def read(reader, path, waiting):
+        visited.append(path)
+        return original(reader, path, waiting)
+
+    monkeypatch.setattr(DirectoryReader, "read", read)
+    directories, names, errors = tool.scan_directories([tmp_path], lambda _: None)
+    assert not errors and visited == [tmp_path, session]
+    assert session / "segment1" in directories and session / RECORDING in directories
+    assert tool.make_plan([target()], directories, names)[0]["destinations"] == [str(session)]
+
+
+def test_snapshot_only_cannot_be_used_to_copy():
+    with pytest.raises(SystemExit) as error:
+        tool.main(["copy", "--snapshot-only"])
+    assert error.value.code == 2

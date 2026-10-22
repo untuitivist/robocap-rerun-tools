@@ -10,6 +10,7 @@ if errorlevel 1 goto repo_error
 where uv >nul 2>&1
 if errorlevel 1 goto uv_error
 echo Finish NOKOV export before running this tool.
+echo Refreshing directory mappings before validation and copying.
 echo Checking and copying exact matches. Originals and backups are kept.
 echo No remote uploads. Progress and errors are logged.
 uv run python -m robocap_rerun_tools.mocap_reexport copy --open-report %*
