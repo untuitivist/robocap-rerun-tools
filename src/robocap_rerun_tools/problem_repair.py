@@ -587,13 +587,27 @@ def process_session(request, sources, api, settings, output, ffmpeg, ffprobe, ap
     }
     wanted = set().union(*(extensions[g] for g in automatic))
     previously_resolved = any(d.get("previously_resolved") for d in request["groups"].values())
-    if not previously_resolved and not any(
-        p.suffix.lower() in wanted for paths in local_inventory.values() for p in paths
-    ):
+    payload_exists = False
+    placeholders = []
+    for paths in local_inventory.values():
+        for path in paths:
+            if path.suffix.lower() not in wanted:
+                continue
+            try:
+                with path.open("rb") as stream:
+                    prefix = stream.read(128)
+                if prefix and not prefix.startswith(b"version https://git-lfs.github.com/spec/v1"):
+                    payload_exists = True
+                else:
+                    placeholders.append(str(path) + ("：LFS 占位" if prefix else "：零字节"))
+            except OSError as exc:
+                local_errors.append(str(path) + ": " + str(exc))
+    if not previously_resolved and not payload_exists:
         for group in automatic:
             rows[group].update(
-                status="目录内缺原文件",
-                detail="同名目录中没有本问题所需格式的实际原文件；本轮未复核远端，不代表无法恢复",
+                status="无有效原件（远端待复核）" if placeholders else "目录内缺原文件",
+                detail="同名目录中没有本问题所需格式的实际原文件；本轮未复核远端，不代表无法恢复"
+                + ("；" + "；".join(placeholders) if placeholders else ""),
             )
             if local_errors:
                 rows[group]["detail"] += "；部分目录读取不完整：" + "；".join(local_errors)
@@ -665,8 +679,18 @@ def process_session(request, sources, api, settings, output, ffmpeg, ffprobe, ap
                     "dataset",
                     destination + "/" + relative,
                     revision="master",
-                    force=True,
+                    force=False,
                 )
+                if actual[1] and sha256(Path(downloaded)) != actual[1]:
+                    downloaded = api.download_file(
+                        settings.repo_id,
+                        "dataset",
+                        destination + "/" + relative,
+                        revision="master",
+                        force=True,
+                    )
+                    if sha256(Path(downloaded)) != actual[1]:
+                        raise ValueError(f"下载内容与远端 SHA-256 不符或远端已改变：{relative}")
                 checked = validate_candidate(
                     Path(downloaded), groups, ffmpeg, ffprobe, output / "video_decode.log"
                 )

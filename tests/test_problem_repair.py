@@ -215,7 +215,7 @@ def test_remote_good_is_preserved_even_if_local_copies_differ(tmp_path, monkeypa
     monkeypatch.setattr(
         upload_verification,
         "_remote_inventory",
-        lambda *a: {DESTINATION + "/" + filename: (14, "different")},
+        lambda *a: {DESTINATION + "/" + filename: (14, repair.sha256(remote))},
     )
     monkeypatch.setattr(repair, "validate_candidate", lambda *a, **k: {"eligible": True})
     monkeypatch.setattr(
@@ -341,6 +341,29 @@ def test_metadata_only_copy_skips_remote_but_does_not_claim_remote_is_bad(tmp_pa
     assert result["G"]["status"] == "需人工确认"
 
 
+@pytest.mark.parametrize(
+    "content", [b"", b"version https://git-lfs.github.com/spec/v1\noid sha256:abc\n"]
+)
+def test_empty_or_lfs_only_originals_do_not_trigger_remote_queries(tmp_path, content):
+    source = tmp_path / SESSION
+    source.mkdir()
+    (source / "Body0.csv").write_bytes(content)
+    api = SimpleNamespace(download_file=lambda *a, **k: pytest.fail("no real payload"))
+    rows, _ = repair.process_session(
+        request({"A": {}}),
+        [source],
+        api,
+        SimpleNamespace(),
+        tmp_path,
+        None,
+        None,
+        True,
+        lambda _: None,
+    )
+    assert rows[0]["status"] == "无有效原件（远端待复核）"
+    assert "Body0.csv" in rows[0]["detail"]
+
+
 def test_previously_resolved_issue_is_still_checked_without_local_payload(tmp_path, monkeypatch):
     from robocap_rerun_tools import upload_verification
 
@@ -356,7 +379,7 @@ def test_previously_resolved_issue_is_still_checked_without_local_payload(tmp_pa
     monkeypatch.setattr(
         upload_verification,
         "_remote_inventory",
-        lambda *a: {DESTINATION + "/" + filename: (7, "sha")},
+        lambda *a: {DESTINATION + "/" + filename: (7, repair.sha256(remote))},
     )
     monkeypatch.setattr(repair, "validate_candidate", lambda *a, **k: {"eligible": True})
     calls = []
