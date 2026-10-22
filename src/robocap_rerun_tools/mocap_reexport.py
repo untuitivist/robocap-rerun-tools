@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import uuid
 import webbrowser
 from collections import defaultdict
@@ -21,6 +22,7 @@ from filelock import FileLock
 
 from .file_integrity import file_signature, inspect_file
 from .inventory_report import render_table, write_csv
+from .mocap_scan import DirectoryReader
 from .obj_inventory import name_category
 from .problem_repair import (
     automatic_roots,
@@ -87,7 +89,7 @@ def inventory_directories(path):
     return directories, batch_files, []
 
 
-def scan_directories(roots, log=print):
+def scan_directories(roots, log=print, *, timeout=30, progress_seconds=5, checkpoint=None):
     directories, batch_files, errors, seen = set(), defaultdict(set), [], set()
     excluded = SKIP_DIRS | {
         "program files",
@@ -97,47 +99,61 @@ def scan_directories(roots, log=print):
         "_mocap_reexport_backups",
     }
     wanted = {r["recording"].casefold() for r in read_targets()}
-    count = 0
-    for root in roots:
-        root = root.expanduser().absolute()
-        if not root.is_dir() or is_link(root):
-            errors.append({"path": str(root), "error": "目录不可访问或为链接"})
-            continue
-        log(f"搜索：{root}")
-        for folder, children, filenames in os.walk(
-            root,
-            followlinks=False,
-            onerror=lambda exc: errors.append({"path": str(exc.filename), "error": str(exc)}),
-        ):
-            current = Path(folder)
-            key = os.path.normcase(str(current))
-            if key in seen:
-                children[:] = []
-                continue
-            seen.add(key)
-            count += 1
-            directories.add(current)
-            batch_files[current].update(n.casefold() for n in filenames)
-            # Only top-level capture identity is needed. Avoid huge export subtrees,
-            # including accidentally repeated same-name mocap directories.
-            if current.name.casefold() in wanted:
-                children[:] = []
-            else:
-                keep = []
-                for name in children:
-                    child = current / name
-                    if name.casefold() in excluded:
+    count, matched = 0, 0
+    last_progress = time.monotonic()
+
+    def progress(current, elapsed=None):
+        nonlocal last_progress
+        last_progress = time.monotonic()
+        wait = f"；此目录等待 {elapsed:.0f}/{timeout:g} 秒" if elapsed is not None else ""
+        log(f"已扫描 {count} 个目录；找到 {matched} 个录制目录；当前：{current}{wait}")
+
+    try:
+        for root in roots:
+            # absolute() is lexical: do not stat/resolve a share in the main process.
+            root = root.expanduser().absolute()
+            log(f"搜索：{root}；单目录超时 {timeout:g} 秒")
+            pending = [root]
+            with DirectoryReader(timeout=timeout, progress_seconds=progress_seconds) as reader:
+                while pending:
+                    current = pending.pop()
+                    key = os.path.normcase(str(current))
+                    if key in seen:
                         continue
+                    seen.add(key)
                     try:
-                        if is_link(child):
-                            errors.append({"path": str(child), "error": "链接目录未跟随"})
-                        else:
-                            keep.append(name)
-                    except OSError as exc:
-                        errors.append({"path": str(child), "error": str(exc)})
-                children[:] = keep
-            if count % 5000 == 0:
-                log(f"已扫描 {count} 个目录")
+                        record = reader.read(current, progress)
+                    except (OSError, ValueError, TimeoutError) as exc:
+                        errors.append({"path": str(current), "error": str(exc)})
+                        log(f"跳过：{current}：{exc}")
+                        continue
+                    if "error" in record:
+                        errors.append({"path": str(current), "error": record["error"]})
+                        log(f"跳过：{current}：{record['error']}")
+                        continue
+                    count += 1
+                    directories.add(current)
+                    batch_files[current].update(record["files"])
+                    errors.extend(record["errors"])
+                    matched += current.name.casefold() in wanted
+                    # All named export subtrees are payloads, not additional batches.
+                    # This also avoids repeatedly traversing same-name nested exports.
+                    if not re.match(r"^mocap-[a-z]+\d+-S\d+-", current.name, re.IGNORECASE):
+                        pending.extend(
+                            current / name
+                            for name in sorted(record["directories"], reverse=True)
+                            if name.casefold() not in excluded
+                        )
+                    if time.monotonic() - last_progress >= progress_seconds:
+                        progress(current)
+            log(f"完成目录：{root}；累计扫描 {count} 个目录，找到 {matched} 个录制目录")
+            if checkpoint:
+                checkpoint(directories, batch_files, errors)
+    except KeyboardInterrupt:
+        errors.append({"path": "扫描", "error": "用户中止扫描，结果不完整", "cancelled": True})
+        log("已中止扫描，保存已找到的结果；不会继续复制。")
+        if checkpoint:
+            checkpoint(directories, batch_files, errors)
     return directories, batch_files, errors
 
 
@@ -314,6 +330,9 @@ td,th{border:1px solid #ccd4df;padding:7px;vertical-align:top;white-space:pre-wr
             )
         ),
     )
+    if errors:
+        page += "<h2>未完成或跳过的搜索路径</h2><p>以下路径未完整搜索，不能据此判断原件不存在。</p>"
+        page += render_table(errors, {"path": "路径", "error": "原因"})
     page += """<script>
 async function copy(s){try{if(navigator.clipboard){await navigator.clipboard.writeText(s);}
 else{throw Error('fallback');}document.querySelector('#status').textContent=' 已复制';}
@@ -517,7 +536,15 @@ def main(argv=None):
     parser.add_argument("--inventory", type=Path, help="维护者：离线读取 WizTree CSV")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--open-report", action="store_true")
+    parser.add_argument(
+        "--scan-timeout",
+        type=float,
+        default=30,
+        help="每个目录读取超时秒数，默认 30；超时跳过并记录",
+    )
     args = parser.parse_args(argv)
+    if not 0 < args.scan_timeout < float("inf"):
+        parser.error("--scan-timeout 必须是正的有限秒数")
     if args.inventory and args.mode == "copy":
         parser.error("WizTree 只用于离线报告，复制必须重新扫描实际磁盘")
     output = (
@@ -532,6 +559,9 @@ def main(argv=None):
             stream.write(str(message) + "\n")
 
         try:
+            log("动捕问题批次查询" if args.mode == "report" else "动捕重新导出复制")
+            log("无需选择 Markdown 或输入盘符；原件和旧版本保留，不上传远端。")
+            log(f"日志和阶段报告：{output}")
             targets = read_targets()
             errors = []
             if args.inventory:
@@ -544,12 +574,32 @@ def main(argv=None):
                     shares, discoveries = discover_shares(log)
                     errors = [r for r in discoveries if r.get("error")]
                     roots = list(dict.fromkeys([*roots, *shares]))
-                dirs, names, scan_errors = scan_directories(roots, log)
+
+                def checkpoint(dirs, names, partial_errors):
+                    partial_rows = make_plan(targets, dirs, names)
+                    write_report(
+                        output,
+                        partial_rows,
+                        [
+                            *errors,
+                            *partial_errors,
+                            {
+                                "path": "扫描",
+                                "error": "扫描尚未完成，这是阶段报告",
+                            },
+                        ],
+                    )
+                    log(f"阶段报告已保存：{output / 'report.html'}")
+
+                dirs, names, scan_errors = scan_directories(
+                    roots, log, timeout=args.scan_timeout, checkpoint=checkpoint
+                )
             errors.extend(scan_errors)
             rows = make_plan(targets, dirs, names)
             count = write_report(output, rows, errors, inventory=args.inventory)
             log(f"找到 {count} 个问题批次；报告：{output / 'report.html'}")
-            if args.mode == "copy":
+            cancelled = any(e.get("cancelled") for e in scan_errors)
+            if args.mode == "copy" and not cancelled:
                 ARTIFACTS.mkdir(parents=True, exist_ok=True)
                 results = []
                 with FileLock(ARTIFACTS / "copy.lock", timeout=0):
@@ -598,7 +648,11 @@ def main(argv=None):
             return int(
                 bool(errors)
                 or any(r["state"] != "匹配唯一" for r in rows)
-                or (args.mode == "copy" and any(r["state"] == "未复制" for r in results))
+                or (
+                    args.mode == "copy"
+                    and not cancelled
+                    and any(r["state"] == "未复制" for r in results)
+                )
             )
         except Exception as exc:  # noqa: BLE001 - always preserve a staff-readable run log
             log(f"失败：{type(exc).__name__}: {exc}")

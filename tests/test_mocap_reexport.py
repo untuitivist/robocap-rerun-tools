@@ -1,10 +1,13 @@
 import csv
 import json
+import sys
+import time
 from pathlib import Path, PureWindowsPath
 
 import pytest
 
 from robocap_rerun_tools import mocap_reexport as tool
+from robocap_rerun_tools.mocap_scan import DirectoryReader, list_directory
 
 SESSION = "20261008_054213_session72"
 RECORDING = "mocap-LM43-S03-gaoziyue-01p1"
@@ -216,3 +219,100 @@ def test_original_cap_without_export_still_lists_batch_but_cannot_copy(tmp_path)
     assert row["state"] == "找到原始 CAP，尚无导出目录"
     with pytest.raises(ValueError, match="CAP"):
         tool.copy_one(row, tmp_path)
+
+
+def test_blocking_directory_times_out_emits_progress_and_worker_restarts():
+    command = [
+        sys.executable,
+        "-u",
+        "-c",
+        (
+            "import sys,json,time\n"
+            "for line in sys.stdin:\n"
+            " path=json.loads(line)\n"
+            " if path=='blocked': time.sleep(10)\n"
+            " print(json.dumps({'directories':[], 'files':[path], 'errors':[]}),flush=True)\n"
+        ),
+    ]
+    waiting = []
+    with DirectoryReader(timeout=0.8, progress_seconds=0.1, command=command) as reader:
+        assert reader.read("before")["files"] == ["before"]
+        first_process = reader.process
+        started = time.monotonic()
+        with pytest.raises(TimeoutError, match="跳过"):
+            reader.read("blocked", lambda p, elapsed: waiting.append((p, elapsed)))
+        assert time.monotonic() - started < 4
+        assert first_process.poll() is not None
+        assert waiting and all(p == "blocked" for p, _ in waiting)
+        assert reader.read("after")["files"] == ["after"]
+        last_process = reader.process
+    assert last_process.poll() is not None
+
+
+def test_bad_directory_does_not_discard_good_siblings_or_next_roots(tmp_path, monkeypatch):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    (first / "blocked").mkdir()
+    exports(first / "nokov" / "morning" / RECORDING)
+    original = DirectoryReader.read
+
+    def read(reader, path, waiting):
+        if path.name == "blocked":
+            raise TimeoutError("目录读取超时")
+        return original(reader, path, waiting)
+
+    monkeypatch.setattr(DirectoryReader, "read", read)
+    checkpoints, logs = [], []
+    dirs, names, errors = tool.scan_directories(
+        [first, second], logs.append, checkpoint=lambda d, n, e: checkpoints.append(set(d))
+    )
+    assert second in dirs and any(p.name == RECORDING for p in dirs)
+    assert len(errors) == 1 and errors[0]["path"].endswith("blocked")
+    assert len(checkpoints) == 2 and first in checkpoints[0] and second in checkpoints[1]
+    assert any("跳过" in message for message in logs)
+    assert any("完成目录" in message for message in logs)
+    assert tool.make_plan([target()], dirs, names)[0]["sources"]
+
+
+def test_scan_cancellation_keeps_partial_report_and_never_copies(tmp_path, monkeypatch):
+    output = tmp_path / "report"
+    monkeypatch.setattr(
+        tool,
+        "scan_directories",
+        lambda *a, **k: (set(), {}, [{"path": "扫描", "error": "用户中止", "cancelled": True}]),
+    )
+
+    def unexpected_copy(*_args):
+        pytest.fail("Cancellation must not start copying")
+
+    monkeypatch.setattr(tool, "copy_one", unexpected_copy)
+    assert tool.main(["copy", "--root", str(tmp_path), "--output", str(output)]) == 1
+    assert (output / "report.html").is_file()
+    assert not (output / "copy_results.json").exists()
+    assert "用户中止" in (output / "scan_errors.csv").read_text(encoding="utf-8")
+    assert "未完成或跳过的搜索路径" in (output / "report.html").read_text(encoding="utf-8")
+
+
+def test_directory_worker_lists_content_and_unavailable_paths(tmp_path):
+    (tmp_path / "directory").mkdir()
+    (tmp_path / "mixed.CAP").write_bytes(b"cap")
+    result = list_directory(tmp_path)
+    assert result == {"directories": ["directory"], "files": ["mixed.cap"], "errors": []}
+    with DirectoryReader(timeout=5) as reader:
+        assert "error" in reader.read(tmp_path / "missing")
+        assert reader.read(tmp_path)["files"] == ["mixed.cap"]
+
+
+def test_bat_launchers_keep_only_ascii_commands():
+    root = Path(tool.__file__).resolve().parents[2]
+    for name in ("01_find_batches.bat", "02_copy_reexports.bat"):
+        data = (root / "scripts" / "mocap_reexport" / name).read_bytes()
+        assert data.isascii(), "Chinese prompts belong in Python; CMD misparses LF UTF-8 BATs"
+
+
+def test_nonpositive_scan_timeout_is_rejected():
+    with pytest.raises(SystemExit) as error:
+        tool.main(["report", "--scan-timeout", "0"])
+    assert error.value.code == 2
