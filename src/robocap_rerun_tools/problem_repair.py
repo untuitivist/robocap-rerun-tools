@@ -746,8 +746,15 @@ def process_session(request, sources, api, settings, output, ffmpeg, ffprobe, ap
 
 
 def write_reports(output, requests, found, rows, files, errors, roots, apply, source_index=None):
+    requested = {r["session_path"]: r for r in requests}
+    for row in rows:
+        item = requested[row["session_path"]]
+        row["problem"] = item["groups"][row["group"]].get("title", row["group"])
+        row["date"] = row["session_path"].split("/")[1]
     write_csv(
-        output / "results.csv", rows, ["session_path", "group", "status", "detail", "sources"]
+        output / "results.csv",
+        rows,
+        ["date", "session_path", "group", "problem", "status", "detail", "sources"],
     )
     write_csv(
         output / "files.csv",
@@ -794,7 +801,9 @@ input{padding:10px;width:360px}</style><h1>问题 Session 搜索与修复</h1>""
         rows,
         {
             "session_path": "远端 Session",
+            "date": "日期",
             "group": "问题组",
+            "problem": "原始问题",
             "status": "结果",
             "detail": "原因",
             "sources": "本机 / 共享盘原件",

@@ -393,3 +393,18 @@ def test_reused_index_checks_identity_and_keeps_scan_errors(tmp_path):
     index.write_text(json.dumps({SESSION: [str(tmp_path)]}), encoding="utf-8")
     with pytest.raises(ValueError, match="身份不符"):
         repair.load_sources_index(index, [request({"A": {}})])
+
+
+def test_report_includes_original_problem_and_separates_new_uploads(tmp_path):
+    rows = [{"session_path": DESTINATION, "group": "A", "status": repair.RESOLVED}]
+    files = [
+        {"session_path": DESTINATION, "status": repair.RESOLVED, "revision": "commit"},
+        {"session_path": DESTINATION, "status": repair.RESOLVED},
+    ]
+    summary = repair.write_reports(
+        tmp_path, [request({"A": {"title": "Missing CSV"}})], {}, rows, files, [], [], True
+    )
+    saved = json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))
+    assert saved[0]["problem"] == "Missing CSV" and saved[0]["date"] == "20261012"
+    assert summary["uploaded_files"] == summary["newly_repaired_sessions"] == 1
+    assert summary["already_good_files"] == 1
