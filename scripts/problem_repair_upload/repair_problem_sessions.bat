@@ -12,32 +12,18 @@ if errorlevel 1 goto uv_error
 if "%INTERACTIVE%"=="0" goto arguments
 
 echo 问题 Session 搜索、检查、补传
-echo 会搜索本机所有盘，并自动发现当前账号能访问的网络共享。也可在下面补充路径。
+echo 使用工具内置问题清单，无需选择文件或输入路径。
+echo 自动搜索本机所有盘，并发现当前账号能访问的网络共享。
 echo 找到有效原件会自动补传，校验远端 SHA-256 后才算解决。
 echo 原件会保留；缺数据、配对和量程问题不会自动猜测修补。
 echo 请保持窗口打开，结果和日志位于 _artifacts\problem_repair_upload。
-echo 路径直接粘贴，不用添加引号。
-set "PROBLEM_REPORT=%~dp0problematic_sessions.md"
-set /p "PROBLEM_REPORT=问题 Markdown 路径 [回车使用本 BAT 旁的 problematic_sessions.md]: "
-if not exist "%PROBLEM_REPORT%" goto report_error
-set "PROBLEM_SHARE="
-set /p "PROBLEM_SHARE=额外共享目录 [例如 \\SERVER\DATA，无则回车]: "
-if defined PROBLEM_SHARE goto with_share
-uv run python "%~dp0repair_problem_sessions.py" --report "%PROBLEM_REPORT%" --auto-roots --discover-shares --apply --open-report
-goto completed
-
-:with_share
-uv run python "%~dp0repair_problem_sessions.py" --report "%PROBLEM_REPORT%" --auto-roots --discover-shares --root "%PROBLEM_SHARE%\." --apply --open-report
+uv run python "%~dp0repair_problem_sessions.py" --auto-roots --discover-shares --apply --open-report
 goto completed
 
 :arguments
 uv run python "%~dp0repair_problem_sessions.py" %*
 :completed
 set "EXIT_CODE=%ERRORLEVEL%"
-goto finish
-:report_error
-echo 找不到问题 Markdown：%PROBLEM_REPORT%
-set "EXIT_CODE=2"
 goto finish
 :uv_error
 echo 未找到 uv，请让提供工具的人先安装 uv。

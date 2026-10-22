@@ -16,6 +16,7 @@ import sys
 import webbrowser
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from importlib.resources import files as package_files
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
@@ -94,6 +95,44 @@ def automatic_roots():
             if ctypes.windll.kernel32.GetDriveTypeW(root) in {2, 3, 4}:
                 roots.append(Path(root))
     return roots
+
+
+def read_bundled_problems():
+    """Load the shipped, normalized issue list without needing the original Markdown."""
+    document = json.loads(
+        package_files("robocap_rerun_tools")
+        .joinpath("data/problem_sessions.json")
+        .read_text(encoding="utf-8")
+    )
+    if document.get("schema_version") != 1:
+        raise ValueError("内置问题清单版本不受支持，请更新完整工具")
+    grouped, identities = {}, {}
+    for group, section in sorted(document["groups"].items()):
+        if group not in set("ABCDEFGHIJKL"):
+            raise ValueError(f"内置问题组不支持：{group}")
+        for relative, details in section["sessions"].items():
+            if not SESSION_PATH.fullmatch(relative):
+                raise ValueError(f"内置 Session 路径无效：{relative}")
+            destination = "EgoMotionActions/" + safe_relative(relative)
+            session = relative.rsplit("/", 1)[1]
+            if identities.setdefault(session.casefold(), destination) != destination:
+                raise ValueError("内置清单中存在同名 Session 身份冲突")
+            if group == "J" and (
+                not details.get("sides") or not set(details["sides"]) <= {"left", "right"}
+            ):
+                raise ValueError(f"内置腕相机左右状态不明确：{relative}")
+            item = grouped.setdefault(
+                destination,
+                {
+                    "session_path": destination,
+                    "session": session,
+                    "groups": {},
+                },
+            )
+            item["groups"][group] = {**details, "title": section["title"]}
+    if not grouped:
+        raise ValueError("内置问题清单为空，请更新完整工具")
+    return list(grouped.values())
 
 
 def find_sources(roots, names, output, log):
@@ -910,7 +949,9 @@ r.hidden=!r.textContent.toLowerCase().includes(q);});});</script></html>"""
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", type=Path, required=True, help="Aaron 的问题 Markdown")
+    parser.add_argument(
+        "--report", type=Path, help="维护人员可选：用新的问题 Markdown 覆盖内置清单"
+    )
     parser.add_argument("--root", type=Path, action="append", default=[])
     parser.add_argument("--auto-roots", action="store_true", help="搜索当前电脑所有本地盘和映射盘")
     parser.add_argument(
@@ -939,7 +980,7 @@ def main(argv=None):
         parser.error("输出目录必须是新目录，且不能包含搜索根目录")
     if args.scan_only and args.apply:
         parser.error("--scan-only 与 --apply 不能同时使用")
-    requests = read_problem_markdown(args.report)
+    requests = read_problem_markdown(args.report) if args.report else read_bundled_problems()
     output.mkdir(parents=True)
     rows, files = [], []
     with (output / "run.log").open("w", encoding="utf-8") as logfile:
@@ -951,6 +992,11 @@ def main(argv=None):
             logfile.flush()
 
         log(f"问题 Session {len(requests)} 个；自动补传={args.apply}；结果目录：{output}")
+        log(
+            f"问题来源：{args.report}"
+            if args.report
+            else "问题来源：工具内置清单，无需提供文件或路径"
+        )
         found, errors, indexed_roots = {}, [], []
         if args.sources_index:
             log(f"复用搜索索引（不代表本次重新全盘搜索）：{args.sources_index}")

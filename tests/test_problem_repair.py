@@ -497,3 +497,30 @@ def test_network_hosts_come_only_from_unc_or_os_neighbor_records():
         " 999.999.999.999 aa-bb-cc-dd-ee-03 dynamic\n"
     )
     assert hosts_from_output(output) == {"CAPTURE-PC", "192.168.1.42"}
+
+
+def test_bundled_issue_list_preserves_scope_sides_and_prior_remote_checks():
+    requests = repair.read_bundled_problems()
+    assert len(requests) == 1449
+    assert sum(len(r["groups"]) for r in requests) == 1552
+    assert len({r["session_path"] for r in requests}) == 1449
+    by_name = {r["session"]: r for r in requests}
+    assert "20260912_0120933_session28" in by_name
+    assert set(by_name[SESSION]["groups"]) == {"J", "K", "L"}
+    assert all(d["previously_resolved"] for d in by_name[SESSION]["groups"].values())
+    assert by_name[SESSION]["groups"]["J"]["sides"] == ["left", "right"]
+
+
+def test_no_report_argument_uses_bundled_list_without_reading_markdown(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        repair, "read_problem_markdown", lambda *a: pytest.fail("asked for Markdown")
+    )
+    monkeypatch.setattr(repair.publisher, "_hub_api", lambda *a: pytest.fail("scan-only connected"))
+    output = tmp_path / "output"
+    root = tmp_path / "raw"
+    (root / SESSION).mkdir(parents=True)
+    code = repair.main(["--root", str(root), "--scan-only", "--output", str(output)])
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    assert code == 1 and summary["requested_sessions"] == 1449
+    assert summary["processed_issue_items"] == 1552 and summary["found_sessions"] == 1
+    assert "工具内置清单" in (output / "run.log").read_text(encoding="utf-8")

@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 录制后想完整检查有没有缺文件、坏文件或空数据 | `session_inspection/inspect_sessions.bat` | 核对整个 Session 的结构，完整解码视频、检查传感器和动捕内容，并保留帧数与时间戳分析。建议先用这个 |
 | 已有坏视频、坏动捕文件清单，需要检查原文件并重新上传 | `repair_upload/reupload_corrupt_sessions.bat` | 按清单找原文件。默认只预览；输入 `UPLOAD` 才校验并覆盖远端对应文件 |
-| 有 Aaron 的 A–L 问题 Markdown，需要全盘找原件并补传 | `problem_repair_upload/repair_problem_sessions.bat` | 搜索本机和共享盘同名 Session，验证原件后自动补传；报告未找到、原件仍坏及需人工确认的问题 |
+| 一键查找并补传已知问题 Session | `problem_repair_upload/repair_problem_sessions.bat` | 内置问题清单，无需输入；搜索本机和网络共享，验证原件后自动补传，并报告缺失及待处理问题 |
 | 想知道物品的动捕文件有没有导出、叫什么名字 | `obj_repair_upload/inspect_object_mocap.bat` | 区分物品、人体 Body、Tracker 和未命名文件，统计涉及的动作、人员及录制 |
 | 想知道右手 IMU 是哪个设备、哪些录制缺数据 | `imu_repair_upload/inspect_right_imu.bat` | 检查加速度 ACC 和角速度 GYRO，区分空库、缺文件、缺一路和损坏，按设备、日期、人员汇总 |
 

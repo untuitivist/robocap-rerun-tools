@@ -1,4 +1,4 @@
-"""Entry point for the double-click Markdown problem repair launcher."""
+"""Entry point for one-click repair using the tool's bundled problem list."""
 
 from robocap_rerun_tools.problem_repair import main
 
