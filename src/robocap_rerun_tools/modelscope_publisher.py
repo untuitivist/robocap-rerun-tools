@@ -2700,7 +2700,11 @@ def upload_staged_dataset(
         try:
             from .upload_verification import prepare_inventory, verify_and_repair
 
+            phase_started = time.monotonic()
             inventory = prepare_inventory(staged, progress, retained=retained)
+            if progress:
+                progress(f"[upload timing] Local hashing: {time.monotonic() - phase_started:.1f}s")
+            phase_started = time.monotonic()
             commit_result = api.upload_folder(
                 repository,
                 "dataset",
@@ -2713,15 +2717,23 @@ def upload_staged_dataset(
                 use_cache=use_cache,
                 disable_tqdm=False,
             )
+            if progress:
+                progress(f"[upload timing] File transfer: {time.monotonic() - phase_started:.1f}s")
+            phase_started = time.monotonic()
             verify_and_repair(
                 staged, local_entries, inventory, api=api, repository=repository,
                 revision=target_revision, max_workers=max_workers, token=resolved.token,
                 progress=progress, check_metadata=False,
             )
+            if progress:
+                progress(f"[upload timing] Remote verification: {time.monotonic() - phase_started:.1f}s")
+            phase_started = time.monotonic()
             metadata_revision = publish_session_metadata(
                 local_entries, api=api, repository=repository, revision=target_revision,
                 settings=resolved, progress=progress, initial_readme=staged.readme_path,
             )
+            if progress:
+                progress(f"[upload timing] Shared metadata: {time.monotonic() - phase_started:.1f}s")
             from .upload_verification import REPORT_NAME as verification_report_name
 
             report_path = staged.dataset_root / verification_report_name

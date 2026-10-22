@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
+
+from filelock import FileLock
 
 
 def require_git():
@@ -52,9 +54,16 @@ class MetadataCommit:
         for i, (key, value) in enumerate(config):
             self.env[f"GIT_CONFIG_KEY_{i}"] = key
             self.env[f"GIT_CONFIG_VALUE_{i}"] = value
+        self.directory.mkdir(parents=True, exist_ok=True)
         self.git("init", "--bare")
+        if os.name == "nt":
+            self.git("config", "core.longpaths", "true")
         self.git("check-ref-format", f"refs/heads/{branch}")
-        self.git("remote", "add", "origin", url)
+        remote = self.git("remote", "get-url", "origin", check=False)
+        if remote.returncode:
+            self.git("remote", "add", "origin", url)
+        elif remote.stdout.decode().strip() != url:
+            raise RuntimeError("Metadata cache belongs to a different remote repository.")
         self.git("config", "remote.origin.promisor", "true")
         self.git("config", "remote.origin.partialclonefilter", "blob:none")
 
@@ -77,7 +86,11 @@ class MetadataCommit:
         return result
 
     def head(self):
-        self.git("fetch", "--depth=1", "--filter=blob:none", "origin", f"refs/heads/{self.branch}")
+        # Keep a ref so later fetches can negotiate with objects from earlier batches.
+        self.git(
+            "fetch", "--no-tags", "--depth=1", "--filter=blob:none", "origin",
+            f"+refs/heads/{self.branch}:refs/remotes/origin/{self.branch}",
+        )
         return self.git("rev-parse", "FETCH_HEAD").stdout.decode().strip()
 
     def publish(self, build, attempts=8):
@@ -135,11 +148,25 @@ class MetadataCommit:
         )
 
 
+def _metadata_cache_directory(settings, repository, revision):
+    root = os.environ.get("LOCALAPPDATA" if os.name == "nt" else "XDG_CACHE_HOME")
+    cache = Path(root) if root else Path.home() / ".cache"
+    identity = f"{settings.endpoint.rstrip('/')}\n{repository}\n{revision}"
+    key = hashlib.sha256(identity.encode()).hexdigest()
+    return cache / "robocap-rerun-tools" / "metadata-git" / key
+
+
 def _publish_changes(build, *, api, repository, revision, settings, progress):
-    with tempfile.TemporaryDirectory(prefix="robocap-metadata-") as directory:
+    directory = _metadata_cache_directory(settings, repository, revision)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    if progress:
+        progress("[metadata cache] Reusing local Git objects; waiting for cache lock.")
+    # Different processes share objects, but must never modify the same Git index together.
+    # This lock only protects the local cache; remote conflicts still use fresh-head retries.
+    with FileLock(str(directory) + ".lock", timeout=600):
         transaction = MetadataCommit(
             directory,
-            f"{settings.endpoint}/datasets/{repository}.git",
+            f"{settings.endpoint.rstrip('/')}/datasets/{repository}.git",
             revision,
             settings.token,
             progress,

@@ -1478,6 +1478,7 @@ source = { editable = "." }
 dependencies = [
     { name = "ezc3d" },
     { name = "ffmpeg-binaries-compat" },
+    { name = "filelock" },
     { name = "modelscope-hub" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1501,6 +1502,7 @@ web = [
 requires-dist = [
     { name = "ezc3d", specifier = ">=1.7,<2" },
     { name = "ffmpeg-binaries-compat", specifier = ">=1.1,<2" },
+    { name = "filelock", specifier = ">=3.16,<4" },
     { name = "gradio", marker = "extra == 'web'", specifier = ">=4.44" },
     { name = "modelscope-hub", specifier = ">=0.2,<0.3" },
     { name = "numpy", specifier = ">=1.24" },

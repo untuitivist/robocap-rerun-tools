@@ -64,8 +64,10 @@ dataset metadata index during repairs. See the Chinese guide for Windows command
 Single, batch and fault uploads verify every staged file's remote presence, size and SHA-256,
 plus the uploaded Session metadata, before reporting success. Files declared in the manifest
 must exist locally with matching sizes before uploading. Hashing streams through bounded buffers.
-When remote SHA-256 is unavailable, a forced download provides the checksum; this uses extra
-bandwidth and download-cache space.
+Only the current Session/calibration roots are listed, with up to four concurrent requests.
+When remote SHA-256 is unavailable, up to four forced downloads provide the checksums.
+Repair rounds reuse a successful download check only when its immutable file revision is
+unchanged; unknown versions are downloaded again. Matching sizes alone never prove content equality.
 
 Only missing or mismatched files are reuploaded, with upload caching disabled, up to three repair
 attempts followed by verification. Unresolved batches are failed, and batch processing continues.
@@ -75,6 +77,12 @@ repairs re-read and merge the latest index to retain unrelated Sessions. Progres
 This verifies transfer integrity, not video decodability or downstream Mocap parser compatibility.
 It does not add files omitted from the upload selection or fix damaged originals. No video compression
 is performed by verification or repair.
+
+Shared-index commits reuse a system-user Git object cache partitioned by endpoint, repository and
+branch. A cross-process file lock protects the local cache; every publication still fetches the
+latest remote head and uses non-force push/remerge protection. `[upload timing]` logs separate
+local hashing, file transfer, remote verification and index-publication time. Restart after updating
+the tool to use the new logic; existing uploads can finish normally.
 
 ## Fault Dataset Uploads
 

@@ -6,6 +6,8 @@ import glob
 import hashlib
 import json
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from modelscope_hub.errors import HubError
@@ -80,25 +82,28 @@ def prepare_inventory(staged, progress, *, retained=None):
     return inventory
 
 
-def _remote_inventory(api, repository, revision, staged):
+def _remote_inventory(api, repository, revision, staged, *, versions=None):
     legacy_list = getattr(getattr(api, "legacy", None), "list_repo_files", None)
     if callable(legacy_list):
         roots = [*staged.session_paths]
         if (staged.dataset_root / publisher.CALIBRATION_DIR_NAME).is_dir():
             roots.append(publisher.CALIBRATION_DIR_NAME)
-        items = []
-        for root in ["", *roots]:
-            items.extend(
-                publisher._remote_read_with_retries(
-                    lambda root=root: legacy_list(
-                        repo_id=repository,
-                        repo_type="dataset",
-                        revision=revision,
-                        root=root,
-                        recursive=bool(root),
-                    )
+        def list_root(root):
+            return publisher._remote_read_with_retries(
+                lambda: legacy_list(
+                    repo_id=repository,
+                    repo_type="dataset",
+                    revision=revision,
+                    root=root,
+                    recursive=True,
                 )
             )
+        # Only Session/calibration files are verified here; the shared index is checked
+        # separately. Never enumerate the entire growing dataset for this path.
+        items = []
+        with ThreadPoolExecutor(max_workers=min(4, len(roots)) or 1) as pool:
+            for rows in pool.map(list_root, roots):
+                items.extend(rows)
     else:
         items = publisher._remote_read_with_retries(
             lambda: api.list_repo_files(repository, "dataset", revision=revision, recursive=True)
@@ -115,6 +120,13 @@ def _remote_inventory(api, repository, revision, staged):
         )
         digest = str(digest or "").lower()
         result[path] = (size, digest if re.fullmatch(r"[0-9a-f]{64}", digest) else None)
+        if versions is not None:
+            # The per-file commit identity is safe across repair rounds. A branch
+            # name, timestamp or matching size alone is never a checksum cache key.
+            version = item.get("Revision") if isinstance(item, dict) else None
+            version = version or revision
+            if re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(version or "")):
+                versions[path] = str(version).lower()
     return result
 
 
@@ -143,6 +155,8 @@ def verify_and_repair(
 
     save()
     pending_upload_error = None
+    verified_downloads = {}
+    started = time.monotonic()
     for attempt in range(REPAIR_RETRIES + 1):
         issues = {}
         log(
@@ -150,7 +164,31 @@ def verify_and_repair(
             + (" and metadata" if check_metadata else " before metadata publication")
         )
         try:
-            remote = _remote_inventory(api, repository, revision, staged)
+            versions = {}
+            remote = _remote_inventory(api, repository, revision, staged, versions=versions)
+            missing_hashes = [
+                path for path, expected in inventory.items()
+                if remote.get(path) == (expected["size"], None)
+                and (path, expected["size"], versions.get(path)) not in verified_downloads
+            ]
+
+            def download_hash(path, versions=versions):
+                log(f"[upload verification] No remote SHA-256; downloading to verify: {path}")
+                try:
+                    downloaded = publisher._remote_read_with_retries(
+                        lambda: api.download_file(
+                            repository, "dataset", path,
+                            revision=versions.get(path, revision), force=True,
+                        )
+                    )
+                    return file_digest(Path(downloaded)), None
+                except (HubError, OSError, ValueError, RuntimeError) as exc:
+                    return None, publisher._redacted_error(exc, token)
+
+            # Bound fallback downloads, rather than serially downloading every file.
+            workers = min(max_workers or 4, 4, len(missing_hashes)) or 1
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                downloaded_hashes = dict(zip(missing_hashes, pool.map(download_hash, missing_hashes)))
             for number, (path, expected) in enumerate(inventory.items(), 1):
                 actual = remote.get(path)
                 if actual is None:
@@ -160,18 +198,14 @@ def verify_and_repair(
                 else:
                     digest = actual[1]
                     if digest is None:
-                        log(
-                            f"[upload verification] No remote SHA-256; downloading to verify: {path}"
-                        )
-                        try:
-                            downloaded = publisher._remote_read_with_retries(
-                                lambda path=path: api.download_file(
-                                    repository, "dataset", path, revision=revision, force=True
-                                )
-                            )
-                            digest = file_digest(Path(downloaded))
-                        except (HubError, OSError, ValueError, RuntimeError) as exc:
-                            issues[path] = publisher._redacted_error(exc, token)
+                        cache_key = (path, expected["size"], versions.get(path))
+                        digest = verified_downloads.get(cache_key)
+                        if digest is None:
+                            digest, error = downloaded_hashes[path]
+                            if error:
+                                issues[path] = error
+                            elif versions.get(path) and digest == expected["sha256"]:
+                                verified_downloads[cache_key] = digest
                     if path not in issues and digest != expected["sha256"]:
                         issues[path] = "SHA-256 mismatch"
                 log(
@@ -208,6 +242,7 @@ def verify_and_repair(
             record["repair_error"] = pending_upload_error
             pending_upload_error = None
         report["rounds"].append(record)
+        report["elapsed_s"] = round(time.monotonic() - started, 3)
         report["status"] = ("verified" if check_metadata else "files_verified") if not issues else "repair_required"
         save()
         if not issues:

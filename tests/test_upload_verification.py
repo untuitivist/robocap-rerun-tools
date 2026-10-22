@@ -1,6 +1,8 @@
 import fnmatch
 import hashlib
 import json
+import threading
+from collections import Counter
 from types import SimpleNamespace
 
 import pytest
@@ -202,3 +204,99 @@ def test_listing_failure_does_not_blindly_reupload(upload, monkeypatch):
     with pytest.raises(verification.UploadVerificationError, match="could not complete"):
         run(upload)
     assert not upload[3].uploads
+
+
+def test_versioned_fallback_does_not_redownload_unchanged_files_during_repair(upload):
+    staged, _, _, api = upload
+    api.hashes = False
+    listing = api.list_repo_files
+    video = f"{staged.session_paths[0]}/video.mp4"
+    manifest = f"{staged.session_paths[0]}/manifest.json"
+    api.files[video] = b"x" * len(api.files[video])
+
+    def versioned(*args, **kwargs):
+        return [{"Path": row.path, "Size": row.size, "Type": row.type,
+                 "Revision": "a" * 40 if row.path != video or not api.uploads else "b" * 40}
+                for row in listing()]
+
+    api.list_repo_files = versioned
+    report = run(upload)
+    counts = Counter(api.downloads)
+    assert report["status"] == "verified"
+    assert counts[manifest] == 1  # Successful, immutable version is reused.
+    assert counts[video] == 2  # Corrupt and repaired versions both get checked.
+    assert report["elapsed_s"] >= 0
+
+
+def test_version_change_invalidates_successful_fallback_check(upload):
+    staged, _, _, api = upload
+    api.hashes = False
+    listing = api.list_repo_files
+    video = f"{staged.session_paths[0]}/video.mp4"
+    manifest = f"{staged.session_paths[0]}/manifest.json"
+    del api.files[video]
+    checks = []
+
+    def versioned(*args, **kwargs):
+        checks.append(1)
+        # Simulate a same-size remote edit after another file needed repair.
+        if len(checks) == 2:
+            api.files[manifest] = b"x" * len(api.files[manifest])
+        version = format(len(checks), "040x")
+        return [{"Path": row.path, "Size": row.size, "Type": row.type, "Revision": version}
+                for row in listing()]
+
+    api.list_repo_files = versioned
+    assert run(upload)["status"] == "verified"
+    assert len(api.uploads) == 2
+    assert Counter(api.downloads)[manifest] == 3
+
+
+def test_fallback_download_uses_listed_immutable_revision(upload):
+    api = upload[3]
+    api.hashes = False
+    listing, download = api.list_repo_files, api.download_file
+    revisions = []
+    api.list_repo_files = lambda *a, **kw: [
+        {"Path": r.path, "Size": r.size, "Type": r.type, "Revision": "c" * 40} for r in listing()
+    ]
+
+    def record_download(repo, kind, path, **kwargs):
+        revisions.append((path, kwargs["revision"]))
+        return download(repo, kind, path, **kwargs)
+
+    api.download_file = record_download
+    assert run(upload)["status"] == "verified"
+    assert all(revision == "c" * 40 for path, revision in revisions if path in upload[2])
+
+
+def test_session_listings_overlap_without_scanning_dataset_root(upload):
+    staged, _, _, api = upload
+    barrier = threading.Barrier(2)
+    roots = []
+    second = staged.session_paths[0] + "-other"
+    staged.session_paths += (second,)
+
+    def list_root(**kwargs):
+        roots.append(kwargs["root"])
+        barrier.wait(timeout=5)
+        return []
+
+    api.legacy = SimpleNamespace(list_repo_files=list_root)
+    assert verification._remote_inventory(api, "owner/data", "master", staged) == {}
+    assert set(roots) == set(staged.session_paths)
+
+
+def test_fallback_downloads_overlap_but_keep_full_content_verification(upload):
+    api = upload[3]
+    api.hashes = False
+    barrier = threading.Barrier(2)
+    download = api.download_file
+
+    def overlapping(repo, kind, path, **kwargs):
+        if path in upload[2]:
+            barrier.wait(timeout=5)
+        return download(repo, kind, path, **kwargs)
+
+    api.download_file = overlapping
+    assert run(upload)["status"] == "verified"
