@@ -348,7 +348,7 @@ def validate_candidate(path, groups, ffmpeg, ffprobe, log_path):
             path, checked.get("encoding", "utf-8-sig")
         )
         good = extra["rows"] > 0 and extra["frames_without_any_marker"] == 0
-        if "F" in groups:
+        if groups & {"E", "F"}:
             good &= extra["missing_timestamps"] == extra["nonincreasing_timestamps"] == 0
     if good and path.suffix.lower() == ".csv" and "F" in groups:
         checked["timestamp_detail"] = extra = timestamp_details(
@@ -385,6 +385,44 @@ def local_matches(source, paths, relative, record):
 
 def json_document(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
+def local_candidate_groups(source, path, groups):
+    """Necessary layout/name conditions before remote checks determine exact device identity."""
+    relative = path.relative_to(source)
+    suffix = path.suffix.lower()
+    matched = set()
+    extensions = {
+        "A": {".csv"},
+        "B": {".trc"},
+        "C": {".bvh"},
+        "D": {".csv", ".trc", ".bvh"},
+        "E": {".trc"},
+        "F": {".csv", ".trc"},
+    }
+    for group in groups:
+        if group in extensions and is_mocap_directory_name(relative.parts[0]):
+            labels = {"C": ("Body0",), "E": ("Body0",)}.get(group, ("Body0", "Tracker0"))
+            if suffix in extensions[group] and (
+                group == "D" or any(export_match(path.stem, label, "") for label in labels)
+            ):
+                matched.add(group)
+        elif group == "I" and len(relative.parts) == 1 and path.name.startswith("robocap_"):
+            if suffix in {".db", ".mp4"}:
+                matched.add(group)
+        elif group in "JKL":
+            sides = (
+                groups[group].get("sides", [])
+                if group == "J"
+                else ["left" if group == "K" else "right"]
+            )
+            for side in sides:
+                expected = f"video_{side}_down.mp4" if group == "J" else f"imu_{side}.db"
+                if re.fullmatch(rf"robowrist_.+_{side}", relative.parts[0]) and path.name.endswith(
+                    expected
+                ):
+                    matched.add(group)
+    return matched
 
 
 def publish_repair_metadata(api, settings, request, baseline, replacements, resolved_groups, log):
@@ -589,15 +627,31 @@ def process_session(request, sources, api, settings, output, ffmpeg, ffprobe, ap
     previously_resolved = any(d.get("previously_resolved") for d in request["groups"].values())
     payload_exists = False
     placeholders = []
-    for paths in local_inventory.values():
+    cache = {}
+    for source, paths in local_inventory.items():
         for path in paths:
-            if path.suffix.lower() not in wanted:
+            groups = local_candidate_groups(source, path, request["groups"])
+            if path.suffix.lower() not in wanted or not groups:
                 continue
             try:
                 with path.open("rb") as stream:
                     prefix = stream.read(128)
                 if prefix and not prefix.startswith(b"version https://git-lfs.github.com/spec/v1"):
-                    payload_exists = True
+                    signature = file_signature(path)
+                    check = validate_candidate(
+                        path, groups, ffmpeg, ffprobe, output / "video_decode.log"
+                    )
+                    info = {"source": source, "path": path, "signature": signature, "check": check}
+                    if check["eligible"] and file_signature(path) == signature:
+                        info["sha256"] = sha256(path)
+                        check["eligible"] &= file_signature(path) == signature
+                    cache[(str(path), tuple(sorted(groups)))] = info
+                    if check["eligible"] and "sha256" in info:
+                        payload_exists = True
+                    else:
+                        placeholders.append(
+                            str(path) + "：" + json.dumps(check, ensure_ascii=False)
+                        )
                 else:
                     placeholders.append(str(path) + ("：LFS 占位" if prefix else "：零字节"))
             except OSError as exc:
@@ -634,7 +688,6 @@ def process_session(request, sources, api, settings, output, ffmpeg, ffprobe, ap
         for path in paths:
             target_groups[path].add(group)
     files, selected, outcomes = [], {}, {}
-    cache = {}
     for number, (relative, groups) in enumerate(sorted(target_groups.items()), 1):
         log(f"  [{number}/{len(target_groups)}] 检查 {relative}")
         row = {
@@ -814,6 +867,8 @@ def write_reports(output, requests, found, rows, files, errors, roots, apply, so
 td,th{padding:8px;border:1px solid #ccd8df;text-align:left;overflow-wrap:anywhere}.scroll{overflow:auto}
 input{padding:10px;width:360px}</style><h1>问题 Session 搜索与修复</h1>"""
     document += "<p>" + html.escape(json.dumps(summary, ensure_ascii=False)) + "</p>"
+    if (output / "network_discovery.csv").is_file():
+        document += "<p><a href='network_discovery.csv'>网络共享发现与访问结果</a>（未修改共享或账号权限）</p>"
     document += (
         "<p>状态按原问题分别统计，已解决不代表整个 Session 全部合格。未找到原件、扫描不完整均不等于无法恢复。"
         "原始数据保留，未自动补造帧、缩放 IMU 或交换配对；原有全量质量标签未擅自清除。</p>"
@@ -861,6 +916,9 @@ def main(argv=None):
     parser.add_argument(
         "--sources-index", type=Path, help="复用之前的 sources.json，仍重新检查原文件"
     )
+    parser.add_argument(
+        "--discover-shares", action="store_true", help="自动发现可见且当前账号可访问的共享目录"
+    )
     parser.add_argument("--apply", action="store_true", help="找到有效原件后补传并校验远端")
     parser.add_argument("--scan-only", action="store_true", help="只搜索原件目录，不访问远端")
     parser.add_argument("--open-report", action="store_true")
@@ -897,6 +955,14 @@ def main(argv=None):
         if args.sources_index:
             log(f"复用搜索索引（不代表本次重新全盘搜索）：{args.sources_index}")
             found, errors, indexed_roots = load_sources_index(args.sources_index, requests)
+        if args.discover_shares:
+            from .share_discovery import discover_shares
+
+            shared, discovery = discover_shares(log)
+            roots = list(dict.fromkeys(roots + shared))
+            write_csv(output / "network_discovery.csv", discovery, ["path", "error"])
+            (output / "network_discovery.json").write_bytes(json_document(discovery))
+            errors.extend(row for row in discovery if row["error"])
         if roots:
             searched, scan_errors = find_sources(
                 roots, {r["session"] for r in requests}, output, log

@@ -12,7 +12,7 @@ if errorlevel 1 goto uv_error
 if "%INTERACTIVE%"=="0" goto arguments
 
 echo 问题 Session 搜索、检查、补传
-echo 会搜索本机所有本地盘和映射盘。未映射的共享目录可在下面补充。
+echo 会搜索本机所有盘，并自动发现当前账号能访问的网络共享。也可在下面补充路径。
 echo 找到有效原件会自动补传，校验远端 SHA-256 后才算解决。
 echo 原件会保留；缺数据、配对和量程问题不会自动猜测修补。
 echo 请保持窗口打开，结果和日志位于 _artifacts\problem_repair_upload。
@@ -23,11 +23,11 @@ if not exist "%PROBLEM_REPORT%" goto report_error
 set "PROBLEM_SHARE="
 set /p "PROBLEM_SHARE=额外共享目录 [例如 \\SERVER\DATA，无则回车]: "
 if defined PROBLEM_SHARE goto with_share
-uv run python "%~dp0repair_problem_sessions.py" --report "%PROBLEM_REPORT%" --auto-roots --apply --open-report
+uv run python "%~dp0repair_problem_sessions.py" --report "%PROBLEM_REPORT%" --auto-roots --discover-shares --apply --open-report
 goto completed
 
 :with_share
-uv run python "%~dp0repair_problem_sessions.py" --report "%PROBLEM_REPORT%" --auto-roots --root "%PROBLEM_SHARE%\." --apply --open-report
+uv run python "%~dp0repair_problem_sessions.py" --report "%PROBLEM_REPORT%" --auto-roots --discover-shares --root "%PROBLEM_SHARE%\." --apply --open-report
 goto completed
 
 :arguments

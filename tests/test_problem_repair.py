@@ -347,7 +347,8 @@ def test_metadata_only_copy_skips_remote_but_does_not_claim_remote_is_bad(tmp_pa
 def test_empty_or_lfs_only_originals_do_not_trigger_remote_queries(tmp_path, content):
     source = tmp_path / SESSION
     source.mkdir()
-    (source / "Body0.csv").write_bytes(content)
+    (source / "mocap").mkdir()
+    (source / "mocap" / "Body0.csv").write_bytes(content)
     api = SimpleNamespace(download_file=lambda *a, **k: pytest.fail("no real payload"))
     rows, _ = repair.process_session(
         request({"A": {}}),
@@ -431,3 +432,68 @@ def test_report_includes_original_problem_and_separates_new_uploads(tmp_path):
     assert saved[0]["problem"] == "Missing CSV" and saved[0]["date"] == "20261012"
     assert summary["uploaded_files"] == summary["newly_repaired_sessions"] == 1
     assert summary["already_good_files"] == 1
+
+
+def test_irrelevant_head_database_does_not_trigger_wrist_network_queries(tmp_path):
+    source = tmp_path / SESSION
+    source.mkdir()
+    (source / "robocap_segment1_imu_right.db").write_bytes(b"some actual head data")
+    api = SimpleNamespace(download_file=lambda *a, **k: pytest.fail("irrelevant head payload"))
+    rows, _ = repair.process_session(
+        request({"L": {}}),
+        [source],
+        api,
+        SimpleNamespace(),
+        tmp_path,
+        None,
+        None,
+        True,
+        lambda _: None,
+    )
+    assert rows[0]["status"] == "目录内缺原文件"
+
+
+def test_invalid_real_original_is_reported_without_network_queries(tmp_path, monkeypatch):
+    source = tmp_path / SESSION
+    (source / "robowrist_right1_right").mkdir(parents=True)
+    (source / "robowrist_right1_right/robowrist_segment1_imu_right.db").write_bytes(
+        b"broken database"
+    )
+    monkeypatch.setattr(
+        repair, "validate_candidate", lambda *a, **k: {"eligible": False, "state": "invalid_format"}
+    )
+    api = SimpleNamespace(download_file=lambda *a, **k: pytest.fail("no eligible original"))
+    rows, _ = repair.process_session(
+        request({"L": {}}),
+        [source],
+        api,
+        SimpleNamespace(),
+        tmp_path,
+        None,
+        None,
+        True,
+        lambda _: None,
+    )
+    assert "invalid_format" in rows[0]["detail"]
+
+
+def test_group_e_all_zero_timestamps_are_not_eligible(tmp_path, monkeypatch):
+    monkeypatch.setattr(repair, "inspect_file", lambda *a, **k: {"state": "ok"})
+    trc = tmp_path / "Body0.trc"
+    trc.write_text(
+        "Frame#\tTime\tTimestamp\tmarker\t\t\n1\t0\t0\t1\t2\t3\n2\t.01\t0\t1\t2\t3\n",
+        encoding="utf-8",
+    )
+    assert not repair.validate_candidate(trc, {"E"}, None, None, None)["eligible"]
+
+
+def test_network_hosts_come_only_from_unc_or_os_neighbor_records():
+    from robocap_rerun_tools.share_discovery import hosts_from_output
+
+    output = (
+        "\\\\CAPTURE-PC\\data\n 192.168.1.42 aa-bb-cc-dd-ee-01 dynamic\n"
+        " 192.168.1.255 ff-ff-ff-ff-ff-ff static\n"
+        " 8.8.8.8 aa-bb-cc-dd-ee-02 dynamic\n"
+        " 999.999.999.999 aa-bb-cc-dd-ee-03 dynamic\n"
+    )
+    assert hosts_from_output(output) == {"CAPTURE-PC", "192.168.1.42"}
