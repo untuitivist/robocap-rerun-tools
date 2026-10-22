@@ -184,6 +184,40 @@ def test_conflicting_nested_exports_are_blocked(tmp_path):
     assert (session / RECORDING / "old.txt").is_file()
 
 
+def test_timestamp_failures_include_all_files_and_frames_before_copy(tmp_path):
+    row, source, session = plan_for(tmp_path)
+    for label in ("Body0", "Tracker0"):
+        path = source / f"{RECORDING}-{label}.csv"
+        path.write_text(
+            path.read_text().replace("\n,Timestamp", "\nTimestamp").replace(",108,", ",0,"),
+            encoding="utf-8",
+        )
+    with pytest.raises(ValueError) as error:
+        tool.copy_one(row, tmp_path)
+    detail = str(error.value)
+    assert "Body0.csv" in detail and "Tracker0.csv" in detail
+    assert "缺失或无效=1" in detail and "frame=2" in detail
+    assert (session / RECORDING / "old.txt").read_text() == "preserve"
+    assert not (session.parent / "_artifacts").exists()
+
+
+def test_redundant_header_warning_is_retained_in_copy_receipt(tmp_path):
+    row, source, session = plan_for(tmp_path)
+    path = source / f"{RECORDING}-Body0.trc"
+    path.write_text(
+        path.read_text()
+        .replace("Marker1\t\t\n", "Marker1\t\t\tMarker1_1\t\t\n")
+        .replace("X1\tY1\tZ1\n", "X1\tY1\tZ1\tX1\tY1\tZ1\n"),
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    result = tool.copy_one(row, tmp_path)
+    assert result["state"] == "已复制并校验" and "冗余" in result["note"]
+    journal = json.loads(Path(result["journal"]).read_text(encoding="utf-8"))
+    assert journal["validation"][path.name]["ignored_header_markers"] == 1
+    assert path.read_bytes() == (session / RECORDING / path.name).read_bytes() == original
+
+
 def test_install_failure_restores_old_directory_and_preserves_staged_data(tmp_path, monkeypatch):
     row, source, session = plan_for(tmp_path)
     original = Path.rename

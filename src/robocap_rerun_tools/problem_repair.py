@@ -21,7 +21,13 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 from . import modelscope_publisher as publisher
-from .file_integrity import file_signature, inspect_file
+from .file_integrity import (
+    file_signature,
+    inspect_file,
+    normalize_pose_header,
+    pose_cells,
+    trc_marker_offset,
+)
 from .inventory_report import render_table, write_csv
 from .repair_upload import safe_relative, sha256
 from .session_integrity import SKIP_DIRS, is_link, source_files
@@ -309,21 +315,60 @@ def make_targets(request, manifest):
     return dict(targets), blocked
 
 
+class _TimestampAudit:
+    def __init__(self):
+        self.rows = self.missing = self.nonincreasing = 0
+        self.previous = None
+        self.issues = []
+
+    def add(self, cells, column, line):
+        self.rows += 1
+        raw = cells[column] if column is not None and column < len(cells) else ""
+        reason = ""
+        previous = self.previous
+        try:
+            stamp = float(raw)
+            if not math.isfinite(stamp) or stamp <= 0:
+                raise ValueError("missing")
+            if previous is not None and stamp <= previous:
+                self.nonincreasing += 1
+                reason = "nonincreasing"
+            self.previous = stamp
+        except ValueError:
+            self.missing += 1
+            reason = "missing_or_invalid"
+        if reason and len(self.issues) < 5:
+            self.issues.append(
+                {"line": line, "frame": cells[0], "value": raw, "reason": reason, "previous": previous}
+            )
+
+    def details(self, column):
+        return {
+            "rows": self.rows,
+            "missing_timestamps": self.missing,
+            "nonincreasing_timestamps": self.nonincreasing,
+            "timestamp_column": column + 1 if column is not None else None,
+            "timestamp_issues": self.issues,
+        }
+
+
 def marker_details(path, encoding="utf-8-sig"):
-    rows = empty_rows = missing_timestamp = nonincreasing = 0
-    previous = None
+    empty_rows = 0
+    audit = _TimestampAudit()
+    column = None
     started = False
     with path.open(encoding=encoding) as stream:
-        for line in stream:
-            cells = line.rstrip("\r\n").split("\t")
+        for number, line in enumerate(stream, 1):
+            cells = [cell.strip() for cell in line.rstrip("\r\n").split("\t")]
             if not started:
                 if cells[0] == "Frame#":
                     started = True
-                    offset = 3 if len(cells) > 2 and "time" in cells[2].lower() else 2
+                    offset = trc_marker_offset(cells)
+                    column = 2 if offset == 3 else None
                 continue
             if not cells[0].isdigit():
                 continue
-            rows += 1
+            audit.add(cells, column, number)
             valid = False
             for start in range(offset, len(cells) - 2, 3):
                 try:
@@ -331,45 +376,23 @@ def marker_details(path, encoding="utf-8-sig"):
                 except ValueError:
                     pass
             empty_rows += not valid
-            try:
-                stamp = float(cells[2]) if offset == 3 else 0
-                if not math.isfinite(stamp) or stamp <= 0:
-                    raise ValueError("missing")
-                nonincreasing += previous is not None and stamp <= previous
-                previous = stamp
-            except (ValueError, IndexError):
-                missing_timestamp += 1
-    return {
-        "rows": rows,
-        "frames_without_any_marker": empty_rows,
-        "missing_timestamps": missing_timestamp,
-        "nonincreasing_timestamps": nonincreasing,
-    }
+    return {**audit.details(column), "frames_without_any_marker": empty_rows}
 
 
 def timestamp_details(path, encoding="utf-8-sig"):
     header = None
-    rows = missing = nonincreasing = 0
-    previous = None
+    audit = _TimestampAudit()
     with path.open(encoding=encoding, newline="") as stream:
-        for cells in csv.reader(stream):
-            cells = [cell.strip() for cell in cells]
+        for number, line in enumerate(stream, 1):
+            cells = pose_cells(line, path.suffix.lower())
             if header is None:
                 if "Timestamp" in cells:
-                    header = cells.index("Timestamp")
+                    header = normalize_pose_header(cells).index("Timestamp")
                 continue
             if not cells or not cells[0].isdigit():
                 continue
-            rows += 1
-            try:
-                stamp = float(cells[header])
-                if not math.isfinite(stamp) or stamp <= 0:
-                    raise ValueError("missing")
-                nonincreasing += previous is not None and stamp <= previous
-                previous = stamp
-            except (ValueError, IndexError):
-                missing += 1
-    return {"rows": rows, "missing_timestamps": missing, "nonincreasing_timestamps": nonincreasing}
+            audit.add(cells, header, number)
+    return audit.details(header)
 
 
 def validate_candidate(path, groups, ffmpeg, ffprobe, log_path):

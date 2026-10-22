@@ -478,7 +478,7 @@ def export_files(source, recording):
     return found
 
 
-def validate_exports(source, row):
+def validate_exports(source, row, *, checks=None):
     files = export_files(source, row["recording"])
     motion = {p.name.casefold(): p for p in files if p.suffix.lower() in EXPORTS}
     if len(motion) != sum(p.suffix.lower() in EXPORTS for p in files):
@@ -510,22 +510,39 @@ def validate_exports(source, row):
     missing = sorted(n for n in expected if n.casefold() not in motion)
     if missing:
         raise ValueError("缺少导出：" + "; ".join(missing))
+    errors = []
     for relative, path in files.items():
         if path.stat().st_size == 0:
-            raise ValueError(f"存在零字节文件：{relative}")
+            errors.append(f"存在零字节文件：{relative}")
+            continue
         if relative.suffix.lower() in EXPORTS:
             check = inspect_file(path)
+            if checks is not None:
+                checks[str(relative)] = check
             if check["state"] != "ok":
-                raise ValueError(f"{relative}: {check['state']} {check.get('detail', '')}")
-            if relative.suffix.lower() in {".csv", ".trc"}:
+                errors.append(f"{relative}: {check['state']} {check.get('detail', '')}")
+            if relative.suffix.lower() in {".csv", ".trc"} and check["state"] in {
+                "ok", "partial_data", "column_mismatch"
+            }:
                 inspect = marker_details if relative.suffix.lower() == ".trc" else timestamp_details
-                stamps = inspect(path, check.get("encoding", "utf-8-sig"))
+                check["timestamp_detail"] = stamps = inspect(path, check.get("encoding", "utf-8-sig"))
                 if (
                     not stamps["rows"]
                     or stamps["missing_timestamps"]
                     or stamps["nonincreasing_timestamps"]
                 ):
-                    raise ValueError(f"{relative}: 时间戳缺失、为零或不递增")
+                    examples = "; ".join(
+                        f"line={issue['line']}, frame={issue['frame']}, value={issue['value']!r}"
+                        for issue in stamps["timestamp_issues"]
+                    )
+                    errors.append(
+                        f"{relative}: 时间戳异常：行数={stamps['rows']}，"
+                        f"时间戳列={stamps['timestamp_column']}，"
+                        f"缺失或无效={stamps['missing_timestamps']}，"
+                        f"不递增={stamps['nonincreasing_timestamps']}；{examples}"
+                    )
+    if errors:
+        raise ValueError("\n".join(errors))
     return files
 
 
@@ -558,7 +575,10 @@ def copy_one(row, output):
         str(path): {str(p): file_signature(p) for p in export_files(path, recording).values()}
         for path in old
     }
-    files = validate_exports(source, {**row, "expected_exports": sorted(extra_expected)})
+    checks = {}
+    files = validate_exports(
+        source, {**row, "expected_exports": sorted(extra_expected)}, checks=checks
+    )
     token = uuid.uuid4().hex
     # Stage and back up alongside the Session, on its volume. Final replacement
     # uses atomic renames rather than cross-volume move/copy/delete operations.
@@ -591,6 +611,7 @@ def copy_one(row, output):
         "target": str(target),
         "destination": str(destination),
         "hashes": hashes,
+        "validation": checks,
         "backups": [],
         "stage": str(stage),
         "state": "prepared",
@@ -630,11 +651,17 @@ def copy_one(row, output):
                 backup.rename(original)
         save()
         raise
+    note = "G 类时钟配对仍需人工复核" if row["manual_review"] else "请重新运行数据检查后上传"
+    warnings = [
+        f"{name}: {warning}"
+        for name, check in checks.items()
+        for warning in check.get("warnings", [])
+    ]
     return {
         "state": "已复制并校验",
         "files": len(hashes),
         "journal": str(work / "journal.json"),
-        "note": "G 类时钟配对仍需人工复核" if row["manual_review"] else "请重新运行数据检查后上传",
+        "note": "；".join([note, *warnings]),
     }
 
 

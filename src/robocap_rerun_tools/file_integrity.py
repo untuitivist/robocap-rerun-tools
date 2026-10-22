@@ -235,11 +235,39 @@ def _motion_result(rows, declared, valid, missing=0):
     return result(detail=detail, rows=rows, declared_rows=declared)
 
 
+def trc_marker_offset(cells):
+    return 3 if len(cells) > 2 and any(word in cells[2].lower() for word in ("time", "stamp")) else 2
+
+
+def _trc_derived_markers(names, labels, declared):
+    if declared is None or not 0 < declared < len(names):
+        return 0, 0
+    expected = [
+        f"{axis}{number}"
+        for count in (declared, len(names) - declared)
+        for number in range(1, count + 1)
+        for axis in "XYZ"
+    ]
+    if labels != expected:
+        return 0, 0
+    original = set(names[:declared])
+    extra = names[declared:]
+    if all(name.startswith("RCalc::") and name.removeprefix("RCalc::") in original for name in extra):
+        return 0, len(extra)
+    for name in extra:
+        base, separator, number = name.rpartition("_")
+        if not separator or base not in original or not number.isdigit() or int(number) < 1:
+            return 0, 0
+    return len(extra), 0
+
+
 def inspect_trc(stream):
-    declared = None
+    declared = declared_markers = None
     metadata = None
     width = offset = 0
     rows = valid = missing = 0
+    marker_names = []
+    ignored = calculated = 0
     mismatched_widths = set()
     for number, line in enumerate(stream, 1):
         if not line.strip():
@@ -251,18 +279,27 @@ def inspect_trc(stream):
                 metadata = words
             elif metadata:
                 declared = int(words[metadata.index("NumFrames")])
+                if "NumMarkers" in metadata:
+                    declared_markers = int(words[metadata.index("NumMarkers")])
+                    if declared_markers <= 0:
+                        raise ValueError("TRC NumMarkers must be positive")
                 metadata = None
             if cells[0] == "Frame#":
                 if len(cells) < 3:
                     raise ValueError("TRC has no marker columns")
-                offset = 3 if "time" in cells[2].lower() or "stamp" in cells[2].lower() else 2
-                markers = sum(bool(value) for value in cells[offset:])
-                if not markers:
+                offset = trc_marker_offset(cells)
+                marker_names = [value for value in cells[offset:] if value]
+                if not marker_names:
                     raise ValueError("TRC has no marker names")
-                width = offset + 3 * markers
+                width = offset + 3 * len(marker_names)
             continue
         if not cells[0].isdigit():
             if not rows and not cells[0] and any(v.startswith("X") for v in cells[offset:]):
+                labels = cells[offset:]
+                while labels and not labels[-1]:
+                    labels.pop()
+                ignored, calculated = _trc_derived_markers(marker_names, labels, declared_markers)
+                width = offset + 3 * (len(marker_names) - ignored)
                 continue  # coordinate-label row immediately after Frame#/Time
             raise ValueError(f"TRC line {number}: invalid frame row")
         while (
@@ -296,15 +333,35 @@ def inspect_trc(stream):
     if not width:
         raise ValueError("TRC missing Frame#/Time header")
     checked = _motion_result(rows, declared, valid, missing)
-    if mismatched_widths:
-        return result(
+    effective_markers = (width - offset) // 3
+    if mismatched_widths or (
+        declared_markers is not None and declared_markers + calculated != effective_markers
+    ):
+        checked = result(
             "column_mismatch",
             checked["detail"] + f"; header columns={width}; "
-            f"observed columns={sorted(mismatched_widths)}",
+            f"observed columns={sorted(mismatched_widths)}; NumMarkers={declared_markers}",
             rows=rows,
             declared_rows=declared,
             missing_samples=missing,
         )
+    checked.update(
+        declared_markers=declared_markers,
+        header_markers=len(marker_names),
+        effective_markers=effective_markers,
+        ignored_header_markers=ignored,
+        calculated_markers=calculated,
+        valid_samples=valid,
+        missing_samples=missing,
+    )
+    if ignored:
+        warning = f"NOKOV 冗余派生表头 {ignored} 个；按 NumMarkers={declared_markers} 核验坐标"
+        checked["warnings"] = [warning]
+        checked["detail"] += "; " + warning
+    if calculated:
+        warning = f"NOKOV 计算点 {calculated} 个；与 NumMarkers={declared_markers} 个基础点一并核验"
+        checked["warnings"] = [warning]
+        checked["detail"] += "; " + warning
     return checked
 
 
@@ -353,10 +410,14 @@ def inspect_bvh(stream):
     return _motion_result(rows, declared, rows)
 
 
-def _pose_cells(line, suffix):
+def pose_cells(line, suffix):
     if suffix == ".csv":
         return [v.strip() for v in next(csv.reader([line]))]
     return [v.strip() for v in line.rstrip("\r\n").split("\t")] if "\t" in line else line.split()
+
+
+def normalize_pose_header(cells):
+    return ["Frame#", *cells] if cells and cells[0] == "Timestamp" else cells
 
 
 def inspect_pose(stream, suffix):
@@ -365,7 +426,7 @@ def inspect_pose(stream, suffix):
     for number, line in enumerate(stream, 1):
         if not line.strip():
             continue
-        cells = _pose_cells(line, suffix)
+        cells = pose_cells(line, suffix)
         if header is None:
             if "NumFrames" in cells:
                 metadata = cells
@@ -377,9 +438,7 @@ def inspect_pose(stream, suffix):
             if "Timestamp" in cells and any(
                 c.startswith(("XToGlobal", "XToParent")) for c in cells
             ):
-                if cells[0] == "Timestamp":
-                    cells.insert(0, "Frame#")
-                header = cells
+                header = normalize_pose_header(cells)
                 for index, name in enumerate(header):
                     if name.startswith(("XToGlobal", "XToParent")):
                         try:

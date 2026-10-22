@@ -150,6 +150,70 @@ def test_trc_omitted_untracked_rows_and_inconsistent_extra_labels(tmp_path):
     assert "header columns=9" in checked["detail"]
 
 
+def nokov_redundant_trc():
+    return (
+        "DataRate\tCameraRate\tNumFrames\tNumMarkers\n120\t120\t2\t2\n"
+        "Frame#\tTime\tTimestamp\tHead\t\t\tC7\t\t\tC7_1\t\t\n"
+        "\t\t\tX1\tY1\tZ1\tX2\tY2\tZ2\tX1\tY1\tZ1\n\n"
+        "1\t0\t100\t1\t2\t3\t4\t5\t6\t\n"
+        "2\t.008333\t108\t7\t8\t9\t10\t11\t12\t\n"
+    )
+
+
+def test_nokov_redundant_header_uses_declared_markers_and_preserves_source(tmp_path):
+    path = tmp_path / "Body0.trc"
+    path.write_text(nokov_redundant_trc(), encoding="utf-8")
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    checked = content.inspect_file(path)
+    assert checked["state"] == "ok"
+    assert checked["declared_markers"] == checked["effective_markers"] == 2
+    assert checked["header_markers"] == 3
+    assert checked["ignored_header_markers"] == 1 and checked["warnings"]
+    assert "valid samples=4" in checked["detail"]
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        ("4\t5\t6\t\n", "\t\t\t\t\t\t\t\n", "partial_data"),
+        ("4\t5\t6\t\n", "\n", "column_mismatch"),
+        ("4\t5\t6\t\n", "4\t5\t6\t7\t8\t9\n", "invalid_format"),
+        ("C7_1", "Unknown_1", "column_mismatch"),
+        ("X2\tY2\tZ2\tX1\tY1\tZ1", "X2\tY2\tZ2\tX3\tY3\tZ3", "column_mismatch"),
+        ("120\t120\t2\t2", "120\t120\t3\t2", "count_mismatch"),
+    ],
+)
+def test_redundant_trc_headers_do_not_hide_real_errors(tmp_path, old, new, expected):
+    path = tmp_path / "Body0.trc"
+    path.write_text(nokov_redundant_trc().replace(old, new, 1), encoding="utf-8")
+    assert content.inspect_file(path)["state"] == expected
+
+
+def test_trc_declared_marker_count_must_match_even_with_complete_rows(tmp_path):
+    path = tmp_path / "Body0.trc"
+    path.write_text(trc_text().replace("120\t120\t2\t1", "120\t120\t2\t2"), encoding="utf-8")
+    assert content.inspect_file(path)["state"] == "column_mismatch"
+
+
+@pytest.mark.parametrize("truncate", [False, True])
+def test_tracker_calculated_markers_are_checked_as_real_coordinates(tmp_path, truncate):
+    path = tmp_path / "Tracker0.trc"
+    text = trc_text().replace(
+        "Marker1\t\t\n", "Marker1\t\t\tRCalc::Marker1\t\t\n"
+    ).replace("X1\tY1\tZ1\n", "X1\tY1\tZ1\tX1\tY1\tZ1\n")
+    text = text.replace("100\t1\t2\t3\n", "100\t1\t2\t3\t4\t5\t6\n")
+    if not truncate:
+        text = text.replace("108\t1\t2\t3\n", "108\t1\t2\t3\t7\t8\t9\n")
+    path.write_text(text, encoding="utf-8")
+    checked = content.inspect_file(path)
+    assert checked["state"] == ("column_mismatch" if truncate else "ok")
+    assert checked["declared_markers"] == checked["calculated_markers"] == 1
+    assert checked["effective_markers"] == 2
+    assert checked["valid_samples"] == (3 if truncate else 4)
+    assert checked["warnings"]
+
+
 @pytest.mark.parametrize(
     ("kwargs", "state"),
     [

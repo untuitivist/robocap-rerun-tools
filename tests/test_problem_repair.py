@@ -109,6 +109,46 @@ def test_empty_marker_frames_and_missing_csv_timestamps_block_automatic_repair(
     assert not repair.validate_candidate(csv, {"F"}, None, None, None)["eligible"]
 
 
+@pytest.mark.parametrize("prefix", ["", ",", "Frame#,"])
+@pytest.mark.parametrize("suffix", [".csv", ".xrs"])
+@pytest.mark.parametrize(
+    ("last_stamp", "missing", "nonincreasing"),
+    [("108", 0, 0), ("0", 1, 0), ("", 1, 0), ("nan", 1, 0), ("100", 0, 1), ("99", 0, 1)],
+)
+def test_timestamp_audit_uses_data_column_with_omitted_frame_label(
+    tmp_path, prefix, suffix, last_stamp, missing, nonincreasing
+):
+    path = tmp_path / ("Body0" + suffix)
+    text = (
+        prefix + "Timestamp,XToGlobal1,YToGlobal1,ZToGlobal1\n"
+        f"1,100,1,2,3\n2,{last_stamp},1,2,3\n"
+    )
+    path.write_text(text if suffix == ".csv" else text.replace(",", "\t"), encoding="utf-8")
+    checked = repair.timestamp_details(path)
+    assert checked["rows"] == 2
+    assert checked["missing_timestamps"] == missing
+    assert checked["nonincreasing_timestamps"] == nonincreasing
+    assert checked["timestamp_column"] == 2
+    if missing or nonincreasing:
+        assert checked["timestamp_issues"][0]["frame"] == "2"
+        assert checked["timestamp_issues"][0]["line"] == 3
+        assert checked["timestamp_issues"][0]["value"] == last_stamp
+
+
+def test_marker_timestamp_alias_and_bounded_diagnostics(tmp_path):
+    path = tmp_path / "Body0.trc"
+    path.write_text(
+        "Frame#\tTime\tStamp\tHead\t\t\n"
+        + "".join(f"{frame}\t0\t0\t1\t2\t3\n" for frame in range(1, 21)),
+        encoding="utf-8",
+    )
+    checked = repair.marker_details(path)
+    assert checked["rows"] == checked["missing_timestamps"] == 20
+    assert checked["frames_without_any_marker"] == 0
+    assert checked["timestamp_column"] == 3
+    assert len(checked["timestamp_issues"]) == 5
+
+
 def test_metadata_patch_is_atomic_and_preserves_unrelated_current_fields(tmp_path, monkeypatch):
     from robocap_rerun_tools import metadata_commit
 
