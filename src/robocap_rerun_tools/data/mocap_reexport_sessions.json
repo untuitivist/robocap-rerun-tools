@@ -2,6 +2,389 @@
   "schema_version": 1,
   "reviewed_on": "2026-10-22",
   "provenance": "Exact session_id/dataset_path and mocap_capture.source_directory from locally cached remote manifests; no time-based inference",
+  "field_report": {
+    "report_name": "20261022_213918_248704",
+    "updated_at": "2026-10-22T22:12:28.329535+08:00",
+    "report_sha256": {
+      "results.json": "8c214f74fffb99dc996f2f22c44175c0a8fd0b86c6a517255767d20aecd3c0f1",
+      "sources.json": "766ceab52c081b84d261e6c1958d7764c806fe435c8c5e480aac2017ecc5be48",
+      "summary.json": "e70e76196ffb55e48c80a00b1d085c089c9c5f1561ccab445220cf9b2628f944"
+    },
+    "source_inventory": "WizTree_20261022225440.csv; exact recording-name matches from prior checked plan",
+    "statuses": {
+      "20260828_024404_session253": {
+        "B": "目录内缺原文件"
+      },
+      "20260901_105514_session2": {
+        "G": "需人工确认"
+      },
+      "20260901_110828_session5": {
+        "G": "需人工确认"
+      },
+      "20260903_034144_session44": {
+        "A": "未找到原件"
+      },
+      "20260904_023407_session14": {
+        "F": "未找到原件"
+      },
+      "20260904_030538_session25": {
+        "F": "目录内缺原文件"
+      },
+      "20260907_090343_session173": {
+        "F": "未找到原件"
+      },
+      "20260907_090449_session174": {
+        "F": "未找到原件"
+      },
+      "20260908_020251_session21": {
+        "F": "目录内缺原文件"
+      },
+      "20260908_042244_session3": {
+        "F": "目录内缺原文件"
+      },
+      "20260908_042446_session4": {
+        "F": "目录内缺原文件"
+      },
+      "20260910_055707_session108": {
+        "F": "目录内缺原文件"
+      },
+      "20260911_074049_session11": {
+        "F": "未找到原件"
+      },
+      "20260911_074242_session12": {
+        "E": "未找到原件",
+        "F": "未找到原件"
+      },
+      "20260914_012128_session9": {
+        "G": "需人工确认"
+      },
+      "20260914_084328_session2": {
+        "G": "需人工确认"
+      },
+      "20260915_075437_session90": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_080246_session92": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_080830_session94": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_081623_session96": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_081851_session97": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_082500_session99": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_083109_session101": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_083443_session102": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_083658_session103": {
+        "B": "目录内缺原文件"
+      },
+      "20260915_102035_session123": {
+        "F": "目录内缺原文件"
+      },
+      "20260915_123100_session158": {
+        "G": "需人工确认"
+      },
+      "20260917_040837_session56": {
+        "A": "目录内缺原文件"
+      },
+      "20260917_041058_session57": {
+        "A": "目录内缺原文件"
+      },
+      "20260917_041324_session58": {
+        "A": "目录内缺原文件"
+      },
+      "20260917_041549_session59": {
+        "A": "目录内缺原文件"
+      },
+      "20260917_041809_session60": {
+        "A": "目录内缺原文件"
+      },
+      "20260917_052149_session81": {
+        "A": "目录内缺原文件"
+      },
+      "20260917_054009_session89": {
+        "A": "目录内缺原文件"
+      },
+      "20260918_105153_session88": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_105406_session89": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_110009_session90": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_110245_session91": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_110527_session92": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_110829_session93": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_111113_session94": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_111938_session96": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_112156_session97": {
+        "C": "目录内缺原文件",
+        "E": "目录内缺原文件"
+      },
+      "20260918_113919_session99": {
+        "E": "目录内缺原文件"
+      },
+      "20260918_115414_session103": {
+        "E": "目录内缺原文件"
+      },
+      "20260918_122511_session107": {
+        "E": "目录内缺原文件"
+      },
+      "20260919_121404_session215": {
+        "A": "目录内缺原文件"
+      },
+      "20260919_121632_session216": {
+        "A": "目录内缺原文件"
+      },
+      "20260921_020549_session28": {
+        "A": "目录内缺原文件"
+      },
+      "20260930_010613_session8": {
+        "G": "需人工确认"
+      },
+      "20260930_010745_session9": {
+        "G": "需人工确认"
+      },
+      "20260930_104724_session144": {
+        "D": "目录内缺原文件"
+      },
+      "20260930_105004_session145": {
+        "D": "目录内缺原文件"
+      },
+      "20260930_105145_session146": {
+        "D": "目录内缺原文件"
+      },
+      "20260930_105414_session147": {
+        "D": "目录内缺原文件"
+      },
+      "20260930_105651_session148": {
+        "D": "目录内缺原文件"
+      },
+      "20261008_054213_session72": {
+        "D": "原件仍有问题"
+      },
+      "20261008_054737_session74": {
+        "D": "原件仍有问题"
+      },
+      "20261008_055019_session75": {
+        "D": "原件仍有问题"
+      },
+      "20261008_055820_session78": {
+        "D": "原件仍有问题"
+      },
+      "20261008_060715_session81": {
+        "D": "原件仍有问题"
+      },
+      "20261008_061126_session82": {
+        "D": "原件仍有问题"
+      },
+      "20261008_061418_session83": {
+        "D": "原件仍有问题"
+      },
+      "20261008_061702_session84": {
+        "D": "原件仍有问题"
+      },
+      "20261008_062024_session85": {
+        "D": "原件仍有问题"
+      },
+      "20261008_062310_session86": {
+        "D": "原件仍有问题"
+      },
+      "20261008_062538_session87": {
+        "D": "原件仍有问题"
+      },
+      "20261009_053138_session25": {
+        "D": "原件仍有问题"
+      },
+      "20261009_054850_session30": {
+        "D": "原件仍有问题"
+      },
+      "20261009_055142_session31": {
+        "D": "原件仍有问题"
+      },
+      "20261009_055548_session33": {
+        "D": "原件仍有问题"
+      },
+      "20261009_060109_session35": {
+        "D": "原件仍有问题"
+      },
+      "20261009_060748_session37": {
+        "D": "原件仍有问题"
+      },
+      "20261009_061502_session39": {
+        "D": "原件仍有问题"
+      }
+    },
+    "raw_session_paths": {
+      "20260901_105514_session2": [
+        "F:\\桌面\\EgoMocapActionsDataset\\秒表\\20260901_105514_session2"
+      ],
+      "20260901_110828_session5": [
+        "F:\\桌面\\EgoMocapActionsDataset\\秒表\\20260901_110828_session5"
+      ],
+      "20261008_054213_session72": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_054213_session72"
+      ],
+      "20261008_054737_session74": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_054737_session74"
+      ],
+      "20261008_055019_session75": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_055019_session75"
+      ],
+      "20261008_055820_session78": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_055820_session78"
+      ],
+      "20261008_060715_session81": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_060715_session81"
+      ],
+      "20261008_061126_session82": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_061126_session82"
+      ],
+      "20261008_061418_session83": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_061418_session83"
+      ],
+      "20261008_061702_session84": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_061702_session84"
+      ],
+      "20261008_062024_session85": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_062024_session85"
+      ],
+      "20261008_062310_session86": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_062310_session86"
+      ],
+      "20261008_062538_session87": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1008\\morning\\6\\20261008_062538_session87"
+      ],
+      "20261009_053138_session25": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1009\\morning\\7\\20261009_053138_session25"
+      ],
+      "20261009_054850_session30": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1009\\morning\\7\\20261009_054850_session30"
+      ],
+      "20261009_055142_session31": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1009\\morning\\7\\20261009_055142_session31"
+      ],
+      "20261009_055548_session33": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1009\\morning\\7\\20261009_055548_session33"
+      ],
+      "20261009_060109_session35": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1009\\morning\\7\\20261009_060109_session35"
+      ],
+      "20261009_060748_session37": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1009\\morning\\7\\20261009_060748_session37"
+      ],
+      "20261009_061502_session39": [
+        "F:\\桌面\\EgoMocapActionsDataset\\1009\\morning\\7\\20261009_061502_session39"
+      ]
+    },
+    "original_export_paths": {
+      "20260930_010613_session8": [
+        "F:\\桌面\\nokov\\20260930-morning\\mocap-D18-S01-fengyixuan-02p1"
+      ],
+      "20260930_010745_session9": [
+        "F:\\桌面\\nokov\\20260930-morning\\mocap-D17-S01-fengyixuan-02p1"
+      ],
+      "20260930_104724_session144": [
+        "F:\\桌面\\nokov\\20260930-afternoon\\mocap-P21-S03-wangmengli-05p1"
+      ],
+      "20260930_105004_session145": [
+        "F:\\桌面\\nokov\\20260930-afternoon\\mocap-P22-S01-wangmengli-04p2"
+      ],
+      "20260930_105145_session146": [
+        "F:\\桌面\\nokov\\20260930-afternoon\\mocap-P35-S01-wangmengli-04p1"
+      ],
+      "20260930_105414_session147": [
+        "F:\\桌面\\nokov\\20260930-afternoon\\mocap-P36-S06-wangmengli-01p2"
+      ],
+      "20260930_105651_session148": [
+        "F:\\桌面\\nokov\\20260930-afternoon\\mocap-P36-S08-wangmengli-01p1"
+      ],
+      "20261008_054213_session72": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM43-S03-gaoziyue-01p1"
+      ],
+      "20261008_054737_session74": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM44-S02-gaoziyue-01p1"
+      ],
+      "20261008_055019_session75": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM44-S03-gaoziyue-01p1"
+      ],
+      "20261008_055820_session78": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM46-S02-gaoziyue-01p2"
+      ],
+      "20261008_060715_session81": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM51-S02-gaoziyue-01p1"
+      ],
+      "20261008_061126_session82": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM45-S01-gaoziyue-01p1"
+      ],
+      "20261008_061418_session83": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM45-S02-gaoziyue-01p1"
+      ],
+      "20261008_061702_session84": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM45-S03-gaoziyue-01p1"
+      ],
+      "20261008_062024_session85": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM47-S01-gaoziyue-01p1"
+      ],
+      "20261008_062310_session86": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM47-S02-gaoziyue-01p1"
+      ],
+      "20261008_062538_session87": [
+        "F:\\桌面\\nokov\\20261008-morning\\mocap-LM47-S03-gaoziyue-01p1"
+      ],
+      "20261009_053138_session25": [
+        "F:\\桌面\\nokov\\20261009-morning\\mocap-SM12-S01-daihaoxiang-02p1"
+      ],
+      "20261009_054850_session30": [
+        "F:\\桌面\\nokov\\20261009-morning\\mocap-LM76-S04-daihaoxiang-01p1"
+      ],
+      "20261009_055142_session31": [
+        "F:\\桌面\\nokov\\20261009-morning\\mocap-LM76-S05-daihaoxiang-01p1"
+      ],
+      "20261009_055548_session33": [
+        "F:\\桌面\\nokov\\20261009-morning\\mocap-LM76-S06-daihaoxiang-01p3"
+      ],
+      "20261009_060109_session35": [
+        "F:\\桌面\\nokov\\20261009-morning\\mocap-SM19-S02-daihaoxiang-02p1"
+      ],
+      "20261009_060748_session37": [
+        "F:\\桌面\\nokov\\20261009-morning\\mocap-SM03-S01-daihaoxiang-02p2"
+      ],
+      "20261009_061502_session39": [
+        "F:\\桌面\\nokov\\20261009-morning\\mocap-LM33-S04-daihaoxiang-01p1"
+      ]
+    }
+  },
   "sessions": [
     {
       "session": "20260828_024404_session253",

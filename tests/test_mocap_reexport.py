@@ -316,3 +316,68 @@ def test_nonpositive_scan_timeout_is_rejected():
     with pytest.raises(SystemExit) as error:
         tool.main(["report", "--scan-timeout", "0"])
     assert error.value.code == 2
+
+
+def test_default_report_uses_onsite_results_without_scanning_any_disk(tmp_path, monkeypatch):
+    def unexpected_scan(*_args, **_kwargs):
+        pytest.fail("Default report must not rediscover Sessions or probe onsite disks")
+
+    monkeypatch.setattr(tool, "automatic_roots", unexpected_scan)
+    monkeypatch.setattr(tool, "scan_directories", unexpected_scan)
+    monkeypatch.setattr(tool, "DirectoryReader", unexpected_scan)
+    output = tmp_path / "report"
+    assert tool.main(["report", "--output", str(output)]) == 1
+    plan = json.loads((output / "plan.json").read_text(encoding="utf-8"))
+    rows = plan["rows"]
+    assert len(rows) == 74
+    assert "20261022_213918_248704" in plan["basis"]
+    assert sum(bool(r["sources"]) for r in rows) == 25
+    assert sum(bool(r["destinations"]) for r in rows) == 20
+    assert sum(r["state"] == "匹配唯一" for r in rows) == 18
+    assert len({p for r in rows for p in r["batches"]}) == 4
+    assert sum(len(r["groups"]) for r in rows) == 84
+    assert all(".cache" not in p for r in rows for p in r["destinations"])
+    assert "本次未重新搜索 Session" in (output / "report.html").read_text(encoding="utf-8")
+
+
+def test_report_copy_verifies_only_exact_paths_and_blocks_unavailable_paths(monkeypatch):
+    visited = []
+
+    class Reader:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def read(self, path, _waiting):
+            visited.append(path)
+            return {"error": "directory unavailable"} if path == "missing" else {}
+
+    monkeypatch.setattr(tool, "DirectoryReader", Reader)
+    rows = [
+        {"state": "匹配唯一", "sources": ["source"], "destinations": ["missing"]},
+        {"state": "未找到本地原始 Session", "sources": ["skip"], "destinations": []},
+    ]
+    errors = tool.verify_report_paths(rows, lambda _: None)
+    assert visited == ["source", "missing"]
+    assert len(errors) == 1 and rows[0]["state"] == "报告路径当前不可访问，未复制"
+
+
+def test_cancel_default_copy_saves_report_without_searching_or_writing_data(tmp_path, monkeypatch):
+    def cancel(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    def unexpected_copy(*_args):
+        pytest.fail("Cancelled path verification must not start copying")
+
+    monkeypatch.setattr(tool, "verify_report_paths", cancel)
+    monkeypatch.setattr(tool, "copy_one", unexpected_copy)
+    output = tmp_path / "report"
+    assert tool.main(["copy", "--output", str(output)]) == 1
+    assert "未开始复制" in (output / "scan_errors.csv").read_text(encoding="utf-8")
+    assert (output / "report.html").is_file()
+    assert not (output / "copy_results.json").exists()

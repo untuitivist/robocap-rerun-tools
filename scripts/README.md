@@ -7,15 +7,15 @@
 | 录制后想完整检查有没有缺文件、坏文件或空数据 | `session_inspection/inspect_sessions.bat` | 核对整个 Session 的结构，完整解码视频、检查传感器和动捕内容，并保留帧数与时间戳分析。建议先用这个 |
 | 已有坏视频、坏动捕文件清单，需要检查原文件并重新上传 | `repair_upload/reupload_corrupt_sessions.bat` | 按清单找原文件。默认只预览；输入 `UPLOAD` 才校验并覆盖远端对应文件 |
 | 一键查找并补传已知问题 Session | `problem_repair_upload/repair_problem_sessions.bat` | 内置问题清单，无需输入；搜索本机和网络共享，验证原件后自动补传，并报告缺失及待处理问题 |
-| 找到之前动捕问题涉及的原始批次，准备重新导出 | `mocap_reexport/01_find_batches.bat` | 自动搜索所有可访问盘和已有共享，列出 NOKOV 大目录，可逐条或全部复制路径 |
-| 在 NOKOV 重新导出完，把导出复制回 Session | `mocap_reexport/02_copy_reexports.bat` | 自动按完整录制名匹配，检查后复制；旧版本备份，不删除、不上传；缺失和重复写报告 |
+| 找到之前动捕问题涉及的原始批次，准备重新导出 | `mocap_reexport/01_find_batches.bat` | 直接用已提供的现场报告和目录清单，不重新扫描；可逐条或全部复制 NOKOV 批次路径 |
+| 在 NOKOV 重新导出完，把导出复制回 Session | `mocap_reexport/02_copy_reexports.bat` | 只复查报告中的已知路径与文件，再复制；不重新搜索 Session；保留旧版本，不上传 |
 | 想知道物品的动捕文件有没有导出、叫什么名字 | `obj_repair_upload/inspect_object_mocap.bat` | 区分物品、人体 Body、Tracker 和未命名文件，统计涉及的动作、人员及录制 |
 | 想知道右手 IMU 是哪个设备、哪些录制缺数据 | `imu_repair_upload/inspect_right_imu.bat` | 检查加速度 ACC 和角速度 GYRO，区分空库、缺文件、缺一路和损坏，按设备、日期、人员汇总 |
 
 ## 怎么运行
 
 1. 双击上表对应的 BAT，无需手动输命令。
-2. 问题补传和动捕重导出工具一键自动搜索，无需输入。其他工具本地目录（`Local ... root`）默认 `F:\`，正确就回车；否则输入原始数据所在目录。共享目录（`Shared ... root`）没有就直接回车。输入路径时不用加引号。
+2. 问题补传工具一键自动搜索；动捕重导出默认复用现场报告，无需输入，也不重新搜索 Session。其他工具本地目录（`Local ... root`）默认 `F:\`，正确就回车；否则输入原始数据所在目录。共享目录（`Shared ... root`）没有就直接回车。输入路径时不用加引号。
 3. 等窗口显示结束。结果在仓库根目录的 `_artifacts/<工具目录名>/<运行时间>/`，每次单独保存；出问题请把其中的 `run.log` 发给负责人。
 
 检查工具打开结果目录里的 **`report.html`** 看统计表；完整检查和右手 IMU 工具会自动打开。完整检查还会问帧率：240 FPS 用 `8`，120 FPS 用 `4`。修复上传工具看 **`results.csv`**，它还会询问异常清单路径（回车使用自带清单）及是否上传。

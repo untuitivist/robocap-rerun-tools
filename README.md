@@ -28,8 +28,9 @@ uploads source data. Nonempty tables are not a full quality check.
 
 For re-exporting the previously reported mocap problems, use
 `scripts/mocap_reexport/01_find_batches.bat` to list copyable original NOKOV batch
-paths, then `02_copy_reexports.bat` after re-export. Both discover accessible drives
-and existing shares automatically; F: is not fixed. Exact recording names are bundled,
+paths, then `02_copy_reexports.bat` after re-export. By default both reuse the supplied
+onsite report; the first does not scan, and the second verifies only its known paths.
+Explicit `--rescan` / `--root` enables fresh discovery on other drives. Exact names are bundled,
 old exports are backed up on the Session volume, and no remote upload occurs.
 See the [Chinese re-export guide](scripts/mocap_reexport/README.md).
 

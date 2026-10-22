@@ -89,6 +89,98 @@ def inventory_directories(path):
     return directories, batch_files, []
 
 
+def read_report_plan():
+    """Reuse the supplied onsite report without discovering Sessions or touching disks."""
+    doc = json.loads(
+        package_files("robocap_rerun_tools")
+        .joinpath("data/mocap_reexport_sessions.json")
+        .read_text(encoding="utf-8")
+    )
+    report = doc["field_report"]
+    targets = read_targets()
+    if set(report["statuses"]) != {t["session"] for t in targets}:
+        raise ValueError("现场报告 Session 身份与录制映射不符")
+    rows = []
+    for target in targets:
+        name = target["session"]
+        states = report["statuses"][name]
+        if set(states) != set(target["groups"]):
+            raise ValueError(f"现场报告问题组不符：{name}")
+        groups = {
+            g: title for g, title in target["groups"].items() if not states[g].startswith("已解决")
+        }
+        if not groups:
+            continue
+        sources = report["original_export_paths"].get(name, [])
+        destinations = report["raw_session_paths"].get(name, [])
+        for path, expected in [(p, target["recording"]) for p in sources] + [
+            (p, name) for p in destinations
+        ]:
+            value = PureWindowsPath(path)
+            if (
+                not value.is_absolute()
+                or value.name.casefold() != expected.casefold()
+                or any(p.casefold() in {".cache", "_artifacts"} for p in value.parts)
+            ):
+                raise ValueError(f"现场报告中的原始路径无效：{path}")
+        state = (
+            "未找到原始导出目录"
+            if not sources
+            else "源目录重复，需确认"
+            if len(sources) > 1
+            else "未找到本地原始 Session"
+            if not destinations
+            else "Session 多份副本，需确认"
+            if len(destinations) > 1
+            else "匹配唯一"
+        )
+        rows.append(
+            {
+                **target,
+                "groups": groups,
+                "sources": sources,
+                "destinations": destinations,
+                "state": state,
+                "batches": sorted({str(PureWindowsPath(p).parent) for p in sources}),
+                "manual_review": "G" in groups,
+                "report_status": "; ".join(f"{g}: {states[g]}" for g in groups),
+            }
+        )
+    return (
+        rows,
+        f"现场报告 {report['report_name']}（{report['updated_at']}）＋此前 WizTree 目录清单",
+    )
+
+
+def verify_report_paths(rows, log=print, *, timeout=30):
+    """Probe only listed paths before copying; do not recurse or guess replacements."""
+    checked, errors = {}, []
+    with DirectoryReader(timeout=timeout) as reader:
+        for row in rows:
+            if row["state"] != "匹配唯一":
+                continue
+            for path in [*row["sources"], *row["destinations"]]:
+                if path in checked:
+                    continue
+                log(f"仅复查报告路径：{path}")
+                try:
+                    result = reader.read(
+                        path,
+                        lambda p, elapsed: log(f"等待已知路径：{p}；{elapsed:.0f}/{timeout:g} 秒"),
+                    )
+                    checked[path] = result.get("error", "")
+                except (OSError, ValueError, TimeoutError) as exc:
+                    checked[path] = str(exc)
+                if checked[path]:
+                    errors.append({"path": path, "error": checked[path]})
+    for row in rows:
+        if row["state"] == "匹配唯一" and any(
+            checked[p] for p in [*row["sources"], *row["destinations"]]
+        ):
+            row["state"] = "报告路径当前不可访问，未复制"
+    return errors
+
+
 def scan_directories(roots, log=print, *, timeout=30, progress_seconds=5, checkpoint=None):
     directories, batch_files, errors, seen = set(), defaultdict(set), [], set()
     excluded = SKIP_DIRS | {
@@ -247,14 +339,23 @@ def make_plan(targets, directories, batch_files):
     return rows
 
 
-def write_report(output, rows, errors, *, inventory=None):
+def write_report(output, rows, errors, *, inventory=None, basis=None):
     batches = defaultdict(list)
     for row in rows:
         for batch in row["batches"]:
             batches[batch].append(row)
     text = "\n".join(sorted(batches))
     (output / "batch_paths.txt").write_text(text + ("\n" if text else ""), encoding="utf-8")
-    fields = ["session", "recording", "state", "batches", "sources", "destinations", "groups"]
+    fields = [
+        "session",
+        "recording",
+        "state",
+        "batches",
+        "sources",
+        "destinations",
+        "groups",
+        "report_status",
+    ]
     flat = [
         {**r, "groups": "; ".join(f"{g}: {title}" for g, title in r["groups"].items())}
         for r in rows
@@ -266,6 +367,7 @@ def write_report(output, rows, errors, *, inventory=None):
             {
                 "schema_version": 1,
                 "inventory": str(inventory) if inventory else None,
+                "basis": basis,
                 "rows": rows,
                 "errors": errors,
             },
@@ -292,6 +394,12 @@ def write_report(output, rows, errors, *, inventory=None):
         if inventory
         else "搜索失败或未开放的共享仍可能有原件，详见 scan_errors.csv。"
     )
+    if basis:
+        warning = (
+            "直接使用 "
+            + html.escape(basis)
+            + "；本次未重新搜索 Session。路径是否仍可用，在复制前复查。"
+        )
     page = """<!doctype html><html lang='zh-CN'><meta charset='utf-8'>
 <title>动捕问题批次重导出清单</title><style>
 body{font:15px system-ui;margin:28px;color:#172334}table{border-collapse:collapse}
@@ -326,6 +434,7 @@ td,th{border:1px solid #ccd4df;padding:7px;vertical-align:top;white-space:pre-wr
                     "源目录",
                     "目标 Session",
                     "原问题",
+                    "现场报告状态",
                 ],
             )
         ),
@@ -537,6 +646,9 @@ def main(argv=None):
     parser.add_argument("--output", type=Path)
     parser.add_argument("--open-report", action="store_true")
     parser.add_argument(
+        "--rescan", action="store_true", help="维护者：重新搜索磁盘；默认复用现场报告"
+    )
+    parser.add_argument(
         "--scan-timeout",
         type=float,
         default=30,
@@ -546,7 +658,7 @@ def main(argv=None):
     if not 0 < args.scan_timeout < float("inf"):
         parser.error("--scan-timeout 必须是正的有限秒数")
     if args.inventory and args.mode == "copy":
-        parser.error("WizTree 只用于离线报告，复制必须重新扫描实际磁盘")
+        parser.error("WizTree 只用于离线报告，复制必须复查实际文件")
     output = (
         args.output
         or ARTIFACTS / (datetime.now(UTC).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6])
@@ -563,9 +675,22 @@ def main(argv=None):
             log("无需选择 Markdown 或输入盘符；原件和旧版本保留，不上传远端。")
             log(f"日志和阶段报告：{output}")
             targets = read_targets()
-            errors = []
+            errors, scan_errors, rows, basis = [], [], None, None
             if args.inventory:
                 dirs, names, scan_errors = inventory_directories(args.inventory)
+            elif not args.root and not args.rescan:
+                rows, basis = read_report_plan()
+                log(f"直接使用：{basis}")
+                log("不重新扫描 Session，不发现网络共享，不搜索其他盘。")
+                if args.mode == "copy":
+                    write_report(output, rows, [], basis=basis)
+                    try:
+                        scan_errors = verify_report_paths(rows, log, timeout=args.scan_timeout)
+                    except KeyboardInterrupt:
+                        scan_errors = [
+                            {"path": "复查", "error": "用户中止，未开始复制", "cancelled": True}
+                        ]
+                        log("已中止复查，保存报告；不会继续复制。")
             else:
                 roots = args.root or automatic_roots()
                 if not args.root:
@@ -595,8 +720,9 @@ def main(argv=None):
                     roots, log, timeout=args.scan_timeout, checkpoint=checkpoint
                 )
             errors.extend(scan_errors)
-            rows = make_plan(targets, dirs, names)
-            count = write_report(output, rows, errors, inventory=args.inventory)
+            if rows is None:
+                rows = make_plan(targets, dirs, names)
+            count = write_report(output, rows, errors, inventory=args.inventory, basis=basis)
             log(f"找到 {count} 个问题批次；报告：{output / 'report.html'}")
             cancelled = any(e.get("cancelled") for e in scan_errors)
             if args.mode == "copy" and not cancelled:
