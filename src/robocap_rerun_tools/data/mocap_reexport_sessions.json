@@ -1,0 +1,1115 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-10-22",
+  "provenance": "Exact session_id/dataset_path and mocap_capture.source_directory from locally cached remote manifests; no time-based inference",
+  "sessions": [
+    {
+      "session": "20260828_024404_session253",
+      "session_path": "EgoMotionActions/20260828/P07/20260828_024404_session253",
+      "recording": "mocap-P07-S02-wangyang-10p",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-P07-S02-wangyang-10p-Body0.bvh",
+        "mocap-P07-S02-wangyang-10p-Body0.csv",
+        "mocap-P07-S02-wangyang-10p-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260901_105514_session2",
+      "session_path": "EgoMotionActions/20260901/L03/20260901_105514_session2",
+      "recording": "mocap-L03-S06-wangyang-05p1",
+      "groups": {
+        "G": "Clock alignment fails at the correct 120 Hz (7)"
+      },
+      "expected_exports": [
+        "mocap-L03-S06-wangyang-05p1-Body0.bvh",
+        "mocap-L03-S06-wangyang-05p1-Body0.csv",
+        "mocap-L03-S06-wangyang-05p1-Body0.trc",
+        "mocap-L03-S06-wangyang-05p1-Tracker0.csv",
+        "mocap-L03-S06-wangyang-05p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260901_110828_session5",
+      "session_path": "EgoMotionActions/20260901/L03/20260901_110828_session5",
+      "recording": "mocap-L03-S04-wangyang-05p1",
+      "groups": {
+        "G": "Clock alignment fails at the correct 120 Hz (7)"
+      },
+      "expected_exports": [
+        "mocap-L03-S04-wangyang-05p1-Body0.bvh",
+        "mocap-L03-S04-wangyang-05p1-Body0.csv",
+        "mocap-L03-S04-wangyang-05p1-Body0.trc",
+        "mocap-L03-S04-wangyang-05p1-Tracker0.csv",
+        "mocap-L03-S04-wangyang-05p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260903_034144_session44",
+      "session_path": "EgoMotionActions/20260903/D30/20260903_034144_session44",
+      "recording": "mocap-D30-S01-wangyang-02p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-D30-S01-wangyang-02p1-Body0.bvh",
+        "mocap-D30-S01-wangyang-02p1-Body0.trc",
+        "mocap-D30-S01-wangyang-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260904_023407_session14",
+      "session_path": "EgoMotionActions/20260904/P15/20260904_023407_session14",
+      "recording": "mocap-P15-S01-wangyang-12p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-P15-S01-wangyang-12p1-Body0.bvh",
+        "mocap-P15-S01-wangyang-12p1-Body0.csv",
+        "mocap-P15-S01-wangyang-12p1-Body0.trc",
+        "mocap-P15-S01-wangyang-12p1-Tracker-end.csv",
+        "mocap-P15-S01-wangyang-12p1-Tracker-end.trc",
+        "mocap-P15-S01-wangyang-12p1-Tracker-start.csv",
+        "mocap-P15-S01-wangyang-12p1-Tracker-start.trc",
+        "mocap-P15-S01-wangyang-12p1-Tracker0.csv",
+        "mocap-P15-S01-wangyang-12p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260904_030538_session25",
+      "session_path": "EgoMotionActions/20260904/P34/20260904_030538_session25",
+      "recording": "mocap-P34-S01-wangyang-10p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-P34-S01-wangyang-10p1-Body0.bvh",
+        "mocap-P34-S01-wangyang-10p1-Body0.csv",
+        "mocap-P34-S01-wangyang-10p1-Body0.trc",
+        "mocap-P34-S01-wangyang-10p1-Tracker-end.csv",
+        "mocap-P34-S01-wangyang-10p1-Tracker-end.trc",
+        "mocap-P34-S01-wangyang-10p1-Tracker-start.csv",
+        "mocap-P34-S01-wangyang-10p1-Tracker-start.trc",
+        "mocap-P34-S01-wangyang-10p1-Tracker0.csv",
+        "mocap-P34-S01-wangyang-10p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260907_090343_session173",
+      "session_path": "EgoMotionActions/20260907/D01/20260907_090343_session173",
+      "recording": "mocap-D01-S02-mahui-02p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-D01-S02-mahui-02p1-Body0.bvh",
+        "mocap-D01-S02-mahui-02p1-Body0.csv",
+        "mocap-D01-S02-mahui-02p1-Body0.trc",
+        "mocap-D01-S02-mahui-02p1-Tracker0.csv",
+        "mocap-D01-S02-mahui-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260907_090449_session174",
+      "session_path": "EgoMotionActions/20260907/D03/20260907_090449_session174",
+      "recording": "mocap-D03-S02-mahui-02p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-D03-S02-mahui-02p1-Body0.bvh",
+        "mocap-D03-S02-mahui-02p1-Body0.csv",
+        "mocap-D03-S02-mahui-02p1-Body0.trc",
+        "mocap-D03-S02-mahui-02p1-Tracker0.csv",
+        "mocap-D03-S02-mahui-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260908_020251_session21",
+      "session_path": "EgoMotionActions/20260908/P30/20260908_020251_session21",
+      "recording": "mocap-P30-S02-daihaoxiang-01p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-P30-S02-daihaoxiang-01p1-Body0.bvh",
+        "mocap-P30-S02-daihaoxiang-01p1-Body0.csv",
+        "mocap-P30-S02-daihaoxiang-01p1-Body0.trc",
+        "mocap-P30-S02-daihaoxiang-01p1-Tracker0.csv",
+        "mocap-P30-S02-daihaoxiang-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260908_042244_session3",
+      "session_path": "EgoMotionActions/20260908/D44/20260908_042244_session3",
+      "recording": "mocap-D44-S01-daihaoxiang-02p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-D44-S01-daihaoxiang-02p1-Body0.bvh",
+        "mocap-D44-S01-daihaoxiang-02p1-Body0.csv",
+        "mocap-D44-S01-daihaoxiang-02p1-Body0.trc",
+        "mocap-D44-S01-daihaoxiang-02p1-Tracker0.csv",
+        "mocap-D44-S01-daihaoxiang-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260908_042446_session4",
+      "session_path": "EgoMotionActions/20260908/D45/20260908_042446_session4",
+      "recording": "mocap-D45-S01-daihaoxiang-02p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-D45-S01-daihaoxiang-02p1-Body0.bvh",
+        "mocap-D45-S01-daihaoxiang-02p1-Body0.csv",
+        "mocap-D45-S01-daihaoxiang-02p1-Body0.trc",
+        "mocap-D45-S01-daihaoxiang-02p1-Tracker0.csv",
+        "mocap-D45-S01-daihaoxiang-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260910_055707_session108",
+      "session_path": "EgoMotionActions/20260910/LM40/20260910_055707_session108",
+      "recording": "mocap-LM40-S02-daihaoxiang-01p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-LM40-S02-daihaoxiang-01p1-Body0.bvh",
+        "mocap-LM40-S02-daihaoxiang-01p1-Body0.csv",
+        "mocap-LM40-S02-daihaoxiang-01p1-Body0.trc",
+        "mocap-LM40-S02-daihaoxiang-01p1-Tracker0.csv",
+        "mocap-LM40-S02-daihaoxiang-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260911_074049_session11",
+      "session_path": "EgoMotionActions/20260911/HH08/20260911_074049_session11",
+      "recording": "mocap-HH08-S01-wangyang-01p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-HH08-S01-wangyang-01p1-Body0.bvh",
+        "mocap-HH08-S01-wangyang-01p1-Body0.csv",
+        "mocap-HH08-S01-wangyang-01p1-Body0.trc",
+        "mocap-HH08-S01-wangyang-01p1-Body1.bvh",
+        "mocap-HH08-S01-wangyang-01p1-Body1.csv",
+        "mocap-HH08-S01-wangyang-01p1-Body1.trc",
+        "mocap-HH08-S01-wangyang-01p1-Tracker0.csv",
+        "mocap-HH08-S01-wangyang-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260911_074242_session12",
+      "session_path": "EgoMotionActions/20260911/HH08/20260911_074242_session12",
+      "recording": "mocap-HH08-S02-wangyang-01p1",
+      "groups": {
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)",
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-HH08-S02-wangyang-01p1-Body0.bvh",
+        "mocap-HH08-S02-wangyang-01p1-Body0.csv",
+        "mocap-HH08-S02-wangyang-01p1-Body0.trc",
+        "mocap-HH08-S02-wangyang-01p1-Body1.bvh",
+        "mocap-HH08-S02-wangyang-01p1-Body1.csv",
+        "mocap-HH08-S02-wangyang-01p1-Body1.trc",
+        "mocap-HH08-S02-wangyang-01p1-Tracker0.csv",
+        "mocap-HH08-S02-wangyang-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260914_012128_session9",
+      "session_path": "EgoMotionActions/20260914/LM26/20260914_012128_session9",
+      "recording": "mocap-LM26-S04-daihaoxiang-01p1",
+      "groups": {
+        "G": "Clock alignment fails at the correct 120 Hz (7)"
+      },
+      "expected_exports": [
+        "mocap-LM26-S04-daihaoxiang-01p1-Body0.bvh",
+        "mocap-LM26-S04-daihaoxiang-01p1-Body0.csv",
+        "mocap-LM26-S04-daihaoxiang-01p1-Body0.trc",
+        "mocap-LM26-S04-daihaoxiang-01p1-Tracker0.csv",
+        "mocap-LM26-S04-daihaoxiang-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260914_084328_session2",
+      "session_path": "EgoMotionActions/20260914/P37/20260914_084328_session2",
+      "recording": "mocap-P37-S01-zhangxinxin-10p1",
+      "groups": {
+        "G": "Clock alignment fails at the correct 120 Hz (7)"
+      },
+      "expected_exports": [
+        "mocap-P37-S01-zhangxinxin-10p1-Body0.bvh",
+        "mocap-P37-S01-zhangxinxin-10p1-Body0.csv",
+        "mocap-P37-S01-zhangxinxin-10p1-Body0.trc",
+        "mocap-P37-S01-zhangxinxin-10p1-Tracker0.csv",
+        "mocap-P37-S01-zhangxinxin-10p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260915_075437_session90",
+      "session_path": "EgoMotionActions/20260915/LM52/20260915_075437_session90",
+      "recording": "mocap-LM52-S01-liujiaxin-01p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM52-S01-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM52-S01-liujiaxin-01p1-Body0.csv",
+        "mocap-LM52-S01-liujiaxin-01p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_080246_session92",
+      "session_path": "EgoMotionActions/20260915/LM53/20260915_080246_session92",
+      "recording": "mocap-LM53-S01-liujiaxin-01p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM53-S01-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM53-S01-liujiaxin-01p1-Body0.csv",
+        "mocap-LM53-S01-liujiaxin-01p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_080830_session94",
+      "session_path": "EgoMotionActions/20260915/LM54/20260915_080830_session94",
+      "recording": "mocap-LM54-S01-liujiaxin-01p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM54-S01-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM54-S01-liujiaxin-01p1-Body0.csv",
+        "mocap-LM54-S01-liujiaxin-01p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_081623_session96",
+      "session_path": "EgoMotionActions/20260915/LM55/20260915_081623_session96",
+      "recording": "mocap-LM55-S01-liujiaxin-01p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM55-S01-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM55-S01-liujiaxin-01p1-Body0.csv",
+        "mocap-LM55-S01-liujiaxin-01p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_081851_session97",
+      "session_path": "EgoMotionActions/20260915/LM55/20260915_081851_session97",
+      "recording": "mocap-LM55-S02-liujiaxin-01p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM55-S02-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM55-S02-liujiaxin-01p1-Body0.csv",
+        "mocap-LM55-S02-liujiaxin-01p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_082500_session99",
+      "session_path": "EgoMotionActions/20260915/LM57/20260915_082500_session99",
+      "recording": "mocap-LM57-S02-liujiaxin-01p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM57-S02-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM57-S02-liujiaxin-01p1-Body0.csv",
+        "mocap-LM57-S02-liujiaxin-01p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_083109_session101",
+      "session_path": "EgoMotionActions/20260915/LM64/20260915_083109_session101",
+      "recording": "mocap-LM64-S02-liujiaxin-01p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM64-S02-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM64-S02-liujiaxin-01p1-Body0.csv",
+        "mocap-LM64-S02-liujiaxin-01p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_083443_session102",
+      "session_path": "EgoMotionActions/20260915/LM67/20260915_083443_session102",
+      "recording": "mocap-LM67-S01-liujiaxin-02p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM67-S01-liujiaxin-02p1-Body0.bvh",
+        "mocap-LM67-S01-liujiaxin-02p1-Body0.csv",
+        "mocap-LM67-S01-liujiaxin-02p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_083658_session103",
+      "session_path": "EgoMotionActions/20260915/LM67/20260915_083658_session103",
+      "recording": "mocap-LM67-S02-liujiaxin-02p1",
+      "groups": {
+        "B": "Only marker files missing (Body0.trc / Tracker0.trc) (10)"
+      },
+      "expected_exports": [
+        "mocap-LM67-S02-liujiaxin-02p1-Body0.bvh",
+        "mocap-LM67-S02-liujiaxin-02p1-Body0.csv",
+        "mocap-LM67-S02-liujiaxin-02p1-Tracker0.csv"
+      ]
+    },
+    {
+      "session": "20260915_102035_session123",
+      "session_path": "EgoMotionActions/20260915/LM16/20260915_102035_session123",
+      "recording": "mocap-LM16-S01-liujiaxin-01p1",
+      "groups": {
+        "F": "Mocap rows missing timestamps (11)"
+      },
+      "expected_exports": [
+        "mocap-LM16-S01-liujiaxin-01p1-Body0.bvh",
+        "mocap-LM16-S01-liujiaxin-01p1-Body0.csv",
+        "mocap-LM16-S01-liujiaxin-01p1-Body0.trc",
+        "mocap-LM16-S01-liujiaxin-01p1-Tracker0.csv",
+        "mocap-LM16-S01-liujiaxin-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260915_123100_session158",
+      "session_path": "EgoMotionActions/20260915/EC13/20260915_123100_session158",
+      "recording": "mocap-EC13-S01-liujiaxin-01p2",
+      "groups": {
+        "G": "Clock alignment fails at the correct 120 Hz (7)"
+      },
+      "expected_exports": [
+        "mocap-EC13-S01-liujiaxin-01p2-Body0.bvh",
+        "mocap-EC13-S01-liujiaxin-01p2-Body0.csv",
+        "mocap-EC13-S01-liujiaxin-01p2-Body0.trc",
+        "mocap-EC13-S01-liujiaxin-01p2-Tracker0.csv",
+        "mocap-EC13-S01-liujiaxin-01p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260917_040837_session56",
+      "session_path": "EgoMotionActions/20260917/P31/20260917_040837_session56",
+      "recording": "mocap-P31-S08-lvaoshan-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-P31-S08-lvaoshan-01p1-Body0.bvh",
+        "mocap-P31-S08-lvaoshan-01p1-Body0.trc",
+        "mocap-P31-S08-lvaoshan-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260917_041058_session57",
+      "session_path": "EgoMotionActions/20260917/P31/20260917_041058_session57",
+      "recording": "mocap-P31-S09-lvaoshan-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-P31-S09-lvaoshan-01p1-Body0.bvh",
+        "mocap-P31-S09-lvaoshan-01p1-Body0.trc",
+        "mocap-P31-S09-lvaoshan-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260917_041324_session58",
+      "session_path": "EgoMotionActions/20260917/P31/20260917_041324_session58",
+      "recording": "mocap-P31-S10-lvaoshan-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-P31-S10-lvaoshan-01p1-Body0.bvh",
+        "mocap-P31-S10-lvaoshan-01p1-Body0.trc",
+        "mocap-P31-S10-lvaoshan-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260917_041549_session59",
+      "session_path": "EgoMotionActions/20260917/P31/20260917_041549_session59",
+      "recording": "mocap-P31-S11-lvaoshan-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-P31-S11-lvaoshan-01p1-Body0.bvh",
+        "mocap-P31-S11-lvaoshan-01p1-Body0.trc",
+        "mocap-P31-S11-lvaoshan-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260917_041809_session60",
+      "session_path": "EgoMotionActions/20260917/P31/20260917_041809_session60",
+      "recording": "mocap-P31-S12-lvaoshan-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-P31-S12-lvaoshan-01p1-Body0.bvh",
+        "mocap-P31-S12-lvaoshan-01p1-Body0.trc",
+        "mocap-P31-S12-lvaoshan-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260917_052149_session81",
+      "session_path": "EgoMotionActions/20260917/D49/20260917_052149_session81",
+      "recording": "mocap-D49-S01-lvaoshan-02p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-D49-S01-lvaoshan-02p1-Body0.bvh",
+        "mocap-D49-S01-lvaoshan-02p1-Body0.trc",
+        "mocap-D49-S01-lvaoshan-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260917_054009_session89",
+      "session_path": "EgoMotionActions/20260917/D55/20260917_054009_session89",
+      "recording": "mocap-D55-S01-lvaoshan-02p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-D55-S01-lvaoshan-02p1-Body0.bvh",
+        "mocap-D55-S01-lvaoshan-02p1-Body0.trc",
+        "mocap-D55-S01-lvaoshan-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_105153_session88",
+      "session_path": "EgoMotionActions/20260918/LM59/20260918_105153_session88",
+      "recording": "mocap-LM59-S01-mahui-01p2",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM59-S01-mahui-01p2-Body0.csv",
+        "mocap-LM59-S01-mahui-01p2-Body0.trc",
+        "mocap-LM59-S01-mahui-01p2-Body1.csv",
+        "mocap-LM59-S01-mahui-01p2-Body1.trc",
+        "mocap-LM59-S01-mahui-01p2-Tracker0.csv",
+        "mocap-LM59-S01-mahui-01p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_105406_session89",
+      "session_path": "EgoMotionActions/20260918/LM59/20260918_105406_session89",
+      "recording": "mocap-LM59-S02-mahui-01p1",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM59-S02-mahui-01p1-Body0.csv",
+        "mocap-LM59-S02-mahui-01p1-Body0.trc",
+        "mocap-LM59-S02-mahui-01p1-Body1.csv",
+        "mocap-LM59-S02-mahui-01p1-Body1.trc",
+        "mocap-LM59-S02-mahui-01p1-Tracker0.csv",
+        "mocap-LM59-S02-mahui-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_110009_session90",
+      "session_path": "EgoMotionActions/20260918/LM79/20260918_110009_session90",
+      "recording": "mocap-LM79-S01-mahui-01p1",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM79-S01-mahui-01p1-Body0.csv",
+        "mocap-LM79-S01-mahui-01p1-Body0.trc",
+        "mocap-LM79-S01-mahui-01p1-Body1.csv",
+        "mocap-LM79-S01-mahui-01p1-Body1.trc",
+        "mocap-LM79-S01-mahui-01p1-Tracker0.csv",
+        "mocap-LM79-S01-mahui-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_110245_session91",
+      "session_path": "EgoMotionActions/20260918/LM79/20260918_110245_session91",
+      "recording": "mocap-LM79-S02-mahui-01p1",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM79-S02-mahui-01p1-Body0.csv",
+        "mocap-LM79-S02-mahui-01p1-Body0.trc",
+        "mocap-LM79-S02-mahui-01p1-Body1.csv",
+        "mocap-LM79-S02-mahui-01p1-Body1.trc",
+        "mocap-LM79-S02-mahui-01p1-Tracker0.csv",
+        "mocap-LM79-S02-mahui-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_110527_session92",
+      "session_path": "EgoMotionActions/20260918/LM79/20260918_110527_session92",
+      "recording": "mocap-LM79-S03-mahui-01p1",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM79-S03-mahui-01p1-Body0.csv",
+        "mocap-LM79-S03-mahui-01p1-Body0.trc",
+        "mocap-LM79-S03-mahui-01p1-Body1.csv",
+        "mocap-LM79-S03-mahui-01p1-Body1.trc",
+        "mocap-LM79-S03-mahui-01p1-Tracker0.csv",
+        "mocap-LM79-S03-mahui-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_110829_session93",
+      "session_path": "EgoMotionActions/20260918/LM76/20260918_110829_session93",
+      "recording": "mocap-LM76-S01-mahui-01p2",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM76-S01-mahui-01p2-Body0.csv",
+        "mocap-LM76-S01-mahui-01p2-Body0.trc",
+        "mocap-LM76-S01-mahui-01p2-Body1.csv",
+        "mocap-LM76-S01-mahui-01p2-Body1.trc",
+        "mocap-LM76-S01-mahui-01p2-Tracker0.csv",
+        "mocap-LM76-S01-mahui-01p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_111113_session94",
+      "session_path": "EgoMotionActions/20260918/LM76/20260918_111113_session94",
+      "recording": "mocap-LM76-S02-mahui-01p1",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM76-S02-mahui-01p1-Body0.csv",
+        "mocap-LM76-S02-mahui-01p1-Body0.trc",
+        "mocap-LM76-S02-mahui-01p1-Body1.csv",
+        "mocap-LM76-S02-mahui-01p1-Body1.trc",
+        "mocap-LM76-S02-mahui-01p1-Tracker0.csv",
+        "mocap-LM76-S02-mahui-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_111938_session96",
+      "session_path": "EgoMotionActions/20260918/LM55/20260918_111938_session96",
+      "recording": "mocap-LM55-S01-mahui-01p1",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM55-S01-mahui-01p1-Body0.csv",
+        "mocap-LM55-S01-mahui-01p1-Body0.trc",
+        "mocap-LM55-S01-mahui-01p1-Body1.csv",
+        "mocap-LM55-S01-mahui-01p1-Body1.trc",
+        "mocap-LM55-S01-mahui-01p1-Tracker0.csv",
+        "mocap-LM55-S01-mahui-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_112156_session97",
+      "session_path": "EgoMotionActions/20260918/LM55/20260918_112156_session97",
+      "recording": "mocap-LM55-S02-mahui-01p1",
+      "groups": {
+        "C": "Only Body0.bvh missing (9)",
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-LM55-S02-mahui-01p1-Body0.csv",
+        "mocap-LM55-S02-mahui-01p1-Body0.trc",
+        "mocap-LM55-S02-mahui-01p1-Body1.csv",
+        "mocap-LM55-S02-mahui-01p1-Body1.trc",
+        "mocap-LM55-S02-mahui-01p1-Tracker0.csv",
+        "mocap-LM55-S02-mahui-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_113919_session99",
+      "session_path": "EgoMotionActions/20260918/SM23/20260918_113919_session99",
+      "recording": "mocap-SM23-S01-mahui-02p1",
+      "groups": {
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-SM23-S01-mahui-02p1-Body0.bvh",
+        "mocap-SM23-S01-mahui-02p1-Body0.csv",
+        "mocap-SM23-S01-mahui-02p1-Body0.trc",
+        "mocap-SM23-S01-mahui-02p1-Body1.bvh",
+        "mocap-SM23-S01-mahui-02p1-Body1.csv",
+        "mocap-SM23-S01-mahui-02p1-Body1.trc",
+        "mocap-SM23-S01-mahui-02p1-Tracker0.csv",
+        "mocap-SM23-S01-mahui-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_115414_session103",
+      "session_path": "EgoMotionActions/20260918/SM20/20260918_115414_session103",
+      "recording": "mocap-SM20-S01-mahui-02p2",
+      "groups": {
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-SM20-S01-mahui-02p2-Body0.bvh",
+        "mocap-SM20-S01-mahui-02p2-Body0.csv",
+        "mocap-SM20-S01-mahui-02p2-Body0.trc",
+        "mocap-SM20-S01-mahui-02p2-Body1.bvh",
+        "mocap-SM20-S01-mahui-02p2-Body1.csv",
+        "mocap-SM20-S01-mahui-02p2-Body1.trc",
+        "mocap-SM20-S01-mahui-02p2-Tracker0.csv",
+        "mocap-SM20-S01-mahui-02p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260918_122511_session107",
+      "session_path": "EgoMotionActions/20260918/SM18/20260918_122511_session107",
+      "recording": "mocap-SM18-S02-mahui-02p1",
+      "groups": {
+        "E": "Mocap with no usable data (every timestamp zero, or marker file unreadable) (13)"
+      },
+      "expected_exports": [
+        "mocap-SM18-S02-mahui-02p1-Body0.bvh",
+        "mocap-SM18-S02-mahui-02p1-Body0.csv",
+        "mocap-SM18-S02-mahui-02p1-Body0.trc",
+        "mocap-SM18-S02-mahui-02p1-Body1.bvh",
+        "mocap-SM18-S02-mahui-02p1-Body1.csv",
+        "mocap-SM18-S02-mahui-02p1-Body1.trc",
+        "mocap-SM18-S02-mahui-02p1-Tracker0.csv",
+        "mocap-SM18-S02-mahui-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260919_121404_session215",
+      "session_path": "EgoMotionActions/20260919/LM85/20260919_121404_session215",
+      "recording": "mocap-LM85-S05-gaoziyue-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-LM85-S05-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM85-S05-gaoziyue-01p1-Body0.trc",
+        "mocap-LM85-S05-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260919_121632_session216",
+      "session_path": "EgoMotionActions/20260919/LM82/20260919_121632_session216",
+      "recording": "mocap-LM82-S04-gaoziyue-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-LM82-S04-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM82-S04-gaoziyue-01p1-Body0.trc",
+        "mocap-LM82-S04-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260921_020549_session28",
+      "session_path": "EgoMotionActions/20260921/P31/20260921_020549_session28",
+      "recording": "mocap-P31-S01-yanyitong-01p1",
+      "groups": {
+        "A": "Main mocap files missing (Body0.csv / Tracker0.csv) (11)"
+      },
+      "expected_exports": [
+        "mocap-P31-S01-yanyitong-01p1-Body0.bvh"
+      ]
+    },
+    {
+      "session": "20260930_010613_session8",
+      "session_path": "EgoMotionActions/20260930/D18/20260930_010613_session8",
+      "recording": "mocap-D18-S01-fengyixuan-02p1",
+      "groups": {
+        "G": "Clock alignment fails at the correct 120 Hz (7)"
+      },
+      "expected_exports": [
+        "mocap-D18-S01-fengyixuan-02p1-Body0.bvh",
+        "mocap-D18-S01-fengyixuan-02p1-Body0.csv",
+        "mocap-D18-S01-fengyixuan-02p1-Body0.trc",
+        "mocap-D18-S01-fengyixuan-02p1-Tracker0.csv",
+        "mocap-D18-S01-fengyixuan-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260930_010745_session9",
+      "session_path": "EgoMotionActions/20260930/D17/20260930_010745_session9",
+      "recording": "mocap-D17-S01-fengyixuan-02p1",
+      "groups": {
+        "G": "Clock alignment fails at the correct 120 Hz (7)"
+      },
+      "expected_exports": [
+        "mocap-D17-S01-fengyixuan-02p1-Body0.bvh",
+        "mocap-D17-S01-fengyixuan-02p1-Body0.csv",
+        "mocap-D17-S01-fengyixuan-02p1-Body0.trc",
+        "mocap-D17-S01-fengyixuan-02p1-Tracker0.csv",
+        "mocap-D17-S01-fengyixuan-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260930_104724_session144",
+      "session_path": "EgoMotionActions/20260930/P21/20260930_104724_session144",
+      "recording": "mocap-P21-S03-wangmengli-05p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-P21-S03-wangmengli-05p1-Body0.bvh",
+        "mocap-P21-S03-wangmengli-05p1-Body0.csv",
+        "mocap-P21-S03-wangmengli-05p1-Body0.trc",
+        "mocap-P21-S03-wangmengli-05p1-Tracker0.csv",
+        "mocap-P21-S03-wangmengli-05p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260930_105004_session145",
+      "session_path": "EgoMotionActions/20260930/P22/20260930_105004_session145",
+      "recording": "mocap-P22-S01-wangmengli-04p2",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-P22-S01-wangmengli-04p2-Body0.bvh",
+        "mocap-P22-S01-wangmengli-04p2-Body0.csv",
+        "mocap-P22-S01-wangmengli-04p2-Body0.trc",
+        "mocap-P22-S01-wangmengli-04p2-Tracker0.csv",
+        "mocap-P22-S01-wangmengli-04p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260930_105145_session146",
+      "session_path": "EgoMotionActions/20260930/P35/20260930_105145_session146",
+      "recording": "mocap-P35-S01-wangmengli-04p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-P35-S01-wangmengli-04p1-Body0.bvh",
+        "mocap-P35-S01-wangmengli-04p1-Body0.csv",
+        "mocap-P35-S01-wangmengli-04p1-Body0.trc",
+        "mocap-P35-S01-wangmengli-04p1-Tracker0.csv",
+        "mocap-P35-S01-wangmengli-04p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260930_105414_session147",
+      "session_path": "EgoMotionActions/20260930/P36/20260930_105414_session147",
+      "recording": "mocap-P36-S06-wangmengli-01p2",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-P36-S06-wangmengli-01p2-Body0.bvh",
+        "mocap-P36-S06-wangmengli-01p2-Body0.csv",
+        "mocap-P36-S06-wangmengli-01p2-Body0.trc",
+        "mocap-P36-S06-wangmengli-01p2-Tracker0.csv",
+        "mocap-P36-S06-wangmengli-01p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20260930_105651_session148",
+      "session_path": "EgoMotionActions/20260930/P36/20260930_105651_session148",
+      "recording": "mocap-P36-S08-wangmengli-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-P36-S08-wangmengli-01p1-Body0.bvh",
+        "mocap-P36-S08-wangmengli-01p1-Body0.csv",
+        "mocap-P36-S08-wangmengli-01p1-Body0.trc",
+        "mocap-P36-S08-wangmengli-01p1-Tracker0.csv",
+        "mocap-P36-S08-wangmengli-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_054213_session72",
+      "session_path": "EgoMotionActions/20261008/LM43/20261008_054213_session72",
+      "recording": "mocap-LM43-S03-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM43-S03-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM43-S03-gaoziyue-01p1-Body0.csv",
+        "mocap-LM43-S03-gaoziyue-01p1-Body0.trc",
+        "mocap-LM43-S03-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM43-S03-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_054737_session74",
+      "session_path": "EgoMotionActions/20261008/LM44/20261008_054737_session74",
+      "recording": "mocap-LM44-S02-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM44-S02-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM44-S02-gaoziyue-01p1-Body0.csv",
+        "mocap-LM44-S02-gaoziyue-01p1-Body0.trc",
+        "mocap-LM44-S02-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM44-S02-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_055019_session75",
+      "session_path": "EgoMotionActions/20261008/LM44/20261008_055019_session75",
+      "recording": "mocap-LM44-S03-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM44-S03-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM44-S03-gaoziyue-01p1-Body0.csv",
+        "mocap-LM44-S03-gaoziyue-01p1-Body0.trc",
+        "mocap-LM44-S03-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM44-S03-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_055820_session78",
+      "session_path": "EgoMotionActions/20261008/LM46/20261008_055820_session78",
+      "recording": "mocap-LM46-S02-gaoziyue-01p2",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM46-S02-gaoziyue-01p2-Body0.bvh",
+        "mocap-LM46-S02-gaoziyue-01p2-Body0.csv",
+        "mocap-LM46-S02-gaoziyue-01p2-Body0.trc",
+        "mocap-LM46-S02-gaoziyue-01p2-Tracker0.csv",
+        "mocap-LM46-S02-gaoziyue-01p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_060715_session81",
+      "session_path": "EgoMotionActions/20261008/LM51/20261008_060715_session81",
+      "recording": "mocap-LM51-S02-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM51-S02-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM51-S02-gaoziyue-01p1-Body0.csv",
+        "mocap-LM51-S02-gaoziyue-01p1-Body0.trc",
+        "mocap-LM51-S02-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM51-S02-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_061126_session82",
+      "session_path": "EgoMotionActions/20261008/LM45/20261008_061126_session82",
+      "recording": "mocap-LM45-S01-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM45-S01-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM45-S01-gaoziyue-01p1-Body0.csv",
+        "mocap-LM45-S01-gaoziyue-01p1-Body0.trc",
+        "mocap-LM45-S01-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM45-S01-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_061418_session83",
+      "session_path": "EgoMotionActions/20261008/LM45/20261008_061418_session83",
+      "recording": "mocap-LM45-S02-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM45-S02-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM45-S02-gaoziyue-01p1-Body0.csv",
+        "mocap-LM45-S02-gaoziyue-01p1-Body0.trc",
+        "mocap-LM45-S02-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM45-S02-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_061702_session84",
+      "session_path": "EgoMotionActions/20261008/LM45/20261008_061702_session84",
+      "recording": "mocap-LM45-S03-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM45-S03-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM45-S03-gaoziyue-01p1-Body0.csv",
+        "mocap-LM45-S03-gaoziyue-01p1-Body0.trc",
+        "mocap-LM45-S03-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM45-S03-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_062024_session85",
+      "session_path": "EgoMotionActions/20261008/LM47/20261008_062024_session85",
+      "recording": "mocap-LM47-S01-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM47-S01-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM47-S01-gaoziyue-01p1-Body0.csv",
+        "mocap-LM47-S01-gaoziyue-01p1-Body0.trc",
+        "mocap-LM47-S01-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM47-S01-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_062310_session86",
+      "session_path": "EgoMotionActions/20261008/LM47/20261008_062310_session86",
+      "recording": "mocap-LM47-S02-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM47-S02-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM47-S02-gaoziyue-01p1-Body0.csv",
+        "mocap-LM47-S02-gaoziyue-01p1-Body0.trc",
+        "mocap-LM47-S02-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM47-S02-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261008_062538_session87",
+      "session_path": "EgoMotionActions/20261008/LM47/20261008_062538_session87",
+      "recording": "mocap-LM47-S03-gaoziyue-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM47-S03-gaoziyue-01p1-Body0.bvh",
+        "mocap-LM47-S03-gaoziyue-01p1-Body0.csv",
+        "mocap-LM47-S03-gaoziyue-01p1-Body0.trc",
+        "mocap-LM47-S03-gaoziyue-01p1-Tracker0.csv",
+        "mocap-LM47-S03-gaoziyue-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261009_053138_session25",
+      "session_path": "EgoMotionActions/20261009/SM12/20261009_053138_session25",
+      "recording": "mocap-SM12-S01-daihaoxiang-02p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-SM12-S01-daihaoxiang-02p1-Body0.bvh",
+        "mocap-SM12-S01-daihaoxiang-02p1-Body0.csv",
+        "mocap-SM12-S01-daihaoxiang-02p1-Body0.trc",
+        "mocap-SM12-S01-daihaoxiang-02p1-Tracker0.csv",
+        "mocap-SM12-S01-daihaoxiang-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261009_054850_session30",
+      "session_path": "EgoMotionActions/20261009/LM76/20261009_054850_session30",
+      "recording": "mocap-LM76-S04-daihaoxiang-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM76-S04-daihaoxiang-01p1-Body0.bvh",
+        "mocap-LM76-S04-daihaoxiang-01p1-Body0.csv",
+        "mocap-LM76-S04-daihaoxiang-01p1-Body0.trc",
+        "mocap-LM76-S04-daihaoxiang-01p1-Tracker0.csv",
+        "mocap-LM76-S04-daihaoxiang-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261009_055142_session31",
+      "session_path": "EgoMotionActions/20261009/LM76/20261009_055142_session31",
+      "recording": "mocap-LM76-S05-daihaoxiang-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM76-S05-daihaoxiang-01p1-Body0.bvh",
+        "mocap-LM76-S05-daihaoxiang-01p1-Body0.csv",
+        "mocap-LM76-S05-daihaoxiang-01p1-Body0.trc",
+        "mocap-LM76-S05-daihaoxiang-01p1-Tracker0.csv",
+        "mocap-LM76-S05-daihaoxiang-01p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261009_055548_session33",
+      "session_path": "EgoMotionActions/20261009/LM76/20261009_055548_session33",
+      "recording": "mocap-LM76-S06-daihaoxiang-01p3",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM76-S06-daihaoxiang-01p3-Body0.bvh",
+        "mocap-LM76-S06-daihaoxiang-01p3-Body0.csv",
+        "mocap-LM76-S06-daihaoxiang-01p3-Body0.trc",
+        "mocap-LM76-S06-daihaoxiang-01p3-Tracker0.csv",
+        "mocap-LM76-S06-daihaoxiang-01p3-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261009_060109_session35",
+      "session_path": "EgoMotionActions/20261009/SM19/20261009_060109_session35",
+      "recording": "mocap-SM19-S02-daihaoxiang-02p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-SM19-S02-daihaoxiang-02p1-Body0.bvh",
+        "mocap-SM19-S02-daihaoxiang-02p1-Body0.csv",
+        "mocap-SM19-S02-daihaoxiang-02p1-Body0.trc",
+        "mocap-SM19-S02-daihaoxiang-02p1-Tracker0.csv",
+        "mocap-SM19-S02-daihaoxiang-02p1-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261009_060748_session37",
+      "session_path": "EgoMotionActions/20261009/SM03/20261009_060748_session37",
+      "recording": "mocap-SM03-S01-daihaoxiang-02p2",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-SM03-S01-daihaoxiang-02p2-Body0.bvh",
+        "mocap-SM03-S01-daihaoxiang-02p2-Body0.csv",
+        "mocap-SM03-S01-daihaoxiang-02p2-Body0.trc",
+        "mocap-SM03-S01-daihaoxiang-02p2-Tracker0.csv",
+        "mocap-SM03-S01-daihaoxiang-02p2-Tracker0.trc"
+      ]
+    },
+    {
+      "session": "20261009_061502_session39",
+      "session_path": "EgoMotionActions/20261009/LM33/20261009_061502_session39",
+      "recording": "mocap-LM33-S04-daihaoxiang-01p1",
+      "groups": {
+        "D": "Mocap files empty (0 bytes) (23)"
+      },
+      "expected_exports": [
+        "mocap-LM33-S04-daihaoxiang-01p1-Body0.bvh",
+        "mocap-LM33-S04-daihaoxiang-01p1-Body0.csv",
+        "mocap-LM33-S04-daihaoxiang-01p1-Body0.trc",
+        "mocap-LM33-S04-daihaoxiang-01p1-Tracker0.csv",
+        "mocap-LM33-S04-daihaoxiang-01p1-Tracker0.trc"
+      ]
+    }
+  ]
+}

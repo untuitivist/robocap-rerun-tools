@@ -24,6 +24,15 @@ databases and reports empty, missing, partial and invalid data by device, date a
 It uses `F:\` by default, accepts a shared root, opens an HTML report and never changes or
 uploads source data. Nonempty tables are not a full quality check.
 
+## Re-export Known Problem Mocap Sessions
+
+For re-exporting the previously reported mocap problems, use
+`scripts/mocap_reexport/01_find_batches.bat` to list copyable original NOKOV batch
+paths, then `02_copy_reexports.bat` after re-export. Both discover accessible drives
+and existing shares automatically; F: is not fixed. Exact recording names are bundled,
+old exports are backed up on the Session volume, and no remote upload occurs.
+See the [Chinese re-export guide](scripts/mocap_reexport/README.md).
+
 ## Object Mocap File Inventory
 
 Run `scripts/obj_repair_upload/inspect_object_mocap.bat` to inspect named object exports.
