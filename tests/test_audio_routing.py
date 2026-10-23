@@ -10,6 +10,7 @@ from test_upload_verification import RemoteApi
 
 from robocap_rerun_tools import (
     batch_completeness,
+    dataset_statistics,
     fault_publishing,
     file_integrity,
     participant_metadata,
@@ -18,6 +19,7 @@ from robocap_rerun_tools import (
 )
 from robocap_rerun_tools import modelscope_publisher as publisher
 from robocap_rerun_tools.data_packager import discover_package_files
+from robocap_rerun_tools.inspection_issues import CLASSIFICATION_VERSION
 from robocap_rerun_tools.session_quality import assess_quality
 
 
@@ -94,6 +96,8 @@ def current_report(source, integrity, *, mocap_frames=80):
     payload = {
         "session": str(source), "ratio": 8, "referenceFrames": 9,
         "mocapFrames": mocap_frames, "thirdFrames": 10, "integrity": integrity,
+        "classificationVersion": CLASSIFICATION_VERSION,
+        "files": [{"path": "body.csv", "sampleCount": 80}],
     }
     path.write_text("<script>const report=" + json.dumps(payload)
                     + "; const eventTypes=[];</script>", encoding="utf-8")
@@ -140,7 +144,9 @@ def fake_repositories(tmp_path, monkeypatch):
     return apis
 
 
-def test_batch_upload_uses_frame_reports_without_automatic_content_routing(tmp_path, monkeypatch):
+def test_batch_upload_excludes_content_defects_without_automatic_fault_routing(
+    tmp_path, monkeypatch, fake_metadata_transport,
+):
     root = tmp_path / "raw"
     sources = []
     for index in range(1, 4):
@@ -152,14 +158,15 @@ def test_batch_upload_uses_frame_reports_without_automatic_content_routing(tmp_p
         current_report(source, report, mocap_frames=72 if index == 3 else 80)
         sources.append(source)
     apis = fake_repositories(tmp_path, monkeypatch)
+    monkeypatch.setattr(dataset_statistics, "probe_video_duration", lambda *args: (0.3, None))
     monkeypatch.setattr(batch_completeness, "inspect_local_batch", lambda *a: pytest.fail("No full upload audit"))
     output = list(web_app.bulk_upload_clean_modelscope_sessions(
         str(root), 8, False, upload_date="20261010", batch_size=2,
     ))[-1]
     normal_rows = [json.loads(line) for line in apis["owner/normal"].files["metadata.jsonl"].splitlines()]
-    assert len(normal_rows) == 2, output
+    assert len(normal_rows) == 1, output
     assert not apis["owner/fault"].uploads
-    assert {row["session_id"] for row in normal_rows} == {s.name for s in sources[:2]}
+    assert {row["session_id"] for row in normal_rows} == {sources[0].name}
     list(web_app.bulk_upload_clean_modelscope_sessions(
         str(root), 8, False, upload_date="20261010", quality_target="fault",
     ))

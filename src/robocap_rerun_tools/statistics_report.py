@@ -16,8 +16,9 @@ from .dataset_statistics import (
     format_duration,
     load_report_payload,
     quality_count_summary,
+    quality_durations,
     quality_type_summary,
-    session_frame_anomaly_labels,
+    session_issue_labels,
     summarize_session,
 )
 from .inspection_issues import classify_inspection
@@ -191,6 +192,7 @@ def _render_html(
     quality_types: Sequence[Mapping[str, object]],
 ) -> str:
     total_duration = sum(float(row["duration_s"]) for row in sessions)
+    error_free_duration = sum(float(row["error_free_duration_s"]) for row in sessions)
     metadata_count = sum(int(row["mocap_metadata_count"]) for row in sessions)
     file_bytes = sum(int(row["size_bytes"]) for row in files)
     session_fields = list(sessions[0]) if sessions else SESSION_FIELDS
@@ -202,6 +204,16 @@ def _render_html(
             "extensions": extension_counts,
             "inspection_statuses": status_counts,
             "quality_statuses": quality_counts,
+            "durations": {
+                "total": format_duration(total_duration),
+                "error-free": format_duration(error_free_duration),
+                "with errors": format_duration(
+                    sum(float(row["error_duration_s"]) for row in sessions)
+                ),
+                "unchecked or review": format_duration(
+                    sum(float(row["unchecked_duration_s"]) for row in sessions)
+                ),
+            },
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -228,7 +240,8 @@ code{{white-space:pre-wrap;overflow-wrap:anywhere}}
 <div class="meta">根目录 / Root: {html.escape(str(root))}<br>生成时间 / Generated: {generated_at.isoformat()}</div></header>
 <main><div class="metrics">
 <div class="metric">Sessions<b>{len(sessions)}</b></div><div class="metric">Segments<b>{len(segments)}</b></div>
-<div class="metric">Duration<b>{format_duration(total_duration)}</b></div><div class="metric">Files<b>{len(files)}</b></div>
+<div class="metric">无误时长 / Error-free duration<b>{format_duration(error_free_duration)}</b></div>
+<div class="metric">总时长 / Total duration<b>{format_duration(total_duration)}</b></div><div class="metric">Files<b>{len(files)}</b></div>
 <div class="metric">Bytes<b>{file_bytes:,}</b></div><div class="metric">Parsed Mocap metadata<b>{metadata_count}</b></div>
 </div>
 <section><h2>汇总 / Summary</h2><code>{html.escape(summary_json)}</code></section>
@@ -254,6 +267,9 @@ SESSION_FIELDS = [
     "primitive_id",
     "duration_s",
     "duration_hms",
+    "error_free_duration_s",
+    "error_duration_s",
+    "unchecked_duration_s",
     "inspection_status",
     "inspection_anomalies",
     "inspection_errors",
@@ -307,8 +323,15 @@ INSPECTION_FIELDS = [
     "payload_scalar_json",
 ]
 ISSUE_FIELDS = [
-    "session_relative_path", "segment", "code", "group", "label", "severity",
-    "path", "count", "detail",
+    "session_relative_path",
+    "segment",
+    "code",
+    "group",
+    "label",
+    "severity",
+    "path",
+    "count",
+    "detail",
 ]
 FILE_FIELDS = [
     "session_relative_path",
@@ -361,8 +384,9 @@ def generate_statistics_report(
             progress(index, len(sessions), session_relative)
         statistic = summarize_session(root, session_dir, ffprobe)
         statistics.append(statistic)
-        issue_rows.extend({"session_relative_path": session_relative, **row}
-                          for row in statistic.quality_issues)
+        issue_rows.extend(
+            {"session_relative_path": session_relative, **row} for row in statistic.quality_issues
+        )
         mocap_dirs = discover_mocap_directories(session_dir)
         metadata = [
             parsed
@@ -407,7 +431,7 @@ def generate_statistics_report(
                 }
             )
 
-        labels = session_frame_anomaly_labels(statistic, language="English")
+        labels = session_issue_labels(statistic, language="English")
         if not statistic.segments or any(item.status == "unchecked" for item in statistic.segments):
             inspection_status = "unchecked"
         elif any(item.status == "frame_difference" for item in statistic.segments):
@@ -415,6 +439,7 @@ def generate_statistics_report(
         else:
             inspection_status = "clean"
         status_counts[inspection_status] += 1
+        unchecked_duration, error_duration, error_free_duration = quality_durations([statistic])
         session_rows.append(
             {
                 "session_relative_path": session_relative,
@@ -422,13 +447,16 @@ def generate_statistics_report(
                 "primitive_id": statistic.primitive_id,
                 "duration_s": round(statistic.duration_s, 6),
                 "duration_hms": format_duration(statistic.duration_s),
+                "error_free_duration_s": round(error_free_duration, 6),
+                "error_duration_s": round(error_duration, 6),
+                "unchecked_duration_s": round(unchecked_duration, 6),
                 "inspection_status": inspection_status,
                 "inspection_anomalies": "|".join(labels),
                 "inspection_errors": " | ".join(statistic.errors),
                 "quality_status": statistic.quality_status,
-                "quality_codes": "|".join(dict.fromkeys(
-                    row["code"] for row in statistic.quality_issues
-                )),
+                "quality_codes": "|".join(
+                    dict.fromkeys(row["code"] for row in statistic.quality_issues)
+                ),
                 "integrity_status": statistic.integrity_status,
                 "integrity_issues": " | ".join(statistic.integrity_issues),
                 "session_time_utc": utc_time,
@@ -471,19 +499,23 @@ def generate_statistics_report(
                     "inspection_status": segment.status,
                     "frame_anomalies": "|".join(segment.frame_anomalies),
                     "quality_status": segment.quality_status,
-                    "quality_codes": "|".join(dict.fromkeys(
-                        row["code"] for row in segment.quality_issues
-                    )),
+                    "quality_codes": "|".join(
+                        dict.fromkeys(row["code"] for row in segment.quality_issues)
+                    ),
                     "detail": segment.detail,
                 }
             )
             if segment.report_path.is_file():
                 inspection = _inspection_row(
-                    root, session_relative, segment.segment, segment.report_path,
+                    root,
+                    session_relative,
+                    segment.segment,
+                    segment.report_path,
                 )
                 inspection["quality_status"] = segment.quality_status
                 inspection["quality_issues_json"] = json.dumps(
-                    segment.quality_issues, ensure_ascii=False,
+                    segment.quality_issues,
+                    ensure_ascii=False,
                 )
                 inspection_rows.append(inspection)
 

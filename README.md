@@ -500,7 +500,11 @@ The tool publishes direct dataset files rather than a ZIP-only sample. Each prep
 The current inspection standard requires the main-body trio, hat pair and action-specific
 extra bodies/objects above. Extra export formats and RRD files are optional and cannot replace
 required exports. Normal batch publishing checks structural/content integrity in addition to
-frame counts. Duration statistics retain the original frame-count categories separately.
+frame counts. The existing statistics table integrates frame, timestamp, trajectory and file
+defects. Error-free duration requires every Segment of a Session to pass current checks;
+normal batch upload uses the same selection. Confirmed-error and unchecked/review durations
+remain separate, and each issue type counts a Session once. No additional quality summary
+is prepended to the original statistics table.
 
 Raw calibration is outside every action session and is stored once at
 `<dataset_root>/raw_calibration/<device_id>/`. The session staging command does not copy a source

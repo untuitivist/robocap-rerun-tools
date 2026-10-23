@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 
 from robocap_rerun_tools import dataset_statistics as statistics
+from robocap_rerun_tools.inspection_issues import CLASSIFICATION_VERSION
+from robocap_rerun_tools.session_integrity import INTEGRITY_VERSION, source_signature
 
 
 def write_report(path: Path, **overrides: object) -> None:
@@ -18,7 +20,13 @@ def write_report(path: Path, **overrides: object) -> None:
         "abnormalDiffs": 0,
         "missingTimestamps": 0,
         "frameIssues": 0,
-        "files": [],
+        "files": [{"path": "body.csv", "sampleCount": 80}],
+        "classificationVersion": CLASSIFICATION_VERSION,
+        "integrity": {
+            "version": INTEGRITY_VERSION,
+            "source_signature": source_signature(path.parents[3]),
+            "checks": [],
+        },
     }
     payload.update(overrides)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,9 +107,7 @@ def test_infer_action_primitive_accepts_arbitrary_prefix_and_digit_widths(
 
     from_double_prefix_path = tmp_path / "EgoMotionActions" / "SM001" / "session39"
     from_double_prefix_path.mkdir(parents=True)
-    assert (
-        statistics.infer_action_primitive(tmp_path, from_double_prefix_path) == "SM001"
-    )
+    assert statistics.infer_action_primitive(tmp_path, from_double_prefix_path) == "SM001"
 
 
 def test_infer_action_primitive_does_not_treat_session_name_as_action_id(
@@ -110,10 +116,7 @@ def test_infer_action_primitive_does_not_treat_session_name_as_action_id(
     session = tmp_path / "20260803_081935_session39"
     session.mkdir()
 
-    assert (
-        statistics.infer_action_primitive(tmp_path, session)
-        == statistics.UNASSIGNED_PRIMITIVE
-    )
+    assert statistics.infer_action_primitive(tmp_path, session) == statistics.UNASSIGNED_PRIMITIVE
 
 
 def test_primitive_sort_uses_numeric_value_for_variable_width_ids() -> None:
@@ -194,9 +197,7 @@ def test_session_statistics_group_duration_categories_sum_to_total(
     assert [item.clean_duration_s for item in grouped] == [10.0, 0.0, 0.0]
     assert all(
         item.duration_s
-        == item.unchecked_duration_s
-        + item.frame_difference_duration_s
-        + item.clean_duration_s
+        == item.unchecked_duration_s + item.frame_difference_duration_s + item.clean_duration_s
         for item in grouped
     )
     assert statistics.session_has_clean_frame_counts(rows[0]) is True
@@ -207,24 +208,23 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         "mocap missing",
     )
     assert (
-        "| 动作基元 | 未检查时长 | 差帧时长 | 帧数一致时长 | 总时长 | 帧数一致比率 | "
-        "{Session: Session 时长} |"
-        in markdown
+        "| 动作基元 | 未检查或待确认时长 | 有错误时长 | 无误时长 | 总时长 | 无误比率 | "
+        "{Session: Session 时长} |" in markdown
     )
     assert "| Session 数 |" not in markdown
     assert "| Sessions |" not in english
-    assert "- 未检查时长：**00:00:10.000**" in markdown
-    assert "- 差帧时长：**00:00:10.000**" in markdown
-    assert "- 帧数一致时长：**00:00:10.000**" in markdown
-    assert "未检查时长 + 差帧时长 + 帧数一致时长 = 总时长" in markdown
-    assert "Unchecked duration" in english
-    assert "Frame-count-difference duration" in english
-    assert "Frame-count matching duration" in english
-    assert "Matching ratio" in english
+    assert "- 未检查或待确认时长：**00:00:10.000**" in markdown
+    assert "- 有错误时长：**00:00:10.000**" in markdown
+    assert "- 无误时长：**00:00:10.000**" in markdown
+    assert "未检查或待确认时长 + 有错误时长 + 无误时长 = 总时长" in markdown
+    assert "Unchecked or review duration" in english
+    assert "With-errors duration" in english
+    assert "Error-free duration" in english
+    assert "Error-free ratio" in english
     assert "Session counts:" in english
     assert "Duration summary:" in english
-    assert "Frame-category duration summary:" in english
-    assert "Frame-category Session counts:" in english
+    assert "Error-type duration summary:" in english
+    assert "Error-type Session counts:" in english
     assert "Session counts (total/error-free/with errors/unchecked)" not in english
     assert "00:00:30.000" in markdown
     assert (
@@ -232,41 +232,31 @@ def test_session_statistics_group_duration_categories_sum_to_total(
         "100.00% | `" in markdown
     )
     assert (
-        "| P02 | 00:00:00.000 | 00:00:10.000 | 00:00:00.000 | 00:00:10.000 | "
-        "0.00% | `" in markdown
+        "| P02 | 00:00:00.000 | 00:00:10.000 | 00:00:00.000 | 00:00:10.000 | 0.00% | `" in markdown
     )
     assert '"session-clean": "00:00:10.000"' in markdown
-    assert "{Session: [异常s](未检查原因, mocap多帧, mocap少帧, 第三人称多帧, 第三人称少帧)}" in markdown
-    assert '"session-clean": ["帧数一致"]' in markdown
-    assert '"session-problem": ["mocap少帧"]' in markdown
-    assert '"session-missing": ["mocap中没有TRC/BVH/CSV"]' in markdown
-    assert '- 帧数分类 Session 统计：`{"全部": 3, "帧数一致": 1, "差帧或未检查": 2, "未检查": 1}`' in markdown
+    assert "{Session: [异常](帧数、时间戳、轨迹、文件及检查状态)}" in markdown
+    assert '"session-clean": ["无误"]' in markdown
+    assert '"session-problem": ["mocap少帧",' in markdown
+    assert '"session-missing": ["mocap中没有TRC/BVH/CSV",' in markdown
+    assert '- Session 统计：`{"全部": 3, "无误": 1, "有错误": 1, "未检查或待确认": 1}`' in markdown
     assert (
-        '- 时长统计：`{"全部": "00:00:30.000", "帧数一致": "00:00:10.000", '
-        '"差帧或未检查": "00:00:20.000", "未检查": "00:00:10.000"}`' in markdown
+        '- 时长统计：`{"全部": "00:00:30.000", "无误": "00:00:10.000", '
+        '"有错误": "00:00:10.000", "未检查或待确认": "00:00:10.000"}`' in markdown
     )
-    assert (
-        '- 帧数分类明细 Session 统计：`{"没有mocap文件夹": 0, '
-        '"mocap中没有TRC/BVH/CSV": 1, "有动捕文件但没有有效检查报告": 0, "mocap多帧": 0, '
-        '"mocap少帧": 1, "第三人称多帧": 0, "第三人称少帧": 0}`' in markdown
-    )
-    assert (
-        '- 帧数分类明细时长统计：`{"没有mocap文件夹": "00:00:00.000", '
-        '"mocap中没有TRC/BVH/CSV": "00:00:10.000", '
-        '"有动捕文件但没有有效检查报告": "00:00:00.000", '
-        '"mocap多帧": "00:00:00.000", "mocap少帧": "00:00:10.000", '
-        '"第三人称多帧": "00:00:00.000", "第三人称少帧": "00:00:00.000"}`'
-        in markdown
-    )
+    counts, durations = statistics.issue_summaries(rows, language="中文")
+    assert counts["mocap少帧"] == counts["检查未完成"] == 1
+    assert durations["mocap少帧"] == durations["检查未完成"] == "00:00:10.000"
     assert "时长统计（全部/无误/有错误/未检查）" not in markdown
     assert "错误类型时长统计 |" not in markdown
     assert "Session 统计（全部/无误/有错误/未检查）" not in markdown
     assert "错误类型 Session 统计 |" not in markdown
+    assert "综合质量统计" not in markdown
+    assert "文件完整性（独立于帧数）" not in markdown
+    assert "帧数一致时长" not in markdown
 
 
-def test_unchecked_statistics_distinguish_mocap_availability(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_unchecked_statistics_distinguish_mocap_availability(tmp_path: Path, monkeypatch) -> None:
     no_directory = tmp_path / "session-no-directory"
     no_motion_file = tmp_path / "session-no-motion-file"
     no_report = tmp_path / "session-no-report"
@@ -289,7 +279,9 @@ def test_unchecked_statistics_distinguish_mocap_availability(
         "missing_mocap_motion_file",
         "missing_valid_inspection",
     ]
-    assert [statistics.session_frame_anomaly_labels(session, language="中文") for session in sessions] == [
+    assert [
+        statistics.session_frame_anomaly_labels(session, language="中文") for session in sessions
+    ] == [
         ("没有mocap文件夹",),
         ("mocap中没有TRC/BVH/CSV",),
         ("有动捕文件但没有有效检查报告",),
