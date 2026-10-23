@@ -22,7 +22,6 @@ from types import SimpleNamespace
 
 from . import modelscope_publisher as publisher
 from .file_integrity import (
-    TimestampAudit,
     file_signature,
     inspect_file,
     normalize_pose_header,
@@ -316,9 +315,46 @@ def make_targets(request, manifest):
     return dict(targets), blocked
 
 
+class _TimestampAudit:
+    def __init__(self):
+        self.rows = self.missing = self.nonincreasing = 0
+        self.previous = None
+        self.issues = []
+
+    def add(self, cells, column, line):
+        self.rows += 1
+        raw = cells[column] if column is not None and column < len(cells) else ""
+        reason = ""
+        previous = self.previous
+        try:
+            stamp = float(raw)
+            if not math.isfinite(stamp) or stamp <= 0:
+                raise ValueError("missing")
+            if previous is not None and stamp <= previous:
+                self.nonincreasing += 1
+                reason = "nonincreasing"
+            self.previous = stamp
+        except ValueError:
+            self.missing += 1
+            reason = "missing_or_invalid"
+        if reason and len(self.issues) < 5:
+            self.issues.append(
+                {"line": line, "frame": cells[0], "value": raw, "reason": reason, "previous": previous}
+            )
+
+    def details(self, column):
+        return {
+            "rows": self.rows,
+            "missing_timestamps": self.missing,
+            "nonincreasing_timestamps": self.nonincreasing,
+            "timestamp_column": column + 1 if column is not None else None,
+            "timestamp_issues": self.issues,
+        }
+
+
 def marker_details(path, encoding="utf-8-sig"):
     empty_rows = 0
-    audit = TimestampAudit()
+    audit = _TimestampAudit()
     column = None
     started = False
     with path.open(encoding=encoding) as stream:
@@ -345,7 +381,7 @@ def marker_details(path, encoding="utf-8-sig"):
 
 def timestamp_details(path, encoding="utf-8-sig"):
     header = None
-    audit = TimestampAudit()
+    audit = _TimestampAudit()
     with path.open(encoding=encoding, newline="") as stream:
         for number, line in enumerate(stream, 1):
             cells = pose_cells(line, path.suffix.lower())

@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_dataset_statistics import write_report as write_statistics_report
 
 from robocap_rerun_tools import web_app
 
@@ -295,7 +294,13 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
 
     def write_report(session: Path, mocap_frames: int) -> None:
         report = dataset_statistics.timestamp_report_path(session, "segment1")
-        write_statistics_report(report, mocapFrames=mocap_frames)
+        report.parent.mkdir(parents=True)
+        report.write_text(
+            '<script>const report={"ratio":8,"referenceFrames":9,'
+            f'"mocapFrames":{mocap_frames},"thirdFrames":10}}; '
+            "const eventTypes=[];</script>",
+            encoding="utf-8",
+        )
 
     write_report(uploaded, 80)
     write_report(problem, 72)
@@ -418,7 +423,7 @@ def test_statistics_batch_upload_only_stages_clean_sessions(tmp_path, monkeypatc
     assert "已上传跳过：1" in output
     assert "P01/session-uploaded" in output
     assert "P03/session-clean-one: 远端不完整，将重新上传" in output
-    assert "session-problem: inspection errors, incomplete checks or findings awaiting review" in output
+    assert "session-problem: unchecked or frame-count difference" in output
     assert "批次 2 上传或校验未通过，跳过 1 个 Session" in output
     assert "批量处理完成：新增 1；替换 0；失败跳过 1；已上传跳过 1；本地排除 1" in output
 
@@ -519,7 +524,12 @@ def test_statistics_batch_can_overwrite_existing_session_when_skip_is_disabled(
     (mocap / "body.trc").write_text("Frame#\tTime\n", encoding="utf-8")
     (mocap / "third.mp4").write_bytes(b"raw-third-person")
     report = dataset_statistics.timestamp_report_path(session, "segment1")
-    write_statistics_report(report)
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        '<script>const report={"ratio":8,"referenceFrames":9,'
+        '"mocapFrames":80,"thirdFrames":10}; const eventTypes=[];</script>',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(dataset_statistics, "probe_video_duration", lambda *_args: (10.0, None))
     monkeypatch.setattr(cli, "resolve_ffprobe", lambda *_args: "ffprobe")
     monkeypatch.setattr(

@@ -32,7 +32,6 @@ STATUS_LABELS = {
     "count_mismatch": "表头与实际数据行数不符",
     "column_mismatch": "表头与实际数据列数不符",
     "partial_data": "部分轨迹点缺失",
-    "timestamp_error": "时间戳缺失、无效或非递增",
     "read_error": "无法读取",
     "active_database": "数据库尚有未合并日志",
     "changed": "检查期间文件发生变化",
@@ -221,70 +220,19 @@ def inspect_video(path: Path, ffmpeg: str | None, ffprobe: str | None, log_path:
 
 def _motion_result(rows, declared, valid, missing=0):
     detail = f"actual rows={rows}; declared rows={declared}; valid samples={valid}"
-    metrics = {"rows": rows, "declared_rows": declared,
-               "valid_samples": valid, "missing_samples": missing}
     if not rows or not valid:
-        return result("empty_data", detail, **metrics)
+        return result("empty_data", detail, rows=rows, declared_rows=declared)
     if declared is not None and rows != declared:
-        return result("count_mismatch", detail, **metrics)
+        return result("count_mismatch", detail, rows=rows, declared_rows=declared)
     if missing:
         return result(
             "partial_data",
             detail + f"; missing samples={missing}",
-            **metrics,
+            rows=rows,
+            declared_rows=declared,
+            missing_samples=missing,
         )
-    return result(detail=detail, **metrics)
-
-
-class TimestampAudit:
-    def __init__(self, *, zero_is_missing=True):
-        self.rows = self.missing = self.nonincreasing = 0
-        self.previous = None
-        self.issues = []
-        self.zero_is_missing = zero_is_missing
-
-    def add(self, cells, column, line):
-        self.rows += 1
-        raw = cells[column] if column is not None and column < len(cells) else ""
-        reason = ""
-        previous = self.previous
-        try:
-            stamp = float(raw)
-            if not math.isfinite(stamp) or stamp < 0 or (self.zero_is_missing and stamp == 0):
-                raise ValueError("missing")
-            if previous is not None and stamp <= previous:
-                self.nonincreasing += 1
-                reason = "nonincreasing"
-            self.previous = stamp
-        except ValueError:
-            self.missing += 1
-            reason = "missing_or_invalid"
-        if reason and len(self.issues) < 5:
-            self.issues.append(
-                {"line": line, "frame": cells[0], "value": raw, "reason": reason, "previous": previous}
-            )
-
-    def details(self, column):
-        return {
-            "rows": self.rows,
-            "missing_timestamps": self.missing,
-            "nonincreasing_timestamps": self.nonincreasing,
-            "timestamp_column": column + 1 if column is not None else None,
-            "timestamp_issues": self.issues,
-        }
-
-
-def _with_timestamps(checked, audit, column):
-    checked["timestamp_detail"] = audit.details(column)
-    if audit.missing or audit.nonincreasing:
-        if checked["state"] in {"ok", "partial_data"}:
-            checked.update(state="timestamp_error", status=STATUS_LABELS["timestamp_error"])
-        checked["detail"] += (
-            f"; Timestamp 缺失或无效={audit.missing}，非递增={audit.nonincreasing}；示例="
-            + "; ".join(f"line={item['line']}, frame={item['frame']}, value={item['value']}, "
-                        f"reason={item['reason']}" for item in audit.issues)
-        )
-    return checked
+    return result(detail=detail, rows=rows, declared_rows=declared)
 
 
 def trc_marker_offset(cells):
@@ -321,8 +269,6 @@ def inspect_trc(stream):
     marker_names = []
     ignored = calculated = 0
     mismatched_widths = set()
-    audit = TimestampAudit(zero_is_missing=False)
-    timestamp_index = 1
     for number, line in enumerate(stream, 1):
         if not line.strip():
             continue
@@ -342,8 +288,6 @@ def inspect_trc(stream):
                 if len(cells) < 3:
                     raise ValueError("TRC has no marker columns")
                 offset = trc_marker_offset(cells)
-                timestamp_index = 2 if offset == 3 else 1
-                audit.zero_is_missing = offset == 3
                 marker_names = [value for value in cells[offset:] if value]
                 if not marker_names:
                     raise ValueError("TRC has no marker names")
@@ -373,7 +317,6 @@ def inspect_trc(stream):
         cells.extend([""] * (width - len(cells)))
         if not _finite(cells[1]):
             raise ValueError(f"TRC line {number}: invalid Time")
-        audit.add(cells, timestamp_index, number)
         for index in range(offset, width, 3):
             xyz = cells[index : index + 3]
             # NaN is a missing marker, but arbitrary text is malformed.
@@ -419,7 +362,7 @@ def inspect_trc(stream):
         warning = f"NOKOV 计算点 {calculated} 个；与 NumMarkers={declared_markers} 个基础点一并核验"
         checked["warnings"] = [warning]
         checked["detail"] += "; " + warning
-    return _with_timestamps(checked, audit, timestamp_index)
+    return checked
 
 
 def inspect_bvh(stream):
@@ -480,8 +423,6 @@ def normalize_pose_header(cells):
 def inspect_pose(stream, suffix):
     declared, metadata, header, xyz_groups = None, None, None, []
     rows = valid = missing = 0
-    audit = TimestampAudit()
-    timestamp_index = None
     for number, line in enumerate(stream, 1):
         if not line.strip():
             continue
@@ -498,7 +439,6 @@ def inspect_pose(stream, suffix):
                 c.startswith(("XToGlobal", "XToParent")) for c in cells
             ):
                 header = normalize_pose_header(cells)
-                timestamp_index = header.index("Timestamp")
                 for index, name in enumerate(header):
                     if name.startswith(("XToGlobal", "XToParent")):
                         try:
@@ -514,7 +454,6 @@ def inspect_pose(stream, suffix):
             header.pop()
         if len(cells) != len(header) or not cells[0].isdigit():
             raise ValueError(f"Pose line {number}: invalid row width or frame number")
-        audit.add(cells, timestamp_index, number)
         for group in xyz_groups:
             xyz = [cells[index] for index in group]
             if any(v and not _finite(v) and v.lower() not in {"nan", "-nan"} for v in xyz):
@@ -526,7 +465,7 @@ def inspect_pose(stream, suffix):
         rows += 1
     if header is None:
         raise ValueError("Pose file missing Timestamp/XYZ data header")
-    return _with_timestamps(_motion_result(rows, declared, valid, missing), audit, timestamp_index)
+    return _motion_result(rows, declared, valid, missing)
 
 
 def inspect_motion(path):

@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING
 
 import rerun as rr
 
-from .file_integrity import normalize_pose_header, readonly_database, trc_marker_offset
-from .inspection_issues import CLASSIFICATION_VERSION, classify_inspection
+from .file_integrity import readonly_database
 
 if TYPE_CHECKING:
     from .cli import FrameRatioEstimate, StreamSummary
@@ -81,7 +80,6 @@ class TimestampSourceResult:
     min_diff_ms: float | None
     max_diff_ms: float | None
     events: list[TimestampEvent] = field(default_factory=list)
-    parse_error: str = ""
 
 
 def finite_float(value: object) -> float | None:
@@ -356,7 +354,6 @@ def bvh_samples(path: Path, frame_count: int | None) -> list[TimestampSample]:
 def trc_samples(path: Path) -> list[TimestampSample]:
     samples: list[TimestampSample] = []
     header_found = False
-    time_index, column_name = 1, "Time"
     with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
         reader = csv.reader(handle, delimiter="\t")
         for row in reader:
@@ -364,14 +361,12 @@ def trc_samples(path: Path) -> list[TimestampSample]:
             if not header_found:
                 if len(cleaned) >= 2 and cleaned[0] == "Frame#" and cleaned[1] == "Time":
                     header_found = True
-                    time_index = 2 if trc_marker_offset(cleaned) == 3 else 1
-                    column_name = "Timestamp" if time_index == 2 else "Time"
                 continue
             frame = parse_frame_index(cleaned[0] if cleaned else None)
             if frame is None:
                 continue
-            raw = cleaned[time_index] if len(cleaned) > time_index else ""
-            reason = missing_reason(raw, zero_is_missing=time_index == 2)
+            raw = cleaned[1] if len(cleaned) > 1 else ""
+            reason = missing_reason(raw, zero_is_missing=False)
             samples.append(
                 TimestampSample(
                     reader.line_num,
@@ -381,9 +376,6 @@ def trc_samples(path: Path) -> list[TimestampSample]:
                     reason,
                 )
             )
-    normalized = normalize_optional_times([sample.timestamp_s for sample in samples], column_name)
-    for sample, value in zip(samples, normalized, strict=True):
-        sample.timestamp_s = value
     return samples
 
 
@@ -421,9 +413,6 @@ def delimited_samples(path: Path, delimiter: str) -> list[TimestampSample]:
     header_index: int | None = None
     time_index: int | None = None
     for index, (_, row) in enumerate(rows):
-        if any(cell.startswith(("XToGlobal", "XToParent")) for cell in row):
-            row = normalize_pose_header(row)
-            rows[index] = rows[index][0], row
         candidate = timestamp_column(row)
         if candidate is not None:
             header_index = index
@@ -773,9 +762,6 @@ def report_payload(
                 "frameIssues": result.frame_index_issue_count,
                 "minDiffMs": result.min_diff_ms,
                 "maxDiffMs": result.max_diff_ms,
-                "sampleCount": len(result.samples),
-                "parseError": result.parse_error,
-                "eventCounts": dict(Counter(event.event_type for event in result.events)),
             }
         )
         events.extend(compact_event(event, file_index) for event in result.events)
@@ -860,9 +846,6 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="stats" id="stats"></div>
   </header>
   <main>
-    <section><h2>问题分类与结论</h2><p id="qualityVerdict"></p>
-    <p>允许同一 Session 同时有多类问题。原四种差帧分类保留；时间戳、轨迹和文件内容分别判断。采样间隔异常需要确认；兼容格式说明不计错误。帧数一致不代表内容合格。</p>
-    <div class="table-wrap"><table><thead><tr><th>大类</th><th>问题</th><th>状态</th><th>文件</th><th>数量</th><th>依据</th></tr></thead><tbody id="qualityRows"></tbody></table></div></section>
     <section><h2>文件结构与内容检查</h2>
     <p id="integrityVerdict"></p>
     <p>逐 Segment 核对六路头戴视频、头戴 IMU/MAG、双腕视频与 IMU/MAG；动捕目录至少有一种数据格式和第三人称视频。视频完整解码，数据库检查表结构及实际记录，动捕核对实际数据行。通过这里只表示文件结构和内容检查通过，帧数、时间戳和动作质量还需分别验收。</p>
@@ -889,13 +872,6 @@ HTML_TEMPLATE = r"""<!doctype html>
     function renderHeader(){document.getElementById('subtitle').textContent=`${report.sessionPath} / ${report.segment}。检查基线：动捕 ${number(report.mocapExpectedFps)} FPS、视频 30 FPS、帧数关系 ${report.ratio}*(n+1)。diff 只计算相邻且 Timestamp 均有效的数据行；缺失行前后不会跨行相减。动捕推算丢帧 = max(round(diff / ${(1000/report.mocapExpectedFps).toFixed(6)} ms) - 1, 0)，仅累计主 Body 时间戳流 ${report.timingSource||'-'}。`;document.getElementById('expectedMocapHeader').textContent=`${report.ratio}*(n+1)`; const stats=[['异常 diff',report.abnormalDiffs],['跳过 diff',report.skippedDiffs],['缺失 Timestamp',report.missingTimestamps],['frame_index 问题',report.frameIssues],['逐点事件',report.events.length]]; const root=document.getElementById('stats');stats.forEach(([label,value])=>{const span=el('span');span.append(document.createTextNode(`${label}: `),el('strong','',number(value)));root.appendChild(span);});}
     const matchText=value=>value==null?'-':value?'是':'否';
     const matchClass=value=>value==null?'':value?'match':'mismatch';
-    function renderQuality(){
-      const info=report.quality,names={passed:'已完成检查，无已知问题',error:'有确认异常',unchecked:'检查未完成，不能判为正常',review:'有采样间隔问题待确认'};
-      document.getElementById('qualityVerdict').textContent=names[info.status]||info.status;
-      const root=document.getElementById('qualityRows'),states={error:'错误',warning:'待确认',unchecked:'未完成',info:'说明'};
-      info.issues.forEach(row=>{const tr=el('tr',row.severity==='error'?'integrity-error':'');
-        [row.group,row.label,states[row.severity],row.path||'Session',number(row.count),row.detail].forEach(value=>tr.appendChild(el('td','',value)));root.appendChild(tr);});
-    }
     function renderIntegrity(){
       const info=report.integrity,verdict=document.getElementById('integrityVerdict');
       if(!info){verdict.textContent='此报告未执行文件结构与内容检查，请重新运行检查。';return;}
@@ -904,7 +880,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       verdict.className=info.status==='passed'?'match':'mismatch';
       const root=document.getElementById('integrityRows');root.replaceChildren();
       const query=document.getElementById('integrityQuery').value.toLowerCase(),problems=document.getElementById('integrityProblems').checked;
-      info.checks.filter(row=>(!problems||row.severity!=='pass'||row.warnings?.length)&&`${row.path} ${row.requirement||''} ${row.status} ${row.detail}`.toLowerCase().includes(query)).forEach(row=>{
+      info.checks.filter(row=>(!problems||row.severity!=='pass')&&`${row.path} ${row.requirement||''} ${row.status} ${row.detail}`.toLowerCase().includes(query)).forEach(row=>{
         const tr=el('tr',`integrity-${row.severity}`);
         const label=row.requirement||({structure:'结构',content:'文件内容',manifest:'发布清单',mocap:'动捕导出'}[row.category]||row.category);
         [label,row.path,row.status,number(row.size_bytes),number(row.frames??row.rows),row.detail].forEach(value=>tr.appendChild(el('td','',value)));
@@ -956,7 +932,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     ['kindFilter','typeFilter','pageSize'].forEach(id=>document.getElementById(id).addEventListener('change',applyFilters));document.getElementById('search').addEventListener('input',applyFilters);document.getElementById('first').addEventListener('click',()=>{page=1;renderEvents();});document.getElementById('prev').addEventListener('click',()=>{page-=1;renderEvents();});document.getElementById('next').addEventListener('click',()=>{page+=1;renderEvents();});document.getElementById('last').addEventListener('click',()=>{page=Number(document.getElementById('page').max);renderEvents();});document.getElementById('page').addEventListener('change',event=>{page=Number(event.target.value)||1;renderEvents();});
     document.getElementById('integrityProblems').addEventListener('change',renderIntegrity);
     document.getElementById('integrityQuery').addEventListener('input',renderIntegrity);
-    renderQuality();renderIntegrity();renderHeader();renderSummary();renderThirdDrops();renderFiles();populateFilters();setupColumns();applyFilters();
+    renderIntegrity();renderHeader();renderSummary();renderThirdDrops();renderFiles();populateFilters();setupColumns();applyFilters();
   </script>
 </body>
 </html>
@@ -998,15 +974,12 @@ def write_timestamp_anomaly_report(
                     min_diff_ms=None,
                     max_diff_ms=None,
                     events=[],
-                    parse_error=str(exc),
                 )
             )
             results[-1].stream = f"{results[-1].stream} (parse error: {exc})"
     results.sort(key=lambda result: (result.kind, result.relative_path.lower()))
     payload = report_payload(session_dir, segment, summaries, results, ratio_estimate, ratio)
     payload["integrity"] = integrity
-    payload["classificationVersion"] = CLASSIFICATION_VERSION
-    payload["quality"] = classify_inspection(payload)
     document = HTML_TEMPLATE.replace(
         "__REPORT__",
         json.dumps(payload, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/"),

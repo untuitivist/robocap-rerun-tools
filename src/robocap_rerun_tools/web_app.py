@@ -101,14 +101,11 @@ third-person video remains `n+1` in both modes.
 The Statistics tab can create only missing inspection reports or rebuild every report in its current
 scope. `Rebuild all inspection reports` takes precedence when both options are enabled, and the same
 choice applies to automatic normal/fault batch upload.
-The existing statistics table includes frame counts, timestamps, trajectories and file-content issues.
-Error-free duration requires a whole Session to pass all checks, as required for normal batch upload.
-Old inspection reports and review findings are excluded from error-free duration.
 It also scans compact Mocap directory metadata into an editable table. Selected rows can update the
 remote `metadata.jsonl` and matching Session manifests in one commit without uploading videos.
 The separate `Statistics Report` tab creates a portable dataset inventory. It preserves every
 Session and file path relative to the selected dataset root, records duration, parsed Mocap naming
-metadata, inspection results, and file details, then writes a standalone offline HTML report, five
+metadata, inspection results, and file details, then writes a standalone offline HTML report, four
 UTF-8 CSV tables, and a ZIP under `_reports/`. Existing `_reports/` content is never scanned back
 into a later report.
 `Scan files` detects the standard robowrist folders and streams. When none are present, the robowrist
@@ -279,8 +276,6 @@ frame_index 异常及其上下行。
 
 “统计”页既可只补做缺失的检查报告，也可重做当前范围内的全部报告。两个选项同时开启时，
 "全部重做检查报告"优先；批量检查并分流上传时使用同一选择。
-原统计表统一统计四种差帧、时间戳、轨迹和文件内容问题；同一 Session 可命中多类，每类去重计数。
-无误时长只计入整个 Session 检查通过的数据，与正常批量上传筛选一致；旧报告、未检查和待确认不计入。
 该页还会把紧凑 Mocap 目录名解析为可编辑表格；勾选后的行可一次提交更新远端
 `metadata.jsonl` 与对应 Session manifest，不会重新上传视频。
 
@@ -357,8 +352,7 @@ offset `5` 转换为 40 个动捕源帧。第三人称 offset 独立使用 30 FP
 
 独立的“统计报告”页会生成可转发的数据集清单。所有 Session 和文件都记录相对于所选数据集根目录的
 完整路径，同时统计时长、Mocap 命名元数据、检查结果与文件明细。输出位于 `_reports/`，包含单文件
-离线 HTML、五张 UTF-8 CSV 和一个 ZIP；其中 `inspection_issues.csv` 保留问题分类、文件和依据。
-已有 `_reports/` 内容不会被下一次报告重新统计。
+离线 HTML、四张 UTF-8 CSV 和一个 ZIP；已有 `_reports/` 内容不会被下一次报告重新统计。
 不会回滚。
 启用交集裁切时，ratio 与 Offset 默认由“导出 RRD”页填入，并继续跟随该页参数变化；只有本次暂存
 需要不同对齐参数时，才单独修改 ModelScope 页中的副本。
@@ -435,8 +429,7 @@ LANGUAGE_PACKS = {
             "incomplete Sessions are "
             "re-uploaded for repair. Clear the skip option to re-upload complete Sessions too and "
             "replace matching metadata rows. A different date leaves the old remote directory "
-            "untouched. Each selected Session must pass all current checks, including "
-            "`n:ratio*(n+1):n+1`; error, review and incomplete results are excluded. Batch size `1` "
+            "untouched. Each selected Session must satisfy `n:ratio*(n+1):n+1`. Batch size `1` "
             "uploads one Session per commit; a size at least equal to the candidate count uploads all "
             "candidates together; the default is `10`. While one batch uploads, the next is prepared "
             "in the background. Remote uploads remain serial. Raw files use NTFS hard links when "
@@ -610,8 +603,7 @@ LANGUAGE_PACKS = {
             "允许修改。自动匹配会把 Session 名中的 UTC 时间换算为东八区日期；无时间戳时使用日期框，"
             "不同日期分开成批。默认只跳过远端已有且完整的 Session；远端"
             "不完整项会重新上传修复。取消勾选后，完整项也会重新上传并替换同键元数据。改用其他"
-            "日期不会删除旧远端目录。选中的 Session 必须全部检查通过（含 `n:ratio*(n+1):n+1`），"
-            "有错误、未检查或待确认的不能计入无误或正常上传。批次大小为 "
+            "日期不会删除旧远端目录。选中的 Session 必须满足 `n:ratio*(n+1):n+1`。批次大小为 "
             "`1` 时逐个提交，大于等于候选总数时全量一次提交，默认 `10`。当前批次上传时会在后台"
             "准备下一批，但远端上传严格串行。原始文件优先使用 NTFS 硬链接，失败时逐字节复制。"
             "批次上传失败会重试 3 次，共 4 次仍失败则跳过该批并继续。默认选择 BVH/CSV/TRC/MP4 "
@@ -3202,7 +3194,7 @@ def bulk_upload_clean_modelscope_sessions(
     from robocap_rerun_tools.cli import resolve_ffprobe
     from robocap_rerun_tools.dataset_statistics import (
         discover_segment_references,
-        session_is_error_free,
+        session_has_clean_frame_counts,
         summarize_session,
     )
     from robocap_rerun_tools.modelscope_publisher import (
@@ -3533,8 +3525,8 @@ def bulk_upload_clean_modelscope_sessions(
                 excluded.append(f"{session}: {exc}")
                 yield render()
                 continue
-        elif not session_is_error_free(statistic):
-            excluded.append(f"{session}: inspection errors, incomplete checks or findings awaiting review")
+        elif not session_has_clean_frame_counts(statistic):
+            excluded.append(f"{session}: unchecked or frame-count difference")
             yield render()
             continue
         try:
