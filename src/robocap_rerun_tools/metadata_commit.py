@@ -8,10 +8,12 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 from filelock import FileLock
 
+UPLOAD_QUIET_SECONDS = 600
 
 def require_git():
     if not shutil.which("git"):
@@ -143,9 +145,50 @@ class MetadataCommit:
                 self.progress(
                     f"Remote changed: rebuilding metadata against latest revision ({attempt + 1}/{attempts})."
                 )
+            if attempt + 1 < attempts:
+                self.wait_until_quiet()
         raise RuntimeError(
             "Remote kept changing; metadata was not published. Retry upload; existing files can be reused."
         )
+
+    def wait_until_quiet(self, own_revision=None):
+        """Observe commits, not in-flight transfers; retain non-force push protection."""
+        observed = None
+        committed_at = None
+        while True:
+            refs = self.git("ls-remote", "--heads", "origin", f"refs/heads/{self.branch}").stdout.split()
+            if not refs:
+                return  # A new, empty repository has no upload history.
+            head = refs[0].decode()
+            if head == own_revision:
+                return
+            if head != observed:
+                head = self.head()
+                committed_at = int(self.git("show", "-s", "--format=%ct", head).stdout.strip())
+                observed = head
+            if time.time() - committed_at >= UPLOAD_QUIET_SECONDS:
+                if self.progress:
+                    self.progress("[upload wait] No remote commit in the last 10 minutes; starting upload.")
+                return
+            if self.progress:
+                self.progress(
+                    "[upload wait] Remote committed within the last 10 minutes. "
+                    "Waiting 10 minutes before checking again; no file scanning during this wait."
+                )
+            time.sleep(UPLOAD_QUIET_SECONDS)
+
+
+def wait_for_upload_turn(settings, repository, revision, progress=None, own_revision=None):
+    directory = _metadata_cache_directory(settings, repository, revision)
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    # A separate observation cache lets local metadata publication proceed while waiting.
+    directory = directory.with_name(directory.name + "-activity")
+    with FileLock(str(directory) + ".lock", timeout=-1):
+        transaction = MetadataCommit(
+            directory, f"{settings.endpoint.rstrip('/')}/datasets/{repository}.git",
+            revision, settings.token, progress,
+        )
+        transaction.wait_until_quiet(own_revision)
 
 
 def _metadata_cache_directory(settings, repository, revision):

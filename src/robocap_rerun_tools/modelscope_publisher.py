@@ -2590,6 +2590,7 @@ def upload_staged_dataset(
     upload_time: datetime | None = None,
     upload_date: str | None = None,
     progress: Callable[[str], None] | None = print,
+    upload_turn: dict[tuple[str, str], str] | None = None,
 ) -> UploadResult:
     staged = load_staged_dataset(staged.dataset_root)
     resolved = settings or load_modelscope_settings()
@@ -2615,7 +2616,7 @@ def upload_staged_dataset(
         raise ValueError("Visibility must be private, internal, or public.")
     if max_workers is not None and max_workers < 1:
         raise ValueError("max_workers must be positive.")
-    from .metadata_commit import require_git, publish_session_metadata
+    from .metadata_commit import require_git, publish_session_metadata, wait_for_upload_turn
 
     try:
         require_git()
@@ -2705,6 +2706,13 @@ def upload_staged_dataset(
             if progress:
                 progress(f"[upload timing] Local hashing: {time.monotonic() - phase_started:.1f}s")
             phase_started = time.monotonic()
+            wait_for_upload_turn(
+                resolved, repository, target_revision, progress,
+                (upload_turn or {}).get((repository, target_revision)),
+            )
+            if progress:
+                progress(f"[upload timing] Waiting for upload turn: {time.monotonic() - phase_started:.1f}s")
+            phase_started = time.monotonic()
             commit_result = api.upload_folder(
                 repository,
                 "dataset",
@@ -2732,6 +2740,8 @@ def upload_staged_dataset(
                 local_entries, api=api, repository=repository, revision=target_revision,
                 settings=resolved, progress=progress, initial_readme=staged.readme_path,
             )
+            if upload_turn is not None:
+                upload_turn[(repository, target_revision)] = metadata_revision
             if progress:
                 progress(f"[upload timing] Shared metadata: {time.monotonic() - phase_started:.1f}s")
             from .upload_verification import REPORT_NAME as verification_report_name

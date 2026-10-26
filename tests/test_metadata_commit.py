@@ -8,6 +8,10 @@ import pytest
 
 from robocap_rerun_tools.metadata_commit import MetadataCommit
 
+@pytest.fixture(autouse=True)
+def no_real_quiet_wait(monkeypatch):
+    from robocap_rerun_tools import metadata_commit
+    monkeypatch.setattr(metadata_commit.time, "time", lambda: 9999999999)
 
 def git(root, *args):
     return (
@@ -15,6 +19,52 @@ def git(root, *args):
         .stdout.decode()
         .strip()
     )
+
+
+def test_quiet_wait_rechecks_every_ten_minutes_without_refetching_same_head(monkeypatch):
+    from robocap_rerun_tools import metadata_commit as module
+
+    transaction = object.__new__(MetadataCommit)
+    transaction.branch = "master"
+    messages = []
+    transaction.progress = messages.append
+    clock = [1000]
+    refs = iter([b"a", b"b", b"b"])
+    current = [b"a"]
+    fetches = []
+    sleeps = []
+
+    def fake_git(*args):
+        if args[0] == "ls-remote":
+            current[0] = next(refs)
+            return SimpleNamespace(stdout=current[0] + b"\trefs/heads/master\n")
+        assert args[0] == "show"
+        return SimpleNamespace(stdout=b"900" if current[0] == b"a" else b"1500")
+
+    transaction.git = fake_git
+    transaction.head = lambda: (fetches.append(current[0]) or current[0].decode())
+    monkeypatch.setattr(module.time, "time", lambda: clock[0])
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(module.time, "sleep", sleep)
+    transaction.wait_until_quiet()
+    assert sleeps == [600, 600]
+    assert fetches == [b"a", b"b"]
+    assert "starting upload" in messages[-1]
+
+
+def test_own_previous_batch_does_not_trigger_wait(monkeypatch):
+    from robocap_rerun_tools import metadata_commit as module
+
+    transaction = object.__new__(MetadataCommit)
+    transaction.branch = "master"
+    transaction.progress = None
+    transaction.git = lambda *a: SimpleNamespace(stdout=b"own\trefs/heads/master\n")
+    monkeypatch.setattr(module.time, "sleep", lambda _: pytest.fail("Must not wait for own batch"))
+    transaction.wait_until_quiet("own")
 
 
 def seed(tmp_path):

@@ -22,6 +22,7 @@ def fake_metadata_transport(monkeypatch, tmp_path):
         return "test-commit"
 
     monkeypatch.setattr(metadata_commit, "require_git", lambda: None)
+    monkeypatch.setattr(metadata_commit, "wait_for_upload_turn", lambda *a, **k: None)
     monkeypatch.setattr(metadata_commit, "_publish_changes", commit)
 
 

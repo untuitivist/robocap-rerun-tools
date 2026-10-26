@@ -605,6 +605,14 @@ verified first; the shared index is then merged against the latest Git revision 
 force. Concurrent changes trigger a fresh merge and retry (up to eight attempts), without reuploading
 videos. Git and Git LFS must be installed on every uploader, and all uploaders must be updated:
 old versions can still overwrite the index. Same-Session concurrent uploads are not supported.
+Batch uploads finish read-only remote integrity checks and local inspections before uploading
+the queued new/incomplete Sessions. These checks can overlap another computer's upload,
+although they still consume network resources. Before transfer, a remote commit within the
+last ten minutes triggers a ten-minute wait and another check, repeated until quiet.
+The current run's own previous successful batch is exempt. Metadata conflicts also wait
+before remerging. Waiting queries branch activity, not the whole file inventory.
+Uncommitted transfers are invisible in commit history, so this is not a distributed lock;
+non-force push protection remains necessary.
 Existing README.md is preserved. If metadata publication fails, the operation reports failure;
 files remain remotely available for a retry. Metadata-only capture corrections use the same protection.
 

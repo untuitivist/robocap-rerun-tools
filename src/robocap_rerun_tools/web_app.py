@@ -3651,6 +3651,8 @@ def bulk_upload_clean_modelscope_sessions(
                 prepared = []
         return staged_root, prepared, failures
 
+    upload_turn: dict[tuple[str, str], str] = {}
+
     def upload_batch(
         batch_index: int,
         staged_root: Path,
@@ -3676,6 +3678,7 @@ def bulk_upload_clean_modelscope_sessions(
                     upload_date=batch_upload_date,
                     max_workers=resolved_upload_workers,
                     progress=task_progress(scope),
+                    upload_turn=upload_turn,
                 )
                 return None
             except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
