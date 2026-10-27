@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 from filelock import FileLock
@@ -161,6 +162,8 @@ class MetadataCommit:
                 return  # A new, empty repository has no upload history.
             head = refs[0].decode()
             if head == own_revision:
+                if self.progress:
+                    self.progress("[upload wait] Latest commit is this run's previous batch; continuing without delay.")
                 return
             if head != observed:
                 head = self.head()
@@ -171,9 +174,11 @@ class MetadataCommit:
                     self.progress("[upload wait] No remote commit in the last 10 minutes; starting upload.")
                 return
             if self.progress:
+                next_check = datetime.fromtimestamp(time.time() + UPLOAD_QUIET_SECONDS).astimezone().isoformat(timespec="seconds")
                 self.progress(
                     "[upload wait] Remote committed within the last 10 minutes. "
-                    "Waiting 10 minutes before checking again; no file scanning during this wait."
+                    f"Waiting 10 minutes; next check at {next_check}; "
+                    "no file scanning during this wait."
                 )
             time.sleep(UPLOAD_QUIET_SECONDS)
 

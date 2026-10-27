@@ -28,7 +28,7 @@ def test_quiet_wait_rechecks_every_ten_minutes_without_refetching_same_head(monk
     transaction.branch = "master"
     messages = []
     transaction.progress = messages.append
-    clock = [1000]
+    clock = [1700001000]
     refs = iter([b"a", b"b", b"b"])
     current = [b"a"]
     fetches = []
@@ -39,7 +39,7 @@ def test_quiet_wait_rechecks_every_ten_minutes_without_refetching_same_head(monk
             current[0] = next(refs)
             return SimpleNamespace(stdout=current[0] + b"\trefs/heads/master\n")
         assert args[0] == "show"
-        return SimpleNamespace(stdout=b"900" if current[0] == b"a" else b"1500")
+        return SimpleNamespace(stdout=b"1700000900" if current[0] == b"a" else b"1700001500")
 
     transaction.git = fake_git
     transaction.head = lambda: (fetches.append(current[0]) or current[0].decode())

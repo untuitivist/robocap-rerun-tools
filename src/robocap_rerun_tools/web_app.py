@@ -3598,7 +3598,11 @@ def bulk_upload_clean_modelscope_sessions(
     event_queue: queue.Queue[str] = queue.Queue()
 
     def task_progress(scope: str):
-        return lambda message: event_queue.put(f"[{scope}] {message}")
+        callback = lambda message: event_queue.put(f"[{scope}] {message}")
+        if scope.startswith("prepare "):
+            from .upload_progress import terminal_progress
+            return terminal_progress(callback)
+        return callback
 
     def prepare_batch(batch_index: int, items: list[BatchUploadCandidate]):
         staged_root = root / "_modelscope_dataset" / "batches" / run_id / f"batch_{batch_index:04d}"
@@ -3620,14 +3624,17 @@ def bulk_upload_clean_modelscope_sessions(
             scope = f"prepare {batch_index}/{len(batches)} {item_index}/{len(items)}"
             event_queue.put(f"[{scope}] {primitive}/{session_id} -> {staged_root}")
             try:
-                stage_session(
-                    session,
-                    primitive,
-                    dataset_root=staged_root,
-                    mocap_files=item.mocap_files,
-                    progress=task_progress(scope),
-                    **({"quality_target": "fault"} if is_fault else {}),
-                )
+                from .upload_progress import upload_phase
+                prepare_progress = task_progress(scope)
+                with upload_phase(prepare_progress, f"{scope}: staging {primitive}/{session_id}"):
+                    stage_session(
+                        session,
+                        primitive,
+                        dataset_root=staged_root,
+                        mocap_files=item.mocap_files,
+                        progress=prepare_progress,
+                        **({"quality_target": "fault"} if is_fault else {}),
+                    )
                 prepared.append(item)
             except (FileNotFoundError, OSError, ValueError, ModelScopePublisherError) as exc:
                 failures.append(f"{primitive}/{session_id}: {exc}")

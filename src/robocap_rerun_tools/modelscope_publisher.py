@@ -2592,6 +2592,10 @@ def upload_staged_dataset(
     progress: Callable[[str], None] | None = print,
     upload_turn: dict[tuple[str, str], str] | None = None,
 ) -> UploadResult:
+    from .upload_progress import terminal_progress, upload_phase
+
+    progress = terminal_progress(progress)
+    progress("[upload phase] Preparing upload: loading staging, authentication and remote metadata.")
     staged = load_staged_dataset(staged.dataset_root)
     resolved = settings or load_modelscope_settings()
     from .fault_publishing import TARGET_MARKER, fault_settings, validate_fault_staging
@@ -2635,9 +2639,10 @@ def upload_staged_dataset(
                 visibility=visibility,
                 license=license_name or None,
             )
-        remote_metadata = (
-            _download_remote_metadata(api, repository, target_revision) if exists else ""
-        )
+        with upload_phase(progress, "Reading remote metadata index"):
+            remote_metadata = (
+                _download_remote_metadata(api, repository, target_revision) if exists else ""
+            )
         remote_entries = _read_metadata_document(remote_metadata, f"remote {METADATA_NAME}")
         staged, batch_id = finalize_upload_batch(
             staged,
@@ -2648,10 +2653,11 @@ def upload_staged_dataset(
         )
         from .remote_backfill import reconcile_staged_sessions
 
-        retained = reconcile_staged_sessions(
-            staged, remote_entries, api=api, repository=repository,
-            revision=target_revision, progress=progress,
-        )
+        with upload_phase(progress, "Reconciling staged Sessions and retained remote files"):
+            retained = reconcile_staged_sessions(
+                staged, remote_entries, api=api, repository=repository,
+                revision=target_revision, progress=progress,
+            )
         allow_patterns = [f"{glob.escape(path)}/**" for path in staged.session_paths]
         if (staged.dataset_root / CALIBRATION_DIR_NAME).is_dir():
             allow_patterns.append(f"{CALIBRATION_DIR_NAME}/**")
@@ -2702,44 +2708,49 @@ def upload_staged_dataset(
             from .upload_verification import prepare_inventory, verify_and_repair
 
             phase_started = time.monotonic()
-            inventory = prepare_inventory(staged, progress, retained=retained)
+            with upload_phase(progress, "Local file hashing"):
+                inventory = prepare_inventory(staged, progress, retained=retained)
             if progress:
                 progress(f"[upload timing] Local hashing: {time.monotonic() - phase_started:.1f}s")
             phase_started = time.monotonic()
-            wait_for_upload_turn(
-                resolved, repository, target_revision, progress,
-                (upload_turn or {}).get((repository, target_revision)),
-            )
+            with upload_phase(progress, "Waiting for remote quiet / checking latest commit"):
+                wait_for_upload_turn(
+                    resolved, repository, target_revision, progress,
+                    (upload_turn or {}).get((repository, target_revision)),
+                )
             if progress:
                 progress(f"[upload timing] Waiting for upload turn: {time.monotonic() - phase_started:.1f}s")
             phase_started = time.monotonic()
-            commit_result = api.upload_folder(
-                repository,
-                "dataset",
-                staged.dataset_root,
-                path_in_repo="",
-                revision=target_revision,
-                commit_message=folder_commit_message,
-                allow_patterns=allow_patterns,
-                max_workers=max_workers,
-                use_cache=use_cache,
-                disable_tqdm=False,
-            )
+            with upload_phase(progress, "SDK file transfer and commits"):
+                commit_result = api.upload_folder(
+                    repository,
+                    "dataset",
+                    staged.dataset_root,
+                    path_in_repo="",
+                    revision=target_revision,
+                    commit_message=folder_commit_message,
+                    allow_patterns=allow_patterns,
+                    max_workers=max_workers,
+                    use_cache=use_cache,
+                    disable_tqdm=False,
+                )
             if progress:
                 progress(f"[upload timing] File transfer: {time.monotonic() - phase_started:.1f}s")
             phase_started = time.monotonic()
-            verify_and_repair(
-                staged, local_entries, inventory, api=api, repository=repository,
-                revision=target_revision, max_workers=max_workers, token=resolved.token,
-                progress=progress, check_metadata=False,
-            )
+            with upload_phase(progress, "Remote file verification / repair"):
+                verify_and_repair(
+                    staged, local_entries, inventory, api=api, repository=repository,
+                    revision=target_revision, max_workers=max_workers, token=resolved.token,
+                    progress=progress, check_metadata=False,
+                )
             if progress:
                 progress(f"[upload timing] Remote verification: {time.monotonic() - phase_started:.1f}s")
             phase_started = time.monotonic()
-            metadata_revision = publish_session_metadata(
-                local_entries, api=api, repository=repository, revision=target_revision,
-                settings=resolved, progress=progress, initial_readme=staged.readme_path,
-            )
+            with upload_phase(progress, "Shared metadata merge / Git LFS / push"):
+                metadata_revision = publish_session_metadata(
+                    local_entries, api=api, repository=repository, revision=target_revision,
+                    settings=resolved, progress=progress, initial_readme=staged.readme_path,
+                )
             if upload_turn is not None:
                 upload_turn[(repository, target_revision)] = metadata_revision
             if progress:
