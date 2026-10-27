@@ -488,8 +488,8 @@ def local_candidate_groups(source, path, groups):
 
 
 def publish_repair_metadata(api, settings, request, baseline, replacements, resolved_groups, log):
-    """Merge manifest and index in one non-force Git transaction at a fresh head."""
-    from .metadata_commit import _publish_changes, require_git
+    """Merge manifest and index and upload through the ModelScope SDK."""
+    from .metadata_commit import _publish_changes
 
     destination = request["session_path"]
     manifest_path = destination + "/manifest.json"
@@ -542,7 +542,6 @@ def publish_repair_metadata(api, settings, request, baseline, replacements, reso
             "metadata.jsonl": publisher._metadata_document(entries).encode("utf-8"),
         }
 
-    require_git()
     return _publish_changes(
         build,
         api=api,
@@ -554,10 +553,8 @@ def publish_repair_metadata(api, settings, request, baseline, replacements, reso
 
 
 def upload_replacements(api, settings, request, manifest, selected, resolved_groups, output, log):
-    from .metadata_commit import require_git
     from .upload_verification import verify_and_repair
 
-    require_git()
     destination = request["session_path"]
     for info in selected.values():
         if file_signature(info["path"]) != info["signature"]:

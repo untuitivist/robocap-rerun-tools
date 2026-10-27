@@ -276,9 +276,8 @@ def remote_file_path(requested: str, records: dict) -> str:
 
 
 def repair_one(api, settings, request, source, files, output, log):
-    from .metadata_commit import require_git, publish_session_metadata
+    from .metadata_commit import publish_session_metadata
 
-    require_git()
     destination = request["session_path"]
     manifest_remote = destination + "/manifest.json"
     downloaded = api.download_file(

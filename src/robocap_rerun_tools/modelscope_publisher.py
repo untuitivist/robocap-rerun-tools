@@ -1072,12 +1072,11 @@ to local `_prepared/<primitive_id>/<session_id>/`; the upload operation assigns 
 local-time batch ID to new sessions and moves them into their final `EgoMotionActions/` paths before
 uploading. Existing sessions keep their remote date/path during backfill. `_prepared/` is never uploaded.
 
-Session files are uploaded and verified first. Then Git merges `metadata.jsonl` against the latest
-remote revision by `(primitive_id, session_id)` and pushes without force. A concurrent commit causes
-a fresh merge and retry, retaining unrelated rows and unknown fields. Git and Git LFS are required.
-All uploading computers must use this version; older uploaders can still overwrite the shared index.
-Different Sessions can upload in parallel; concurrent writes to the same Session are not supported.
-Existing README.md is preserved; a missing card is initialized in the protected metadata commit.
+Session files are uploaded and verified first. Then `metadata.jsonl` is merged by
+`(primitive_id, session_id)` and uploaded through the ModelScope SDK, retaining unrelated rows.
+Operators must ensure only one computer uploads to the dataset at a time. No automatic quiet
+wait, distributed lock or Git conflict retry is used. Existing README.md is preserved;
+a missing card is initialized through the SDK.
 """
     )
 
@@ -2590,7 +2589,6 @@ def upload_staged_dataset(
     upload_time: datetime | None = None,
     upload_date: str | None = None,
     progress: Callable[[str], None] | None = print,
-    upload_turn: dict[tuple[str, str], str] | None = None,
 ) -> UploadResult:
     from .upload_progress import terminal_progress, upload_phase
 
@@ -2620,10 +2618,9 @@ def upload_staged_dataset(
         raise ValueError("Visibility must be private, internal, or public.")
     if max_workers is not None and max_workers < 1:
         raise ValueError("max_workers must be positive.")
-    from .metadata_commit import require_git, publish_session_metadata, wait_for_upload_turn
+    from .metadata_commit import publish_session_metadata
 
     try:
-        require_git()
         api = api or _hub_api(resolved)
         username = username or _username(api.whoami())
         exists = api.repo_exists(repository, "dataset")
@@ -2702,7 +2699,7 @@ def upload_staged_dataset(
         if progress is not None:
             progress(
                 f"Uploading {len(local_entries)} Session(s); shared metadata will be merged "
-                "with conflict protection after file verification."
+                "through the SDK after file verification."
             )
         try:
             from .upload_verification import prepare_inventory, verify_and_repair
@@ -2712,14 +2709,6 @@ def upload_staged_dataset(
                 inventory = prepare_inventory(staged, progress, retained=retained)
             if progress:
                 progress(f"[upload timing] Local hashing: {time.monotonic() - phase_started:.1f}s")
-            phase_started = time.monotonic()
-            with upload_phase(progress, "Waiting for remote quiet / checking latest commit"):
-                wait_for_upload_turn(
-                    resolved, repository, target_revision, progress,
-                    (upload_turn or {}).get((repository, target_revision)),
-                )
-            if progress:
-                progress(f"[upload timing] Waiting for upload turn: {time.monotonic() - phase_started:.1f}s")
             phase_started = time.monotonic()
             with upload_phase(progress, "SDK file transfer and commits"):
                 commit_result = api.upload_folder(
@@ -2746,13 +2735,11 @@ def upload_staged_dataset(
             if progress:
                 progress(f"[upload timing] Remote verification: {time.monotonic() - phase_started:.1f}s")
             phase_started = time.monotonic()
-            with upload_phase(progress, "Shared metadata merge / Git LFS / push"):
+            with upload_phase(progress, "Shared metadata merge / SDK upload"):
                 metadata_revision = publish_session_metadata(
                     local_entries, api=api, repository=repository, revision=target_revision,
                     settings=resolved, progress=progress, initial_readme=staged.readme_path,
                 )
-            if upload_turn is not None:
-                upload_turn[(repository, target_revision)] = metadata_revision
             if progress:
                 progress(f"[upload timing] Shared metadata: {time.monotonic() - phase_started:.1f}s")
             from .upload_verification import REPORT_NAME as verification_report_name
@@ -2763,7 +2750,7 @@ def upload_staged_dataset(
                 report.update(status="verified", metadata_revision=metadata_revision)
                 report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             if progress:
-                progress(f"Shared metadata published safely: {metadata_revision}")
+                progress(f"Shared metadata uploaded via SDK: {metadata_revision}")
         finally:
             staged.metadata_path.write_text(local_metadata, encoding="utf-8", newline="\n")
         if isinstance(commit_result, list) and len(commit_result) > 1 and progress is not None:

@@ -177,7 +177,6 @@ def test_metadata_patch_is_atomic_and_preserves_unrelated_current_fields(tmp_pat
         "_download_remote_metadata",
         lambda *a: "\n".join(map(json.dumps, entries)),
     )
-    monkeypatch.setattr(metadata_commit, "require_git", lambda: None)
     result = {}
 
     def publish(build, **kwargs):
@@ -312,7 +311,6 @@ def test_hash_verification_failure_does_not_publish_metadata(tmp_path, monkeypat
     source.mkdir()
     path = source / "original.db"
     path.write_bytes(b"healthy-original")
-    monkeypatch.setattr(metadata_commit, "require_git", lambda: None)
     monkeypatch.setattr(
         repair.publisher,
         "_download_remote_metadata",

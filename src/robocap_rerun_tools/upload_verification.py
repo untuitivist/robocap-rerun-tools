@@ -279,7 +279,7 @@ def verify_and_repair(
         try:
             if publisher.METADATA_NAME in issues:
                 if publish_metadata is None:
-                    raise RuntimeError("Metadata repair requires a conflict-safe publisher.")
+                    raise RuntimeError("Metadata repair requires a metadata publisher.")
                 publish_metadata()
                 failed_paths.remove(publisher.METADATA_NAME)
             if not failed_paths:

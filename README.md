@@ -91,11 +91,10 @@ This verifies transfer integrity, not video decodability or downstream Mocap par
 It does not add files omitted from the upload selection or fix damaged originals. No video compression
 is performed by verification or repair.
 
-Shared-index commits reuse a system-user Git object cache partitioned by endpoint, repository and
-branch. A cross-process file lock protects the local cache; every publication still fetches the
-latest remote head and uses non-force push/remerge protection. `[upload timing]` logs separate
-local hashing, file transfer, remote verification and index-publication time. Restart after updating
-the tool to use the new logic; existing uploads can finish normally.
+Shared-index updates use the ModelScope SDK. Operators must ensure only one computer uploads
+at a time; there is no remote-quiet wait, Git cache lock or concurrent-commit retry.
+`[upload timing]` logs separate local hashing, file transfer, remote verification and
+index-publication time. Terminal/Web phase heartbeats remain enabled.
 
 ## Fault Dataset Uploads
 
@@ -600,21 +599,15 @@ atomically before transfer. If transfer fails, retrying reuses the assigned date
 `YYYYMMDD_HHMMSS` paths remain readable but are no longer generated. `_prepared/` is excluded from
 upload.
 `EgoMotionActions/Demo/` is reserved for recordings migrated from the legacy non-batched layout.
-Different computers can upload different Sessions concurrently. Session files use the SDK and are
-verified first; the shared index is then merged against the latest Git revision and pushed without
-force. Concurrent changes trigger a fresh merge and retry (up to eight attempts), without reuploading
-videos. Git and Git LFS must be installed on every uploader, and all uploaders must be updated:
-old versions can still overwrite the index. Same-Session concurrent uploads are not supported.
+Only one computer may upload to a dataset at a time; operators coordinate this manually.
+Session files use the SDK and are verified first; the shared index is then merged and uploaded
+through the SDK. Dataset uploads do not require Git/LFS metadata transport.
 Batch uploads finish read-only remote integrity checks and local inspections before uploading
 the queued new/incomplete Sessions. These checks can overlap another computer's upload,
-although they still consume network resources. Before transfer, a remote commit within the
-last ten minutes triggers a ten-minute wait and another check, repeated until quiet.
-The current run's own previous successful batch is exempt. Metadata conflicts also wait
-before remerging. Waiting queries branch activity, not the whole file inventory.
-Uncommitted transfers are invisible in commit history, so this is not a distributed lock;
-non-force push protection remains necessary.
+although they still consume network resources. No automatic idle waiting, cross-computer
+locking or metadata conflict retries are performed.
 Existing README.md is preserved. If metadata publication fails, the operation reports failure;
-files remain remotely available for a retry. Metadata-only capture corrections use the same protection.
+files remain remotely available for a retry. Metadata-only capture corrections also use the SDK.
 
 The command uses `MODELSCOPE_REPO_ID` from `.env`. Pass `--repo-id owner/another-dataset` only to
 override the saved repository for one upload.
