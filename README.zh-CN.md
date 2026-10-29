@@ -505,6 +505,9 @@ UPLOAD_EMAIL_AUTH_CODE=
 UPLOAD_EMAIL_RECEIVER=your@qq.com
 ```
 
+统计中的批量上传支持“上传无误数据”和“上传错误数据”，默认只勾选前者。
+同时勾选时先上传正常库，再上传错误库，分别发送总结邮件；均未勾选时不执行上传。
+
 场景配置：白墙场景填 `ROBOCAP_COLLECTION_SITE=site_01`，绿幕场景填
 `ROBOCAP_COLLECTION_SITE=site_02`，二选一。普通与批量上传会同步写入
 `metadata.jsonl` 和每个 Session 的 `manifest.json` 中的 `collection_site`。

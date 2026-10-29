@@ -116,7 +116,7 @@ def test_web_app_builds_with_report_viewer(monkeypatch) -> None:
     assert concurrent_functions["preview_mocap_recovery"] == ("analysis", 1)
     assert concurrent_functions["copy_mocap_recovery"] == ("analysis", 1)
     for function_name in (
-        "bulk_upload_clean_modelscope_sessions",
+        "bulk_upload_selected_modelscope_sessions",
         "stage_modelscope_data",
         "upload_modelscope_data",
         "batch_update_remote_mocap_metadata",

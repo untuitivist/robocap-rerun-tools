@@ -429,7 +429,7 @@ LANGUAGE_PACKS = {
             "incomplete Sessions are "
             "re-uploaded for repair. Clear the skip option to re-upload complete Sessions too and "
             "replace matching metadata rows. A different date leaves the old remote directory "
-            "untouched. Each selected Session must satisfy `n:ratio*(n+1):n+1`. Batch size `1` "
+            "untouched. Normal uploads require `n:ratio*(n+1):n+1`; fault uploads use the fault checks. Batch size `1` "
             "uploads one Session per commit; a size at least equal to the candidate count uploads all "
             "candidates together; the default is `10`. While one batch uploads, the next is prepared "
             "in the background. Remote uploads remain serial. Raw files use NTFS hard links when "
@@ -603,7 +603,7 @@ LANGUAGE_PACKS = {
             "允许修改。自动匹配会把 Session 名中的 UTC 时间换算为东八区日期；无时间戳时使用日期框，"
             "不同日期分开成批。默认只跳过远端已有且完整的 Session；远端"
             "不完整项会重新上传修复。取消勾选后，完整项也会重新上传并替换同键元数据。改用其他"
-            "日期不会删除旧远端目录。选中的 Session 必须满足 `n:ratio*(n+1):n+1`。批次大小为 "
+            "日期不会删除旧远端目录。无误数据须满足 `n:ratio*(n+1):n+1`；错误数据沿用错误库检查规则。批次大小为 "
             "`1` 时逐个提交，大于等于候选总数时全量一次提交，默认 `10`。当前批次上传时会在后台"
             "准备下一批，但远端上传严格串行。原始文件优先使用 NTFS 硬链接，失败时逐字节复制。"
             "批次上传失败会重试 3 次，共 4 次仍失败则跳过该批并继续。默认选择 BVH/CSV/TRC/MP4 "
@@ -3169,6 +3169,31 @@ def group_batch_upload_candidates(
     ]
 
 
+def bulk_upload_selected_modelscope_sessions(
+    dataset_root, mocap_ratio, fill_missing_reports, language="中文",
+    upload_date=None, skip_existing=True, rebuild_all_reports=False,
+    batch_size=10, upload_workers="auto", auto_match_upload_date=False,
+    upload_clean=True, upload_fault=False,
+) -> Iterator[str]:
+    targets = [target for enabled, target in
+               ((upload_clean, "normal"), (upload_fault, "fault")) if enabled]
+    if not targets:
+        yield "请至少选择一种上传数据。 / Select at least one upload category."
+        return
+    completed = []
+    for target in targets:
+        title = "上传无误数据 / Normal dataset" if target == "normal" else "上传错误数据 / Fault dataset"
+        last_output = ""
+        for output in bulk_upload_clean_modelscope_sessions(
+            dataset_root, mocap_ratio, fill_missing_reports, language, upload_date,
+            skip_existing, rebuild_all_reports, batch_size, upload_workers,
+            auto_match_upload_date, quality_target=target,
+        ):
+            last_output = output
+            yield "\n\n".join([*completed, title, output])
+        completed.append(title + "\n" + last_output)
+
+
 def bulk_upload_clean_modelscope_sessions(
     dataset_root: object,
     mocap_ratio: int,
@@ -4647,6 +4672,13 @@ def build_app():
             )
             statistics_batch_help = gr.Markdown(labels["statistics_batch_help"])
             with gr.Row():
+                statistics_upload_clean = gr.Checkbox(
+                    label="上传无误数据 / Upload error-free data", value=True,
+                )
+                statistics_upload_fault = gr.Checkbox(
+                    label="上传错误数据 / Upload faulty data", value=False,
+                )
+            with gr.Row():
                 statistics_upload_date = gr.Textbox(
                     label=labels["statistics_upload_date"],
                     value=initial_upload_date,
@@ -4679,7 +4711,7 @@ def build_app():
                 )
             statistics_upload_output = gr.Textbox(label=labels["upload_output"], lines=16)
             statistics_batch_upload.click(
-                bulk_upload_clean_modelscope_sessions,
+                bulk_upload_selected_modelscope_sessions,
                 inputs=[
                     dataset_root,
                     statistics_mocap_ratio,
@@ -4691,6 +4723,8 @@ def build_app():
                     statistics_batch_size,
                     statistics_upload_workers,
                     statistics_auto_upload_date,
+                    statistics_upload_clean,
+                    statistics_upload_fault,
                 ],
                 outputs=statistics_upload_output,
                 concurrency_id="modelscope-upload",
