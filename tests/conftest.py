@@ -1,6 +1,15 @@
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def prevent_real_summary_emails(monkeypatch):
+    from robocap_rerun_tools import upload_email
+
+    def disabled(*args, **kwargs):
+        raise RuntimeError("Real SMTP disabled in tests")
+
+    monkeypatch.setattr(upload_email.smtplib, "SMTP_SSL", disabled)
+
 @pytest.fixture
 def fake_metadata_transport(monkeypatch, tmp_path):
     """Keep publisher tests offline while executing real index/manifest merge logic."""

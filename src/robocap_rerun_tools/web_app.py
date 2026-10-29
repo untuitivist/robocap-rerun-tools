@@ -3182,6 +3182,42 @@ def bulk_upload_clean_modelscope_sessions(
     auto_match_upload_date: bool = False,
     quality_target: str = "normal",
 ) -> Iterator[str]:
+    from .upload_email import BatchSummary, send_batch_summary
+    from .modelscope_publisher import DEFAULT_ENV_PATH
+
+    summary = BatchSummary(str(dataset_root), quality_target)
+    try:
+        for output in _bulk_upload_modelscope_sessions(
+            dataset_root, mocap_ratio, fill_missing_reports, language, upload_date,
+            skip_existing, rebuild_all_reports, batch_size, upload_workers,
+            auto_match_upload_date, quality_target, _summary=summary,
+        ):
+            summary.last_output = output
+            yield output
+    except Exception as exc:
+        summary.errors.append(f"任务中止：{type(exc).__name__}: {exc}")
+        print(send_batch_summary(summary, DEFAULT_ENV_PATH), flush=True)
+        raise
+    message = send_batch_summary(summary, DEFAULT_ENV_PATH)
+    print(message, flush=True)
+    yield summary.last_output + "\n" + message
+
+
+def _bulk_upload_modelscope_sessions(
+    dataset_root: object,
+    mocap_ratio: int,
+    fill_missing_reports: bool,
+    language: str = "中文",
+    upload_date: object | None = None,
+    skip_existing: bool = True,
+    rebuild_all_reports: bool = False,
+    batch_size: object = 10,
+    upload_workers: object = "auto",
+    auto_match_upload_date: bool = False,
+    quality_target: str = "normal",
+    *,
+    _summary,
+) -> Iterator[str]:
     from robocap_rerun_tools.fault_publishing import (
         collect_fault_quality,
         fault_settings,
@@ -3269,6 +3305,7 @@ def bulk_upload_clean_modelscope_sessions(
             yield render(snapshot)
 
     sessions = discover_session_directories(root)
+    _summary.discovered = len(sessions)
     add(f"统计根目录：{root}" if is_chinese else f"Statistics root: {root}")
     add(
         (
@@ -3293,6 +3330,7 @@ def bulk_upload_clean_modelscope_sessions(
 
     identified: list[tuple[Path, str, str]] = []
     excluded: list[str] = []
+    _summary.excluded = excluded
     for index, session in enumerate(sessions, start=1):
         add(
             f"[{index}/{len(sessions)}] 识别：{session.name}"
@@ -3329,6 +3367,7 @@ def bulk_upload_clean_modelscope_sessions(
         connection = connect_modelscope(fault_settings()) if is_fault else connect_modelscope()
     except (OSError, ValueError, ModelScopePublisherError) as exc:
         add(f"ModelScope authentication failed: {exc}")
+        _summary.errors.append(f"ModelScope authentication failed: {exc}")
         yield render()
         return
     add(
@@ -3392,6 +3431,7 @@ def bulk_upload_clean_modelscope_sessions(
 
     audit_error = audit_outcome.get("error")
     if audit_error is not None:
+        _summary.errors.append(f"Remote integrity audit failed: {audit_error}")
         add(
             f"远端 Session 完整性检查失败，未开始上传：{audit_error}"
             if is_chinese
@@ -3400,6 +3440,7 @@ def bulk_upload_clean_modelscope_sessions(
         yield render()
         return
     remote_audit = audit_outcome["result"]
+    _summary.target = str(connection.settings.repo_id)
 
     remote_statuses = {status.key: status for status in remote_audit.sessions}
     remote_keys = frozenset(remote_statuses)
@@ -3417,6 +3458,7 @@ def bulk_upload_clean_modelscope_sessions(
         remote_skipped = []
         pending = identified
     replacement_candidates = sum(1 for item in pending if (item[1], item[2]) in remote_keys)
+    _summary.skipped = len(remote_skipped)
     add(
         (
             f"远端索引：{remote_audit.indexed_session_count}；本地匹配：{len(remote_existing)}；"
@@ -3511,6 +3553,7 @@ def bulk_upload_clean_modelscope_sessions(
 
     ffprobe = resolve_ffprobe("ffprobe", "ffmpeg")
     candidates: list[BatchUploadCandidate] = []
+    session_durations = {}
     for index, (session, primitive, session_id) in enumerate(pending, start=1):
         add(
             f"[{index}/{len(pending)}] 筛选：{session.name}"
@@ -3518,6 +3561,7 @@ def bulk_upload_clean_modelscope_sessions(
             else f"[{index}/{len(pending)}] Filter: {session.name}"
         )
         statistic = summarize_session(root, session, ffprobe)
+        session_durations[session] = getattr(statistic, "duration_s", None)
         if is_fault:
             try:
                 collect_fault_quality(session)
@@ -3735,6 +3779,8 @@ def bulk_upload_clean_modelscope_sessions(
         for batch_index in range(1, len(batches) + 1):
             staged_root, prepared, prepare_failures = yield from wait_for_task(prepared_future)
             failed_items += len(prepare_failures)
+            _summary.failed += len(prepare_failures)
+            _summary.errors.extend(prepare_failures)
             for failure in prepare_failures:
                 add(f"- preparation failed: {failure}")
 
@@ -3748,6 +3794,11 @@ def bulk_upload_clean_modelscope_sessions(
                 upload_error = yield from wait_for_task(upload_future)
                 if upload_error is not None:
                     failed_items += len(prepared)
+                    _summary.failed += len(prepared)
+                    _summary.errors.extend(
+                        f"{item.primitive}/{item.session_id}: {upload_error}; reports: {staged_root}"
+                        for item in prepared
+                    )
                     add(
                         f"批次 {batch_index} 上传或校验未通过，跳过 {len(prepared)} 个 Session："
                         f"{upload_error}"
@@ -3760,6 +3811,14 @@ def bulk_upload_clean_modelscope_sessions(
                 else:
                     completed_replacements += sum(1 for item in prepared if item.is_replacement)
                     completed_new += sum(1 for item in prepared if not item.is_replacement)
+                    _summary.new = completed_new
+                    _summary.replaced = completed_replacements
+                    for item in prepared:
+                        duration = session_durations.get(item.session)
+                        if duration is None:
+                            _summary.unknown_durations += 1
+                        else:
+                            _summary.hours += duration / 3600
                     add(
                         f"批次 {batch_index}/{len(batches)} 上传并校验通过：{len(prepared)} 个 Session。"
                         if is_chinese

@@ -129,6 +129,7 @@ def fake_repositories(tmp_path, monkeypatch):
     apis = {settings.repo_id: RemoteApi(tmp_path / label) for label, settings in (("normal", normal), ("fault", fault))}
     for api in apis.values():
         api.files["metadata.jsonl"] = b""
+        api.files["README.md"] = b"Dataset card"
         api.repo_exists = lambda *args: True
         api.whoami = lambda: SimpleNamespace(username="owner")
     monkeypatch.setattr(publisher, "load_modelscope_settings", lambda *args: normal)

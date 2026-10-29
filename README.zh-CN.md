@@ -495,6 +495,16 @@ MODELSCOPE_REPO_ID=owner/egomocap
 ROBOCAP_COLLECTION_SITE=
 ```
 
+批量上传结束后可通过 QQ 邮箱发送总结，包含 Session 数、成功上传的数据小时数、总耗时、
+失败与排除详情，并附文本报告。时长不包含完整跳过的 Session，邮件失败不影响上传结果。
+在 `.env` 中配置（授权码只留本机，不提交）：
+
+```dotenv
+UPLOAD_EMAIL_SENDER=your@qq.com
+UPLOAD_EMAIL_AUTH_CODE=
+UPLOAD_EMAIL_RECEIVER=your@qq.com
+```
+
 场景配置：白墙场景填 `ROBOCAP_COLLECTION_SITE=site_01`，绿幕场景填
 `ROBOCAP_COLLECTION_SITE=site_02`，二选一。普通与批量上传会同步写入
 `metadata.jsonl` 和每个 Session 的 `manifest.json` 中的 `collection_site`。
