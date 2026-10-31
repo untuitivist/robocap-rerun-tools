@@ -354,16 +354,16 @@ recursively discovers `mocap*` directories containing TRC/CSV/BVH and globally p
 with deficient Sessions by nearest filesystem creation time to the Session name's
 `YYYYMMDD_HHMMSS`. Session-name timestamps are interpreted as UTC; candidate filesystem creation
 times are displayed in UTC+08:00, and timezone-aware instants are compared. Deficient Sessions include missing motion files and inspected frame-count
-differences. Preview shows every delta and every directory replacement before moving. If the
-matched candidate has the same directory name as the existing `mocap*`, it is skipped. Otherwise,
-the existing directory is replaced after explicit confirmation. Only `.trc`, `.bvh`, `.csv`, and
+differences. Preview shows time deltas and destination paths. Same-name directories are merged at
+file level after confirmation, never deleted or replaced. Only `.trc`, `.bvh`, `.csv`, and
 `.mp4` exports are moved (case-insensitive), preserving filenames and relative paths;
 all timestamp inspection HTML reports under that Session's `_artifacts` are invalidated so Statistics
-can rebuild them. Reports are backed up during moving and restored together with the original Mocap
-directories and already-moved source files if moving fails. If restoration fails, destination and
+can rebuild them. Reports and overwritten files are backed up during moving and restored together
+with already-moved source files if moving fails. If restoration fails, destination and
 backups are retained for manual recovery. A Session with multiple `mocap*` directories is also
-recovered: all existing directories are listed in preview, then replaced by the one matched
-candidate. Unparseable times and unmatched items remain for manual review. Source and dataset roots
+processed, but all existing directories and unmatched files remain intact. Exports are moved into
+`session/candidate-name`, overwriting identical relative file paths only.
+Unparseable times and unmatched items remain for manual review. Source and dataset roots
 may not overlap. Source recording directories and non-whitelisted files remain in place.
 The final output section always lists
 candidate `mocap*` directories without TRC/CSV/BVH. Preview and move actions stream bounded progress

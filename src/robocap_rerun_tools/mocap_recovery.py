@@ -222,12 +222,7 @@ def build_recovery_plan(
 
     matches: list[RecoveryMatch] = []
     skipped_same_name: list[RecoveryMatch] = []
-    for match in matched_pairs:
-        existing = match.target.existing_directories
-        if len(existing) == 1 and existing[0].name.casefold() == match.candidate.path.name.casefold():
-            skipped_same_name.append(match)
-        else:
-            matches.append(match)
+    matches.extend(matched_pairs)
 
     return RecoveryPlan(
         matches=tuple(sorted(matches, key=lambda item: item.target.session_timestamp)),
@@ -247,8 +242,7 @@ def destination_for_match(match: RecoveryMatch) -> Path:
 
 def copy_conflicts(match: RecoveryMatch) -> tuple[Path, ...]:
     destination = destination_for_match(match)
-    existing = {path.resolve() for path in match.target.existing_directories}
-    return (destination,) if destination.exists() and destination.resolve() not in existing else ()
+    return (destination,) if destination.exists() and not destination.is_dir() else ()
 
 
 def _move_candidate_exports(
@@ -256,6 +250,8 @@ def _move_candidate_exports(
     destination: Path,
     progress: RecoveryProgress | None,
     moved: list[tuple[Path, Path]],
+    backups: list[tuple[Path, Path]],
+    attempted: list[Path],
 ) -> None:
     files = sorted(
         (path for path in source.rglob("*")
@@ -287,12 +283,19 @@ def _move_candidate_exports(
         shutil.copystat(source_path, destination_path)
         return str(destination_path)
 
-    destination.mkdir()
+    destination.mkdir(exist_ok=True)
     for path in files:
         target = destination / path.relative_to(source)
         target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if not target.is_file() or target.is_symlink():
+                raise FileExistsError(f"Refusing to overwrite non-regular file: {target}")
+            backup = target.with_name(f".{target.name}.robocap-recovery-backup-{uuid.uuid4().hex}")
+            target.rename(backup)
+            backups.append((target, backup))
         size = path.stat().st_size
         before = copied_bytes
+        attempted.append(target)
         shutil.move(str(path), str(target), copy_function=copy_file)
         moved.append((path, target))
         copied_bytes = before + size
@@ -308,38 +311,31 @@ def move_recovery_match(
     if conflicts:
         raise FileExistsError(f"Refusing to overwrite existing paths: {list(conflicts)}")
     destination = destination_for_match(match)
-    existing = match.target.existing_directories
     backups: list[tuple[Path, Path]] = []
     report_backups: list[tuple[Path, Path]] = []
     moved: list[tuple[Path, Path]] = []
-    copy_started = False
+    attempted: list[Path] = []
     try:
-        for directory in existing:
-            backup = directory.parent / (
-                f".{directory.name}.robocap-recovery-backup-{uuid.uuid4().hex}"
-            )
-            directory.rename(backup)
-            backups.append((directory, backup))
         for report in match.target.report_paths:
             backup = report.parent / f".{report.name}.robocap-recovery-backup-{uuid.uuid4().hex}"
             report.rename(backup)
             report_backups.append((report, backup))
-        copy_started = True
-        _move_candidate_exports(match.candidate.path, destination, progress, moved)
+        _move_candidate_exports(match.candidate.path, destination, progress, moved, backups, attempted)
     except BaseException:
         # Restore moved exports before removing the partial destination. If restoring
         # fails, leave both destination and backups intact for manual recovery.
         for source_file, destination_file in reversed(moved):
             shutil.move(str(destination_file), str(source_file))
-        if copy_started and destination.exists():
-            shutil.rmtree(destination)
+        for target in reversed(attempted):
+            if target.exists():
+                target.unlink()
         for report, backup in reversed(report_backups):
             backup.rename(report)
-        for directory, backup in reversed(backups):
-            backup.rename(directory)
+        for target, backup in reversed(backups):
+            backup.rename(target)
         raise
     for _, backup in report_backups:
         backup.unlink()
     for _, backup in backups:
-        shutil.rmtree(backup)
+        backup.unlink()
     return destination

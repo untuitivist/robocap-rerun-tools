@@ -93,7 +93,7 @@ def test_recovery_plan_moves_exports_and_preserves_recording_directory(
     ]
     assert (missing / "mocap-first" / "body.trc").read_text(encoding="utf-8") == "first"
     assert not missing_report.exists()
-    assert not existing_empty.exists()
+    assert existing_empty.is_dir()
     assert (empty / "Mocap-second" / "nested" / "body.CSV").read_text(
         encoding="utf-8"
     ) == "second"
@@ -106,8 +106,8 @@ def test_recovery_plan_moves_exports_and_preserves_recording_directory(
     assert (first / "project.xrs").read_bytes() == b"project"
     assert not (destinations[0] / "recording.raw").exists()
     assert not (destinations[0] / "project.xrs").exists()
-    assert not (ambiguous / "mocap-a").exists()
-    assert not (ambiguous / "mocap-b").exists()
+    assert (ambiguous / "mocap-a").is_dir()
+    assert (ambiguous / "mocap-b").is_dir()
     assert (ambiguous / "mocap-unused" / "body.bvh").is_file()
 
 
@@ -132,7 +132,7 @@ def test_recovery_copy_replaces_existing_directory_with_different_name(tmp_path:
     copied = recovery.move_recovery_match(match)
 
     assert copied == tmp_path / "session" / "mocap-candidate"
-    assert not destination.exists()
+    assert (destination / "body.trc").read_text() == "old"
     assert (copied / "body.trc").read_text(encoding="utf-8") == "new"
 
 
@@ -169,11 +169,10 @@ def test_recovery_plan_skips_same_name_and_includes_frame_difference(
 
     plan = recovery.build_recovery_plan(dataset_root, source_root, [same, different])
 
-    assert [(item.target.session_dir, item.candidate.path.name) for item in plan.skipped_same_name] == [
-        (same, "mocap-same")
-    ]
-    assert plan.skipped_same_name[0].target.report_paths == (same_report,)
+    assert plan.skipped_same_name == ()
+    assert plan.matches[0].target.report_paths == (same_report,)
     assert [(item.target.session_dir, item.candidate.path.name) for item in plan.matches] == [
+        (same, "mocap-same"),
         (different, "mocap-new")
     ]
     assert same_report.is_file()
@@ -212,8 +211,8 @@ def test_recovery_copy_replaces_all_existing_mocap_directories(tmp_path: Path) -
     )
 
     assert copied == session / "mocap-new"
-    assert not first.exists()
-    assert not second.exists()
+    assert (first / "a.trc").read_text() == "a"
+    assert (second / "b.bvh").read_text() == "b"
     assert (copied / "new.csv").read_text(encoding="utf-8") == "new"
     assert not report.exists()
     copy_events = [event for event in events if event[0] == "move_bytes"]
@@ -267,7 +266,7 @@ def test_recovery_copy_restores_all_existing_directories_on_copy_failure(
     assert (candidate / "second.trc").read_text() == "second"
     assert (first / "a.trc").read_text(encoding="utf-8") == "a"
     assert (second / "b.bvh").read_text(encoding="utf-8") == "b"
-    assert not (session / "mocap-new").exists()
+    assert list((session / "mocap-new").iterdir()) == []
     assert report.read_text(encoding="utf-8") == "stale"
 
 
@@ -290,6 +289,43 @@ def test_session_utc_matches_creation_time_in_utc_plus_8(tmp_path: Path, monkeyp
     assert session_time == datetime(2026, 9, 14, 10, 0, tzinfo=UTC)
     assert creation_time.isoformat() == "2026-09-14T18:00:00+08:00"
     assert (session_time - creation_time).total_seconds() == 0
+
+
+@pytest.mark.parametrize("fail_second", [False, True])
+def test_move_merges_existing_directory_and_restores_overwrites(tmp_path, monkeypatch, fail_second):
+    source = tmp_path / "recording" / "mocap-new"
+    session = tmp_path / "session"
+    destination = session / "mocap-new"
+    source.mkdir(parents=True)
+    destination.mkdir(parents=True)
+    (source / "a.trc").write_bytes(b"new")
+    (source / "b.csv").write_bytes(b"csv")
+    (destination / "a.trc").write_bytes(b"old")
+    (destination / "keep.mp4").write_bytes(b"keep")
+    match = recovery.RecoveryMatch(
+        recovery.RecoveryTarget(session, _utc_datetime("20260914_100000"), (destination,)),
+        recovery.MocapCandidate(source, _utc_datetime("20260914_100000")), 0.0,
+    )
+    real_move = recovery.shutil.move
+
+    def move(src, dst, **kwargs):
+        if fail_second and Path(src) == source / "b.csv":
+            raise OSError("failed second file")
+        return real_move(src, dst, **kwargs)
+
+    monkeypatch.setattr(recovery.shutil, "move", move)
+    if fail_second:
+        with pytest.raises(OSError, match="failed second file"):
+            recovery.move_recovery_match(match)
+        assert (source / "a.trc").read_bytes() == b"new"
+        assert (destination / "a.trc").read_bytes() == b"old"
+    else:
+        recovery.move_recovery_match(match)
+        assert (destination / "a.trc").read_bytes() == b"new"
+        assert (destination / "b.csv").read_bytes() == b"csv"
+        assert not (source / "a.trc").exists()
+    assert (destination / "keep.mp4").read_bytes() == b"keep"
+    assert not list(destination.glob(".*backup*"))
 
 
 @pytest.mark.parametrize("fail_second", [False, True])
@@ -323,7 +359,7 @@ def test_export_move_across_volumes(tmp_path: Path, monkeypatch, fail_second: bo
             recovery.move_recovery_match(match)
         assert (source / "a.trc").read_bytes() == b"trajectory"
         assert (source / "b.mp4").read_bytes() == b"video"
-        assert not (session / "mocap-new").exists()
+        assert list((session / "mocap-new").iterdir()) == []
     else:
         destination = recovery.move_recovery_match(match)
         assert (destination / "a.trc").read_bytes() == b"trajectory"

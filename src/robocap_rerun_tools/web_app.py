@@ -410,14 +410,14 @@ LANGUAGE_PACKS = {
             "Match Sessions with missing, unusable, frame-mismatched, or multiple mocap directories "
             "to `mocap*` directories under another root. Session `YYYYMMDD_HHMMSS` is UTC and is "
             "compared with each folder's filesystem creation time shown in UTC+08:00. Each candidate "
-            "is used at most once. Preview the directories to be deleted, then explicitly confirm "
-            "replacement. Move only .trc/.bvh/.csv/.mp4 exports; retain source directories and other files."
+            "is used at most once. Move only .trc/.bvh/.csv/.mp4 exports, overwriting matching files. "
+            "Retain source and destination directories and all other files."
         ),
         "statistics_recovery_source": "Mocap recovery source root",
         "statistics_recovery_preview": "Preview Mocap matches",
         "statistics_recovery_copy": "Move matched Mocap exports",
         "statistics_recovery_confirm_replace": (
-            "Confirm deleting/replacing the existing mocap* directories and invalid reports listed in preview"
+            "Confirm overwriting matching export files and removing invalid reports listed in preview"
         ),
         "statistics_recovery_output": "Mocap recovery output",
         "statistics_batch_help": (
@@ -590,13 +590,13 @@ LANGUAGE_PACKS = {
         "statistics_recovery_help": (
             "为没有 mocap*、mocap* 中没有 TRC/BVH/CSV、帧数不对齐或存在多个 mocap* 的 Session，"
             "从另一目录递归寻找候选。Session 名称中的 `YYYYMMDD_HHMMSS` 按 UTC 解释，文件夹创建"
-            "时间按东八区显示后比较，每个候选只使用一次。请先预览将删除的目录，再明确勾选确认并替换。"
-            "仅移动 .trc/.bvh/.csv/.mp4 导出文件，保留录制源目录和其他文件。"
+            "时间按东八区显示后比较，每个候选只使用一次。仅移动 .trc/.bvh/.csv/.mp4 导出文件，"
+            "同路径文件覆盖，保留源目录、现有 mocap 目录和其他文件。"
         ),
         "statistics_recovery_source": "待匹配 Mocap 根目录",
         "statistics_recovery_preview": "预览 Mocap 匹配",
         "statistics_recovery_copy": "移动匹配的 Mocap 导出文件",
-        "statistics_recovery_confirm_replace": "确认删除/替换预览中的现有 mocap* 文件夹和失效检查报告",
+        "statistics_recovery_confirm_replace": "确认覆盖匹配的导出文件并删除预览中的失效检查报告",
         "statistics_recovery_output": "Mocap 补回输出",
         "statistics_batch_help": (
             "批量上传先读取远端 metadata.jsonl，再逐项核对匹配 Session 的 manifest、声明文件、"
@@ -2419,15 +2419,10 @@ def _mocap_recovery_report(
         "",
     ]
     for index, match in enumerate(plan.matches, start=1):
-        existing = match.target.existing_directories
         mode = (
-            f"删除并替换现有目录 {', '.join(str(path) for path in existing)}"
-            if existing and is_chinese
-            else f"delete and replace existing directories {', '.join(str(path) for path in existing)}"
-            if existing
-            else "仅移动 TRC/BVH/CSV/MP4，保留源目录和其他文件"
+            "文件级移动 TRC/BVH/CSV/MP4，同路径覆盖，保留所有现有目录及其他文件"
             if is_chinese
-            else "move TRC/BVH/CSV/MP4 only; retain source directories and other files"
+            else "move TRC/BVH/CSV/MP4; overwrite matching files; retain directories and other files"
         )
         destination = destination_for_match(match)
         lines.append(
@@ -2724,11 +2719,11 @@ def copy_mocap_recovery(
     ]
     if deletions and not confirm_replace:
         message = (
-            "存在需要删除/替换的现有 mocap* 文件夹或失效检查报告。请先预览列表并勾选确认。"
+            "将执行导出文件覆盖或删除失效检查报告。请先预览列表并勾选确认；不删除现有 mocap 目录。"
             if language == "中文"
             else (
-                "Existing mocap* directories or invalid inspection reports must be deleted. "
-                "Preview the list and confirm replacement first."
+                "Export files may be overwritten and invalid reports removed. "
+                "Preview and confirm first; existing mocap directories are retained."
             )
         )
         yield "\n".join(
