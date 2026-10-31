@@ -100,7 +100,7 @@ def test_recovery_plan_moves_exports_and_preserves_recording_directory(
     assert not (first / "body.trc").exists()
     assert not (second / "nested" / "body.CSV").exists()
     assert (second / "nested").is_dir()
-    assert not (first / "camera.MP4").exists()
+    assert (first / "camera.MP4").read_bytes() == b"video"
     assert (destinations[0] / "camera.MP4").read_bytes() == b"video"
     assert (first / "recording.raw").read_bytes() == b"original"
     assert (first / "project.xrs").read_bytes() == b"project"
@@ -302,6 +302,8 @@ def test_move_merges_existing_directory_and_restores_overwrites(tmp_path, monkey
     (source / "b.csv").write_bytes(b"csv")
     (destination / "a.trc").write_bytes(b"old")
     (destination / "keep.mp4").write_bytes(b"keep")
+    (source / "a0.MP4").write_bytes(b"new video")
+    (destination / "a0.MP4").write_bytes(b"old video")
     match = recovery.RecoveryMatch(
         recovery.RecoveryTarget(session, _utc_datetime("20260914_100000"), (destination,)),
         recovery.MocapCandidate(source, _utc_datetime("20260914_100000")), 0.0,
@@ -319,11 +321,14 @@ def test_move_merges_existing_directory_and_restores_overwrites(tmp_path, monkey
             recovery.move_recovery_match(match)
         assert (source / "a.trc").read_bytes() == b"new"
         assert (destination / "a.trc").read_bytes() == b"old"
+        assert (destination / "a0.MP4").read_bytes() == b"old video"
     else:
         recovery.move_recovery_match(match)
         assert (destination / "a.trc").read_bytes() == b"new"
         assert (destination / "b.csv").read_bytes() == b"csv"
         assert not (source / "a.trc").exists()
+        assert (destination / "a0.MP4").read_bytes() == b"new video"
+    assert (source / "a0.MP4").read_bytes() == b"new video"
     assert (destination / "keep.mp4").read_bytes() == b"keep"
     assert not list(destination.glob(".*backup*"))
 
@@ -365,7 +370,7 @@ def test_export_move_across_volumes(tmp_path: Path, monkeypatch, fail_second: bo
         assert (destination / "a.trc").read_bytes() == b"trajectory"
         assert (destination / "b.mp4").read_bytes() == b"video"
         assert not (source / "a.trc").exists()
-        assert not (source / "b.mp4").exists()
+        assert (source / "b.mp4").read_bytes() == b"video"
     assert (source / "recording.raw").read_bytes() == b"raw"
 
 

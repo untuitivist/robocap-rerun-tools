@@ -355,8 +355,9 @@ with deficient Sessions by nearest filesystem creation time to the Session name'
 `YYYYMMDD_HHMMSS`. Session-name timestamps are interpreted as UTC; candidate filesystem creation
 times are displayed in UTC+08:00, and timezone-aware instants are compared. Deficient Sessions include missing motion files and inspected frame-count
 differences. Preview shows time deltas and destination paths. Same-name directories are merged at
-file level after confirmation, never deleted or replaced. Only `.trc`, `.bvh`, `.csv`, and
-`.mp4` exports are moved (case-insensitive), preserving filenames and relative paths;
+file level after confirmation, never deleted or replaced. `.trc`, `.bvh`, and `.csv` exports
+are moved; `.mp4` videos are copied with source videos retained (case-insensitive).
+Both preserve filenames and relative paths;
 all timestamp inspection HTML reports under that Session's `_artifacts` are invalidated so Statistics
 can rebuild them. Reports and overwritten files are backed up during moving and restored together
 with already-moved source files if moving fails. If restoration fails, destination and

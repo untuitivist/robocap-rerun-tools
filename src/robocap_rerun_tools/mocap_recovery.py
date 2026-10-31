@@ -296,8 +296,11 @@ def _move_candidate_exports(
         size = path.stat().st_size
         before = copied_bytes
         attempted.append(target)
-        shutil.move(str(path), str(target), copy_function=copy_file)
-        moved.append((path, target))
+        if path.suffix.casefold() == ".mp4":
+            copy_file(str(path), str(target))
+        else:
+            shutil.move(str(path), str(target), copy_function=copy_file)
+            moved.append((path, target))
         copied_bytes = before + size
         if progress is not None:
             progress("move_bytes", copied_bytes, total_bytes, str(path.relative_to(source)))

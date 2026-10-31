@@ -410,7 +410,7 @@ LANGUAGE_PACKS = {
             "Match Sessions with missing, unusable, frame-mismatched, or multiple mocap directories "
             "to `mocap*` directories under another root. Session `YYYYMMDD_HHMMSS` is UTC and is "
             "compared with each folder's filesystem creation time shown in UTC+08:00. Each candidate "
-            "is used at most once. Move only .trc/.bvh/.csv/.mp4 exports, overwriting matching files. "
+            "is used at most once. Move .trc/.bvh/.csv exports and copy .mp4 videos, overwriting matching files. "
             "Retain source and destination directories and all other files."
         ),
         "statistics_recovery_source": "Mocap recovery source root",
@@ -590,7 +590,7 @@ LANGUAGE_PACKS = {
         "statistics_recovery_help": (
             "为没有 mocap*、mocap* 中没有 TRC/BVH/CSV、帧数不对齐或存在多个 mocap* 的 Session，"
             "从另一目录递归寻找候选。Session 名称中的 `YYYYMMDD_HHMMSS` 按 UTC 解释，文件夹创建"
-            "时间按东八区显示后比较，每个候选只使用一次。仅移动 .trc/.bvh/.csv/.mp4 导出文件，"
+            "时间按东八区显示后比较，每个候选只使用一次。移动 .trc/.bvh/.csv 导出文件，复制 .mp4 并保留源视频，"
             "同路径文件覆盖，保留源目录、现有 mocap 目录和其他文件。"
         ),
         "statistics_recovery_source": "待匹配 Mocap 根目录",
@@ -2420,9 +2420,9 @@ def _mocap_recovery_report(
     ]
     for index, match in enumerate(plan.matches, start=1):
         mode = (
-            "文件级移动 TRC/BVH/CSV/MP4，同路径覆盖，保留所有现有目录及其他文件"
+            "移动 TRC/BVH/CSV，复制 MP4 并保留源视频；同路径覆盖，保留现有目录及其他文件"
             if is_chinese
-            else "move TRC/BVH/CSV/MP4; overwrite matching files; retain directories and other files"
+            else "move TRC/BVH/CSV; copy MP4 and retain source videos; overwrite matching files only"
         )
         destination = destination_for_match(match)
         lines.append(
