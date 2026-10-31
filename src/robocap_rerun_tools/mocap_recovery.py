@@ -15,6 +15,7 @@ SESSION_TIMESTAMP_PATTERN = re.compile(r"(?<!\d)(\d{8}_\d{6})(?!\d)")
 SESSION_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 CREATION_TIMEZONE = timezone(timedelta(hours=8), name="UTC+08:00")
 MOTION_SUFFIXES = frozenset({".trc", ".bvh", ".csv"})
+RECOVERY_EXPORT_SUFFIXES = MOTION_SUFFIXES | {".mp4"}
 TIMESTAMP_REPORT_NAME = "timestamp_anomaly_detail_table.html"
 RecoveryProgress = Callable[[str, int, int | None, str], None]
 
@@ -250,19 +251,25 @@ def copy_conflicts(match: RecoveryMatch) -> tuple[Path, ...]:
     return (destination,) if destination.exists() and destination.resolve() not in existing else ()
 
 
-def _copy_candidate_directory(
+def _move_candidate_exports(
     source: Path,
     destination: Path,
     progress: RecoveryProgress | None,
+    moved: list[tuple[Path, Path]],
 ) -> None:
-    if progress is None:
-        shutil.copytree(source, destination, copy_function=shutil.copy2)
-        return
-
-    files = [path for path in source.rglob("*") if path.is_file()]
+    files = sorted(
+        (path for path in source.rglob("*")
+         if path.is_file() and path.suffix.casefold() in RECOVERY_EXPORT_SUFFIXES),
+        key=lambda path: str(path).casefold(),
+    )
+    if not any(path.suffix.casefold() in MOTION_SUFFIXES for path in files):
+        raise ValueError(f"No TRC/BVH/CSV exports remain in {source}")
+    if any(path.is_symlink() for path in files):
+        raise ValueError(f"Refusing to move linked exports from {source}")
     total_bytes = sum(path.stat().st_size for path in files)
     copied_bytes = 0
-    progress("copy_bytes", 0, total_bytes, str(source))
+    if progress is not None:
+        progress("move_bytes", 0, total_bytes, str(source))
 
     def copy_file(source_file: str, destination_file: str) -> str:
         nonlocal copied_bytes
@@ -272,19 +279,28 @@ def _copy_candidate_directory(
             while chunk := reader.read(4 * 1024 * 1024):
                 writer.write(chunk)
                 copied_bytes += len(chunk)
-                progress(
-                    "copy_bytes",
-                    copied_bytes,
-                    total_bytes,
-                    str(source_path.relative_to(source)),
-                )
+                if progress is not None:
+                    progress(
+                        "move_bytes", copied_bytes, total_bytes,
+                        str(source_path.relative_to(source)),
+                    )
         shutil.copystat(source_path, destination_path)
         return str(destination_path)
 
-    shutil.copytree(source, destination, copy_function=copy_file)
+    destination.mkdir()
+    for path in files:
+        target = destination / path.relative_to(source)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        size = path.stat().st_size
+        before = copied_bytes
+        shutil.move(str(path), str(target), copy_function=copy_file)
+        moved.append((path, target))
+        copied_bytes = before + size
+        if progress is not None:
+            progress("move_bytes", copied_bytes, total_bytes, str(path.relative_to(source)))
 
 
-def copy_recovery_match(
+def move_recovery_match(
     match: RecoveryMatch,
     progress: RecoveryProgress | None = None,
 ) -> Path:
@@ -295,6 +311,7 @@ def copy_recovery_match(
     existing = match.target.existing_directories
     backups: list[tuple[Path, Path]] = []
     report_backups: list[tuple[Path, Path]] = []
+    moved: list[tuple[Path, Path]] = []
     copy_started = False
     try:
         for directory in existing:
@@ -308,8 +325,12 @@ def copy_recovery_match(
             report.rename(backup)
             report_backups.append((report, backup))
         copy_started = True
-        _copy_candidate_directory(match.candidate.path, destination, progress)
+        _move_candidate_exports(match.candidate.path, destination, progress, moved)
     except BaseException:
+        # Restore moved exports before removing the partial destination. If restoring
+        # fails, leave both destination and backups intact for manual recovery.
+        for source_file, destination_file in reversed(moved):
+            shutil.move(str(destination_file), str(source_file))
         if copy_started and destination.exists():
             shutil.rmtree(destination)
         for report, backup in reversed(report_backups):

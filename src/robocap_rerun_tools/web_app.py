@@ -411,11 +411,11 @@ LANGUAGE_PACKS = {
             "to `mocap*` directories under another root. Session `YYYYMMDD_HHMMSS` is UTC and is "
             "compared with each folder's filesystem creation time shown in UTC+08:00. Each candidate "
             "is used at most once. Preview the directories to be deleted, then explicitly confirm "
-            "replacement."
+            "replacement. Move only .trc/.bvh/.csv/.mp4 exports; retain source directories and other files."
         ),
         "statistics_recovery_source": "Mocap recovery source root",
         "statistics_recovery_preview": "Preview Mocap matches",
-        "statistics_recovery_copy": "Copy matched Mocap directories",
+        "statistics_recovery_copy": "Move matched Mocap exports",
         "statistics_recovery_confirm_replace": (
             "Confirm deleting/replacing the existing mocap* directories and invalid reports listed in preview"
         ),
@@ -591,10 +591,11 @@ LANGUAGE_PACKS = {
             "为没有 mocap*、mocap* 中没有 TRC/BVH/CSV、帧数不对齐或存在多个 mocap* 的 Session，"
             "从另一目录递归寻找候选。Session 名称中的 `YYYYMMDD_HHMMSS` 按 UTC 解释，文件夹创建"
             "时间按东八区显示后比较，每个候选只使用一次。请先预览将删除的目录，再明确勾选确认并替换。"
+            "仅移动 .trc/.bvh/.csv/.mp4 导出文件，保留录制源目录和其他文件。"
         ),
         "statistics_recovery_source": "待匹配 Mocap 根目录",
         "statistics_recovery_preview": "预览 Mocap 匹配",
-        "statistics_recovery_copy": "复制匹配的 Mocap 文件夹",
+        "statistics_recovery_copy": "移动匹配的 Mocap 导出文件",
         "statistics_recovery_confirm_replace": "确认删除/替换预览中的现有 mocap* 文件夹和失效检查报告",
         "statistics_recovery_output": "Mocap 补回输出",
         "statistics_batch_help": (
@@ -2407,11 +2408,11 @@ def _mocap_recovery_report(
         f"Session 根目录：{dataset_root}" if is_chinese else f"Session root: {dataset_root}",
         f"候选根目录：{source_root}" if is_chinese else f"Candidate root: {source_root}",
         (
-            f"待复制/替换：{len(plan.matches)}；同名跳过：{len(plan.skipped_same_name)}；"
+            f"待移动/替换：{len(plan.matches)}；同名跳过：{len(plan.skipped_same_name)}；"
             f"已完成：{copied}"
             if is_chinese
             else (
-                f"Pending copy/replace: {len(plan.matches)}; same-name skipped: "
+                f"Pending move/replace: {len(plan.matches)}; same-name skipped: "
                 f"{len(plan.skipped_same_name)}; completed: {copied}"
             )
         ),
@@ -2424,9 +2425,9 @@ def _mocap_recovery_report(
             if existing and is_chinese
             else f"delete and replace existing directories {', '.join(str(path) for path in existing)}"
             if existing
-            else "复制整个文件夹"
+            else "仅移动 TRC/BVH/CSV/MP4，保留源目录和其他文件"
             if is_chinese
-            else "copy complete directory"
+            else "move TRC/BVH/CSV/MP4 only; retain source directories and other files"
         )
         destination = destination_for_match(match)
         lines.append(
@@ -2455,7 +2456,7 @@ def _mocap_recovery_report(
                 f"delta={match.delta_seconds:.3f}s"
             )
     if copy_log:
-        lines.extend(["", "复制日志：" if is_chinese else "Copy log:"])
+        lines.extend(["", "移动日志：" if is_chinese else "Move log:"])
         lines.extend(f"- {item}" for item in copy_log)
 
     sections = (
@@ -2649,23 +2650,23 @@ def _stream_mocap_recovery_copy(
     history: deque[str],
     language: str,
 ) -> Generator[str, None, Path]:
-    from robocap_rerun_tools.mocap_recovery import copy_recovery_match
+    from robocap_rerun_tools.mocap_recovery import move_recovery_match
 
     events: queue.Queue[tuple[int, int | None, str]] = queue.Queue(maxsize=128)
     outcome: dict[str, object] = {}
     started = time.monotonic()
 
     def progress(stage: str, current: int, total: int | None, detail: str) -> None:
-        if stage == "copy_bytes":
+        if stage == "move_bytes":
             events.put((current, total, detail))
 
     def worker() -> None:
         try:
-            outcome["result"] = copy_recovery_match(match, progress)
+            outcome["result"] = move_recovery_match(match, progress)
         except Exception as exc:  # noqa: BLE001 - propagate worker failures to the Web generator.
             outcome["error"] = exc
 
-    thread = threading.Thread(target=worker, name="mocap-recovery-copy", daemon=True)
+    thread = threading.Thread(target=worker, name="mocap-recovery-move", daemon=True)
     thread.start()
     current_line = ""
     while thread.is_alive() or not events.empty():
@@ -2674,9 +2675,9 @@ def _stream_mocap_recovery_copy(
         except queue.Empty:
             elapsed = time.monotonic() - started
             heartbeat = (
-                f"复制中，已用时 {elapsed:.1f}s"
+                f"移动中，已用时 {elapsed:.1f}s"
                 if language == "中文"
-                else f"Copying, elapsed {elapsed:.1f}s"
+                else f"Moving, elapsed {elapsed:.1f}s"
             )
             yield "\n".join((*history, current_line, heartbeat)).strip()
             continue
@@ -2689,10 +2690,10 @@ def _stream_mocap_recovery_copy(
         total_bytes = total or 0
         percent = 100.0 if total_bytes == 0 else current * 100.0 / total_bytes
         current_line = (
-            f"复制 {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | {detail}"
+            f"移动 {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | {detail}"
             if language == "中文"
             else (
-                f"Copy {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | "
+                f"Move {percent:6.2f}% | {current / 2**20:.1f}/{total_bytes / 2**20:.1f} MiB | "
                 f"{detail}"
             )
         )
@@ -2745,9 +2746,9 @@ def copy_mocap_recovery(
     yield "\n".join((*copy_log, "", _mocap_recovery_report(plan, root, source, language=language)))
     for index, match in enumerate(plan.matches, start=1):
         copy_log.append(
-            f"[{index}/{len(plan.matches)}] 正在复制/替换：{match.target.session_dir.name}"
+            f"[{index}/{len(plan.matches)}] 正在移动/替换：{match.target.session_dir.name}"
             if language == "中文"
-            else f"[{index}/{len(plan.matches)}] Copy/replace: {match.target.session_dir.name}"
+            else f"[{index}/{len(plan.matches)}] Move/replace: {match.target.session_dir.name}"
         )
         yield "\n".join(
             (*copy_log, "", _mocap_recovery_report(plan, root, source, language=language))
@@ -2759,11 +2760,11 @@ def copy_mocap_recovery(
         else:
             copied += 1
             copy_log.append(
-                f"[{index}/{len(plan.matches)}] 已复制到 {destination}；已删除失效报告 "
+                f"[{index}/{len(plan.matches)}] 已移动到 {destination}；已删除失效报告 "
                 f"{len(match.target.report_paths)} 个"
                 if language == "中文"
                 else (
-                    f"[{index}/{len(plan.matches)}] copied to {destination}; removed "
+                    f"[{index}/{len(plan.matches)}] moved to {destination}; removed "
                     f"{len(match.target.report_paths)} invalid report(s)"
                 )
             )
